@@ -177,7 +177,6 @@ export interface ApplyPlan {
   tracks: TrackPlan[];
   /** 采纳后存入本地 catalog 的完整曲目表（专辑模式为整张） */
   catalog_tracks: CatalogTrackDraft[];
-  cover_will_write: boolean;
   unmatched: string[];
 }
 
@@ -202,6 +201,19 @@ export interface CompareData {
   track: TrackRow;
   catalog: CatalogRow | null;
   changes: FieldChange[];
+  /** catalog 缓存封面（data URL），未刮取为 null */
+  cover_data: string | null;
+}
+
+export interface CoverCandidate {
+  id: string;
+  /** "caa" | "itunes" | "netease" | "qq" */
+  source: string;
+  title: string;
+  artist: string;
+  thumb_url: string;
+  /** 大图 URL（采纳时下载） */
+  url: string;
 }
 
 export interface LyricsCandidate {
@@ -232,4 +244,38 @@ export interface LyricsBatch {
   source: string;
   items: LyricsCandidate[];
   error?: string;
+}
+
+export interface PlaylistSummary {
+  /** 文件名（不含 .m3u8） */
+  name: string;
+  /** 条目总数（含失效项） */
+  track_count: number;
+  /** EXTINF 时长之和（未知计 0） */
+  total_ms: number;
+}
+
+export interface PlaylistAddItem {
+  path: string;
+  title: string;
+  artist: string;
+  duration_ms: number;
+}
+
+export interface PlaylistEntry {
+  /** 解析后的绝对路径 */
+  path: string;
+  /** 文件里存的那一行 */
+  rel_path: string;
+  title: string;
+  artist: string;
+  duration_ms: number;
+  exists: boolean;
+  /** DB 富化（仅展示），无库/未入库为 null */
+  track: TrackRow | null;
+}
+
+export interface PlaylistDetail {
+  name: string;
+  entries: PlaylistEntry[];
 }

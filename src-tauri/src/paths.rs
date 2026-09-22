@@ -60,11 +60,6 @@ fn appdata_root() -> PathBuf {
         .join("AxMusic")
 }
 
-/// App settings JSON (not the library DB).
-pub fn settings_path() -> PathBuf {
-    data_root().join("settings.json")
-}
-
 /// Library working DB lives **inside the library root** (next to the audio).
 pub fn library_db_path(library_root: &Path) -> PathBuf {
     library_root.join("axmusic.db")
@@ -76,6 +71,7 @@ pub fn is_portable() -> bool {
 }
 
 /// Force-create portable marker next to the executable (used by package script tests).
+#[allow(dead_code)] // 预留：便携标记写入（打包脚本/测试用）
 pub fn write_portable_ini(exe_dir: &Path) -> std::io::Result<()> {
     fs::write(
         exe_dir.join(PORTABLE_INI),

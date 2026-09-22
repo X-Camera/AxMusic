@@ -8,8 +8,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::library::{AlbumCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
+use crate::playlists::{PlaylistAddItem, PlaylistDetail, PlaylistSummary};
 use crate::settings::AppSettings;
-use crate::{scanner, settings};
+use crate::{playlists, scanner, settings};
 
 pub struct AppState {
     /// Library working DB (`<library>/axmusic.db`). None until a library root is set.
@@ -200,16 +201,29 @@ pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String>
     db.library_stats().map_err(|e| e.to_string())
 }
 
-/// 提取文件内嵌封面 → 96px JPEG data URL（按 path+mtime+size 磁盘缓存）。
+/// 提取文件内嵌封面 → 96px JPEG data URL（按 path+mtime+size 磁盘缓存于 `<库>/covers/.thumbs/`）。
 /// 无封面或解析失败返回 Ok(None)，前端显示占位图。
 #[tauri::command]
-pub async fn track_cover_thumb(path: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || cover_thumb_blocking(Path::new(&path)))
-        .await
+pub async fn track_cover_thumb(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<String>, String> {
+    // 缩略图缓存在 `<库>/covers/.thumbs/`（随库走）；无库根时只提取不缓存
+    let thumbs_dir = state
+        .settings
+        .lock()
         .map_err(|e| e.to_string())?
+        .library_root
+        .clone()
+        .map(|root| PathBuf::from(root).join("covers").join(".thumbs"));
+    tauri::async_runtime::spawn_blocking(move || {
+        cover_thumb_blocking(Path::new(&path), thumbs_dir.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn cover_thumb_blocking(path: &Path) -> Result<Option<String>, String> {
+fn cover_thumb_blocking(path: &Path, thumbs_dir: Option<&Path>) -> Result<Option<String>, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     use lofty::file::TaggedFileExt as _;
     use lofty::picture::PictureType;
@@ -229,13 +243,15 @@ fn cover_thumb_blocking(path: &Path) -> Result<Option<String>, String> {
         format!("{:016x}", h.finish())
     };
 
-    let dir = crate::paths::data_root().join("cache").join("covers");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let cache_path = dir.join(format!("{key}.jpg"));
+    let cache_path = thumbs_dir.map(|dir| dir.join(format!("{key}.jpg")));
+    if let Some(dir) = thumbs_dir {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
 
-    let bytes = match std::fs::read(&cache_path) {
-        Ok(b) => b,
-        Err(_) => {
+    let cached = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
+    let bytes = match cached {
+        Some(b) => b,
+        None => {
             let tagged = Probe::open(path)
                 .and_then(|p| p.read())
                 .map_err(|e| e.to_string())?;
@@ -262,7 +278,9 @@ fn cover_thumb_blocking(path: &Path) -> Result<Option<String>, String> {
                 ))
                 .map_err(|e| e.to_string())?;
             let b = buf.into_inner();
-            std::fs::write(&cache_path, &b).ok();
+            if let Some(p) = &cache_path {
+                std::fs::write(p, &b).ok();
+            }
             b
         }
     };
@@ -936,7 +954,6 @@ pub async fn scrape_build_plan(
     release_mbid: String,
     track_ids: Vec<i64>,
     mode: String,
-    write_cover: bool,
 ) -> Result<ApplyPlan, String> {
     let mut locals = Vec::new();
     {
@@ -953,7 +970,7 @@ pub async fn scrape_build_plan(
 
         // blocking network on purpose (rate-limited)
     tauri::async_runtime::spawn_blocking(move || {
-        build_plan_inner(release_mbid, locals, mode, write_cover).map_err(|e| e.to_string())
+        build_plan_inner(release_mbid, locals, mode).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -963,7 +980,6 @@ fn build_plan_inner(
     release_mbid: String,
     locals: Vec<TrackRow>,
     mode: String,
-    write_cover: bool,
 ) -> anyhow::Result<ApplyPlan> {
     use crate::scraper::musicbrainz::{fetch_recording, fetch_release, title_similarity};
 
@@ -1011,7 +1027,6 @@ fn build_plan_inner(
                 track_no: None,
                 release_type: String::new(),
             }],
-            cover_will_write: false,
             unmatched,
         });
     }
@@ -1102,49 +1117,19 @@ fn build_plan_inner(
         candidate_label: format!("{} — {}", detail.artist, detail.title),
         tracks: tracks_plans,
         catalog_tracks,
-        cover_will_write: write_cover,
         unmatched,
     })
 }
 
-/// Save scrape result into local catalog + `<library>/covers/` — does NOT touch audio files.
+/// Save scrape result into local catalog — does NOT touch audio files. Text only;
+/// covers are fetched separately via `catalog_fetch_cover`.
 /// Stores the WHOLE adopted release tracklist (subset backup); each locally matched
 /// track is explicitly linked to its catalog row by recording MBID.
 #[tauri::command]
 pub async fn catalog_save(
     state: State<'_, AppState>,
     plan: ApplyPlan,
-    fetch_cover: bool,
 ) -> Result<Vec<i64>, String> {
-    let root = state
-        .settings
-        .lock()
-        .map_err(|e| e.to_string())?
-        .library_root
-        .clone()
-        .ok_or("尚未初始化库目录")?;
-    let library_root = PathBuf::from(root);
-    let release_id = plan.release_id.clone();
-
-    let cover = if fetch_cover {
-        tauri::async_runtime::spawn_blocking({
-            let release_id = release_id.clone();
-            let library_root = library_root.clone();
-            move || -> Option<String> {
-                let bytes = crate::scraper::fetch_front_cover(&release_id).ok()?;
-                let dir = library_root.join("covers");
-                std::fs::create_dir_all(&dir).ok()?;
-                let path = dir.join(format!("{release_id}.jpg"));
-                std::fs::write(&path, &bytes).ok()?;
-                Some(path.to_string_lossy().to_string())
-            }
-        })
-        .await
-        .unwrap_or(None)
-    } else {
-        None
-    };
-
     let mut ids = Vec::new();
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
@@ -1169,7 +1154,7 @@ pub async fn catalog_save(
                 year: ct.year.clone(),
                 track_no: ct.track_no,
                 release_type: ct.release_type.clone(),
-                cover_path: cover.clone(),
+                cover_path: None,
                 created_at: String::new(),
             };
             let id = db.insert_catalog(&row).map_err(|e| e.to_string())?;
@@ -1272,7 +1257,116 @@ pub fn catalog_compare(
         "track": track,
         "catalog": catalog,
         "changes": changes,
+        "cover_data": cover_data_of(catalog.as_ref()),
     }))
+}
+
+/// catalog 缓存封面 → data URL（未刮取返回 None）。
+fn cover_data_of(catalog: Option<&crate::library::CatalogRow>) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    let path = catalog?.cover_path.as_ref()?;
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!("data:image/jpeg;base64,{}", B64.encode(bytes)))
+}
+
+/// 多源搜索封面候选（CAA / iTunes / 网易云 / QQ音乐，并发），返回缩略图+大图 URL。
+/// 查询词优先取关联 catalog 的专辑/歌手，退回文件标签。
+#[tauri::command]
+pub async fn cover_search(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<Vec<crate::scraper::CoverCandidate>, String> {
+    let (release_mbid, album, artist) = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        let track = db
+            .get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?;
+        let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
+        match cat {
+            Some(c) => {
+                let album = if !c.album.is_empty() { c.album } else { track.album.clone() };
+                let artist = if !c.artist.is_empty() {
+                    c.artist
+                } else if !track.artist.is_empty() {
+                    track.artist.clone()
+                } else {
+                    track.album_artist.clone()
+                };
+                (c.release_mbid, album, artist)
+            }
+            None => (track.mb_release_mbid.clone(), track.album.clone(), track.artist.clone()),
+        }
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::scraper::search_covers(&release_mbid, &album, &artist)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 采纳封面候选：下载大图 → `<库>/covers/` → 更新 catalog 封面引用。不改音频文件。
+/// 返回封面 data URL（对比面板直接显示）。
+#[tauri::command]
+pub async fn cover_apply(
+    state: State<'_, AppState>,
+    track_id: i64,
+    url: String,
+) -> Result<String, String> {
+    let (catalog_id, release_mbid, library_root) = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
+        let root = state
+            .settings
+            .lock()
+            .map_err(|e| e.to_string())?
+            .library_root
+            .clone()
+            .ok_or("尚未初始化库目录")?;
+        (
+            cat.as_ref().map(|c| c.id),
+            cat.map(|c| c.release_mbid).unwrap_or_default(),
+            PathBuf::from(root),
+        )
+    };
+
+    let filename = if !release_mbid.is_empty() {
+        format!("{release_mbid}.jpg")
+    } else if let Some(id) = catalog_id {
+        format!("cat-{id}.jpg")
+    } else {
+        format!("track-{track_id}.jpg")
+    };
+
+    let (bytes, path_str) = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = crate::scraper::download_image(&url).map_err(|e| e.to_string())?;
+        let dir = library_root.join("covers");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(filename);
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        Ok::<_, String>((bytes, path.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        if let Some(id) = catalog_id {
+            db.set_catalog_cover_by_id(id, &path_str)
+                .map_err(|e| e.to_string())?;
+        }
+        if !release_mbid.is_empty() {
+            db.set_catalog_cover(&release_mbid, &path_str)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    Ok(format!("data:image/jpeg;base64,{}", B64.encode(bytes)))
 }
 
 /// Try to link a track to an existing catalog row (mbid / title+artist+album).
@@ -1407,4 +1501,106 @@ pub fn catalog_apply_to_track(
         }
     }
     Ok(track_id)
+}
+
+// ── playlists (m3u8) ────────────────────────────────────────────────
+
+fn require_library_root(state: &State<'_, AppState>) -> Result<String, String> {
+    state
+        .settings
+        .lock()
+        .map_err(|e| e.to_string())?
+        .library_root
+        .clone()
+        .ok_or_else(|| "尚未初始化库目录".to_string())
+}
+
+/// 歌单详情（带 DB 富化；无 DB 也能出列表，仅展示字段退化）。
+fn playlist_detail_of(root: &str, name: &str, state: &State<'_, AppState>) -> Result<PlaylistDetail, String> {
+    let parsed = playlists::read_playlist(Path::new(root), name)?;
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    Ok(playlists::to_entries(Path::new(root), name, &parsed, guard.as_ref()))
+}
+
+/// 列出 `<库>/playlists/*.m3u8`。
+#[tauri::command]
+pub fn playlist_list(state: State<'_, AppState>) -> Result<Vec<PlaylistSummary>, String> {
+    let root = require_library_root(&state)?;
+    playlists::list_playlists(Path::new(&root))
+}
+
+/// 新建歌单并一次写入条目（items 可空 = 空歌单）。
+#[tauri::command]
+pub fn playlist_create(
+    state: State<'_, AppState>,
+    name: String,
+    items: Vec<PlaylistAddItem>,
+) -> Result<PlaylistDetail, String> {
+    let root = require_library_root(&state)?;
+    playlists::create(Path::new(&root), &name, &items)?;
+    playlist_detail_of(&root, &playlists::validate_name(&name)?, &state)
+}
+
+#[tauri::command]
+pub fn playlist_rename(
+    state: State<'_, AppState>,
+    name: String,
+    new_name: String,
+) -> Result<PlaylistSummary, String> {
+    let root = require_library_root(&state)?;
+    playlists::rename(Path::new(&root), &name, &new_name)?;
+    let name = playlists::validate_name(&new_name)?;
+    let parsed = playlists::read_playlist(Path::new(&root), &name)?;
+    Ok(PlaylistSummary {
+        name,
+        track_count: parsed.len(),
+        total_ms: parsed.iter().map(|x| x.duration_ms).sum(),
+    })
+}
+
+#[tauri::command]
+pub fn playlist_delete(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let root = require_library_root(&state)?;
+    playlists::delete(Path::new(&root), &name)
+}
+
+#[tauri::command]
+pub fn playlist_get(state: State<'_, AppState>, name: String) -> Result<PlaylistDetail, String> {
+    let root = require_library_root(&state)?;
+    playlist_detail_of(&root, &name, &state)
+}
+
+/// 追加条目（按绝对路径去重跳过）。
+#[tauri::command]
+pub fn playlist_add_tracks(
+    state: State<'_, AppState>,
+    name: String,
+    items: Vec<PlaylistAddItem>,
+) -> Result<PlaylistDetail, String> {
+    let root = require_library_root(&state)?;
+    playlists::add_tracks(Path::new(&root), &name, &items)?;
+    playlist_detail_of(&root, &name, &state)
+}
+
+#[tauri::command]
+pub fn playlist_remove_track(
+    state: State<'_, AppState>,
+    name: String,
+    index: usize,
+) -> Result<PlaylistDetail, String> {
+    let root = require_library_root(&state)?;
+    playlists::remove_track(Path::new(&root), &name, index)?;
+    playlist_detail_of(&root, &name, &state)
+}
+
+#[tauri::command]
+pub fn playlist_move_track(
+    state: State<'_, AppState>,
+    name: String,
+    from_index: usize,
+    to_index: usize,
+) -> Result<PlaylistDetail, String> {
+    let root = require_library_root(&state)?;
+    playlists::move_track(Path::new(&root), &name, from_index, to_index)?;
+    playlist_detail_of(&root, &name, &state)
 }

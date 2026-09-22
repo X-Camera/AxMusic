@@ -1,0 +1,171 @@
+/* 播放列表页 + 加入歌单对话框 */
+
+.pl-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.pl-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 2px;
+}
+
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+}
+
+.pl-row:hover {
+  background: var(--bg-hover);
+}
+
+.pl-row.active {
+  background: var(--accent-soft);
+}
+
+.pl-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pl-row-actions {
+  display: none;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.pl-row:hover .pl-row-actions {
+  display: flex;
+}
+
+.pl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--space-3);
+}
+
+.pl-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pl-track-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 120px 48px auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.pl-track-row:hover {
+  background: var(--bg-hover);
+}
+
+.pl-track-row.missing {
+  opacity: 0.45;
+}
+
+.pl-track-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  padding: 24px;
+}
+
+.picker-panel {
+  width: min(420px, 100%);
+  max-height: min(520px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 8px;
+}
+
+.picker-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.picker-new {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.picker-new input {
+  flex: 1;
+  min-width: 0;
+}
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px 12px;
+  overflow: auto;
+}
+
+.picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+}
+
+.picker-item:hover {
+  background: var(--bg-hover);
+}
+
+.picker-error {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 0 16px 8px;
+}
+
+.pl-toast {
+  color: var(--success);
+  font-size: 12px;
+}

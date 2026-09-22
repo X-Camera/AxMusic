@@ -1,9 +1,9 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderPlus, FolderSearch, Link2, ListRestart, Loader2, Play } from "lucide-react";
+import { FolderPlus, FolderSearch, Link2, ListPlus, ListRestart, Loader2, Play } from "lucide-react";
 
-import { api, trackRowToQueueItem } from "../../lib/api";
-import type { LibraryRoot, LibraryStats, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
+import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
+import type { LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { TrackTable } from "./TrackTable";
@@ -11,6 +11,7 @@ import { ComparePanel } from "./ComparePanel";
 import { StatsPanel } from "./StatsPanel";
 import { ScrapeWizard } from "./ScrapeWizard";
 import { LyricsPanel } from "./LyricsPanel";
+import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import "./ManagePage.css";
 
 export function ManagePage() {
@@ -27,6 +28,7 @@ export function ManagePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [scrapeOpen, setScrapeOpen] = useState(false);
+  const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const [lyricsTrackId, setLyricsTrackId] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null);
   const [compareVersion, setCompareVersion] = useState(0);
@@ -312,6 +314,7 @@ export function ManagePage() {
                 setSelected(new Set([row.id]));
                 setScrapeOpen(true);
               }}
+              onAddToPlaylist={(row) => setPickerItems([trackRowToAddItem(row)])}
             />
           )}
         </div>
@@ -344,6 +347,15 @@ export function ManagePage() {
             >
               刮削
             </button>
+            <button
+              className="btn"
+              title="加入歌单"
+              onClick={() =>
+                setPickerItems(filtered.filter((t) => selected.has(t.id)).map(trackRowToAddItem))
+              }
+            >
+              <ListPlus size={15} /> 加入歌单
+            </button>
           </div>
         </div>
       )}
@@ -355,6 +367,17 @@ export function ManagePage() {
           onApplied={() => {
             void reloadTracks();
             setSelected(new Set());
+          }}
+        />
+      )}
+
+      {pickerItems && (
+        <PlaylistPicker
+          items={pickerItems}
+          onClose={() => setPickerItems(null)}
+          onAdded={(name) => {
+            setToast(`已加入「${name}」`);
+            setPickerItems(null);
           }}
         />
       )}

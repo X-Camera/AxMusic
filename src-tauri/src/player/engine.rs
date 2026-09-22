@@ -42,6 +42,7 @@ enum Cmd {
     SetQueue { items: Vec<QueueItem>, start: usize },
     Next,
     Prev,
+    #[allow(dead_code)] // 预留：停止/清理通道（gapless、换输出设备时用）
     Stop,
 }
 
@@ -204,6 +205,7 @@ impl SymphoniaPlayer {
         Ok(self.current_track())
     }
 
+    #[allow(dead_code)] // 预留：停止/清理（与 Cmd::Stop 配对）
     pub fn stop(&mut self) {
         let _ = self.cmd_tx.send(Cmd::Stop);
     }
@@ -477,7 +479,7 @@ fn open_decoder(path: &Path) -> Result<DecoderState> {
             &MetadataOptions::default(),
         )
         .context("无法解析音频容器")?;
-    let mut reader = probed.format;
+    let reader = probed.format;
     let track = reader
         .tracks()
         .iter()

@@ -4,6 +4,7 @@ import { TitleBar } from "./components/TitleBar";
 import { AlbumWallPage } from "./features/browse/AlbumWallPage";
 import { PlaceholderPage } from "./features/browse/PlaceholderPage";
 import { ManagePage } from "./features/manage/ManagePage";
+import { PlaylistsPage } from "./features/playlists/PlaylistsPage";
 import { useApp } from "./state/useApp";
 
 export default function App() {
@@ -19,7 +20,7 @@ export default function App() {
         {route === "now-playing" && <PlaceholderPage route="now-playing" />}
         {route === "artists" && <PlaceholderPage route="artists" />}
         {route === "folders" && <PlaceholderPage route="folders" />}
-        {route === "playlists" && <PlaceholderPage route="playlists" />}
+        {route === "playlists" && <PlaylistsPage />}
         {route === "settings" && <PlaceholderPage route="settings" />}
       </div>
       <MiniPlayer />

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 mod coverart;
 pub mod musicbrainz;
 
-pub use coverart::fetch_front_cover;
+pub use coverart::{download_image, search_all as search_covers, CoverCandidate};
 pub use musicbrainz::{search_recordings, search_releases};
 
 /// MusicBrainz requires a descriptive User-Agent with contact info.
@@ -106,7 +106,5 @@ pub struct ApplyPlan {
     pub tracks: Vec<TrackPlan>,
     /// All catalog rows to persist on adopt (full release for album mode).
     pub catalog_tracks: Vec<CatalogTrackDraft>,
-    /// plan intends to cache a front cover into `<library>/covers/`
-    pub cover_will_write: bool,
     pub unmatched: Vec<String>,
 }

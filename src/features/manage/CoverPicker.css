@@ -1,0 +1,134 @@
+/* 封面候选对话框。类名统一 cpk- 前缀，避免与 TrackTable 的 .cover-cell 撞车 */
+
+.cpk-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  padding: 24px;
+}
+
+.cpk-panel {
+  width: min(720px, 100%);
+  height: min(560px, calc(100vh - 48px));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cpk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 4px;
+  flex-shrink: 0;
+}
+
+.cpk-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.cpk-hint {
+  margin: 0;
+  padding: 0 16px 8px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.cpk-body {
+  flex: 1;
+  min-height: 0; /* 让 overflow 在 flex 列里生效 */
+  overflow-y: auto;
+  padding: 4px 16px 16px;
+}
+
+.cpk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.cpk-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg-card);
+  text-align: left;
+  color: var(--text);
+  overflow: hidden; /* 圆角裁切图片边缘 */
+  cursor: pointer;
+}
+
+.cpk-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.cpk-card.busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.cpk-thumb {
+  display: block;
+  width: 100%;
+  height: 140px; /* 定高，不依赖 aspect-ratio */
+  object-fit: cover;
+  border-radius: var(--radius-cover);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.cpk-thumb-broken {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+}
+
+.cpk-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  min-width: 0; /* 允许内部 ellipsis 收缩 */
+  line-height: 1.35;
+}
+
+.cpk-meta .chip {
+  align-self: flex-start;
+  font-size: 10px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.cpk-meta .ellipsis {
+  max-width: 100%;
+}
+
+.cpk-picking {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius-card);
+}
+
+.cpk-error {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 0 16px 8px;
+  flex-shrink: 0;
+}

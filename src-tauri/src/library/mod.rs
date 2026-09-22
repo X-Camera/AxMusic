@@ -576,6 +576,24 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// 更新同一发行下全部 catalog 行的封面引用（单独刮封面后调用）。
+    pub fn set_catalog_cover(&self, release_mbid: &str, cover_path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE catalog SET cover_path = ?1 WHERE release_mbid = ?2",
+            params![cover_path, release_mbid],
+        )?;
+        Ok(())
+    }
+
+    /// 按 catalog 行 id 更新封面引用（无发行 MBID 的记录用）。
+    pub fn set_catalog_cover_by_id(&self, catalog_id: i64, cover_path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE catalog SET cover_path = ?1 WHERE id = ?2",
+            params![cover_path, catalog_id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_catalog(&self, id: i64) -> Result<Option<CatalogRow>> {
         let row = self
             .conn

@@ -46,10 +46,10 @@ build-release.bat        # 绿色版发布构建 → out/AxMusic-v*.exe
 ## 代码结构
 
 ```
-src-tauri/src/   commands.rs(IPC 全部在此) · scanner · tagger · scraper(musicbrainz+coverart)
-                 lyrics(LRCLIB+嵌/挂互转) · library(SQLite) · player(symphonia+cpal) · settings · paths
+src-tauri/src/   commands.rs(IPC 全部在此) · scanner · tagger · scraper(musicbrainz+封面多源 coverart)
+                 lyrics(LRCLIB+网易+QQ/嵌/挂互转) · playlists(m3u8 歌单) · library(SQLite) · player(symphonia+cpal) · settings · paths
 src/features/    manage/(ManagePage 表格 · TrackTable · ComparePanel/StatsPanel 常驻右栏 · coverCache
-                 封面懒加载 · ScrapeWizard 三栏 · LyricsPanel 搜索歌词) · browse/
+                 封面懒加载 · ScrapeWizard 三栏 · LyricsPanel 搜索歌词) · playlists/(PlaylistsPage · PlaylistPicker) · browse/
                  components/(TitleBar 自绘标题栏/Sidebar/MiniPlayer/TopBar) · state/useApp.ts
 src/lib/         api.ts（invoke 封装）· types.ts（与 Rust serde 结构对齐）
 ```

@@ -77,6 +77,7 @@ export function TrackTable({
   onPlay,
   onActivate,
   onScrape,
+  onAddToPlaylist,
 }: {
   rows: TrackRow[];
   selected: Set<number>;
@@ -86,6 +87,7 @@ export function TrackTable({
   /** 单击行 → 右侧显示 文件 vs catalog 对比（再次单击已激活行 → 回到统计） */
   onActivate: (row: TrackRow) => void;
   onScrape: (row: TrackRow) => void;
+  onAddToPlaylist: (row: TrackRow) => void;
 }) {
   function toggle(id: number) {
     const next = new Set(selected);
@@ -193,6 +195,9 @@ export function TrackTable({
                 </button>
                 <button className="link-btn" onClick={() => onScrape(t)} title="刮削此曲到 catalog">
                   刮削
+                </button>
+                <button className="link-btn" onClick={() => onAddToPlaylist(t)} title="加入歌单">
+                  歌单
                 </button>
               </td>
             </tr>

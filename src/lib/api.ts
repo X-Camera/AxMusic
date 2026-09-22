@@ -6,6 +6,9 @@ import type {
   LibraryStats,
   PathsInfo,
   PlayerSnapshot,
+  PlaylistAddItem,
+  PlaylistDetail,
+  PlaylistSummary,
   QueueItem,
   ScanResult,
   ScrapeCandidate,
@@ -63,18 +66,22 @@ export const api = {
     releaseMbid: string,
     trackIds: number[],
     mode: "album" | "track",
-    writeCover: boolean,
   ) =>
     invoke<ApplyPlan>("scrape_build_plan", {
       releaseMbid,
       trackIds,
       mode,
-      writeCover,
     }),
-  catalogSave: (plan: ApplyPlan, fetchCover: boolean) =>
-    invoke<number[]>("catalog_save", { plan, fetchCover }),
+  /** 采纳刮削结果 → 本地 catalog（只存文字，封面另走 catalogFetchCover） */
+  catalogSave: (plan: ApplyPlan) => invoke<number[]>("catalog_save", { plan }),
   catalogCompare: (trackId: number) =>
     invoke<import("./types").CompareData>("catalog_compare", { trackId }),
+  /** 多源封面搜索（CAA/iTunes/网易云/QQ音乐）→ 候选列表（缩略图+大图 URL） */
+  coverSearch: (trackId: number) =>
+    invoke<import("./types").CoverCandidate[]>("cover_search", { trackId }),
+  /** 采纳封面候选：下载大图存 `<库>/covers/` 并更新 catalog 引用，返回 data URL */
+  coverApply: (trackId: number, url: string) =>
+    invoke<string>("cover_apply", { trackId, url }),
   catalogApplyToTrack: (trackId: number, fields: string[], writeCover: boolean) =>
     invoke<number>("catalog_apply_to_track", { trackId, fields, writeCover }),
   catalogMatchOne: (trackId: number) =>
@@ -95,6 +102,23 @@ export const api = {
     invoke<string>("lyrics_embed_sidecar", { trackId }),
   lyricsCurrent: (trackId: number) =>
     invoke<import("./types").LyricsCurrent>("lyrics_current", { trackId }),
+
+  // ── playlists (m3u8，存 <库>/playlists/) ────────────────────────
+  playlistList: () => invoke<PlaylistSummary[]>("playlist_list"),
+  /** 新建并一次写入条目（items 可空 = 空歌单） */
+  playlistCreate: (name: string, items: PlaylistAddItem[]) =>
+    invoke<PlaylistDetail>("playlist_create", { name, items }),
+  playlistRename: (name: string, newName: string) =>
+    invoke<PlaylistSummary>("playlist_rename", { name, newName }),
+  playlistDelete: (name: string) => invoke<void>("playlist_delete", { name }),
+  playlistGet: (name: string) => invoke<PlaylistDetail>("playlist_get", { name }),
+  /** 追加条目（已在歌单里的自动跳过） */
+  playlistAddTracks: (name: string, items: PlaylistAddItem[]) =>
+    invoke<PlaylistDetail>("playlist_add_tracks", { name, items }),
+  playlistRemoveTrack: (name: string, index: number) =>
+    invoke<PlaylistDetail>("playlist_remove_track", { name, index }),
+  playlistMoveTrack: (name: string, fromIndex: number, toIndex: number) =>
+    invoke<PlaylistDetail>("playlist_move_track", { name, fromIndex, toIndex }),
 };
 
 export function formatTime(ms: number): string {
@@ -110,5 +134,23 @@ export function trackRowToQueueItem(t: TrackRow): QueueItem {
     path: t.path,
     title: t.title || t.filename,
     duration_ms: t.duration_ms,
+  };
+}
+
+export function trackRowToAddItem(t: TrackRow): PlaylistAddItem {
+  return {
+    path: t.path,
+    title: t.title || t.filename,
+    artist: t.artist,
+    duration_ms: t.duration_ms,
+  };
+}
+
+export function entryToQueueItem(e: import("./types").PlaylistEntry): QueueItem {
+  const title = e.track?.title || e.title;
+  return {
+    path: e.path,
+    title: title || e.path.split(/[\\/]/).pop() || e.path,
+    duration_ms: e.duration_ms,
   };
 }

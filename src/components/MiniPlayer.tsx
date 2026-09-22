@@ -1,4 +1,4 @@
-import { FolderInput, Pause, Play, Repeat, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
+import { FolderInput, ListPlus, Pause, Play, Repeat, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, formatTime } from "../lib/api";
@@ -19,6 +19,7 @@ export function MiniPlayer() {
   const [outsideLib, setOutsideLib] = useState(false);
   const [including, setIncluding] = useState(false);
   const [includedAt, setIncludedAt] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -65,6 +66,29 @@ export function MiniPlayer() {
       /* keep button visible for retry */
     } finally {
       setIncluding(false);
+    }
+  }
+
+  /** 队列存为歌单（另存为新歌单，重名不覆盖） */
+  async function saveQueueAs() {
+    const queue = player?.queue ?? [];
+    if (queue.length === 0) return;
+    const name = window.prompt("存为歌单名称", "");
+    if (!name || !name.trim()) return;
+    try {
+      await api.playlistCreate(
+        name.trim(),
+        queue.map((q) => ({
+          path: q.path,
+          title: q.title,
+          artist: "",
+          duration_ms: q.duration_ms,
+        })),
+      );
+      setSavedAt(name.trim());
+      window.setTimeout(() => setSavedAt(null), 2000);
+    } catch (e) {
+      window.alert(String(e));
     }
   }
 
@@ -160,6 +184,20 @@ export function MiniPlayer() {
       </div>
 
       <div className="mp-volume">
+        {savedAt ? (
+          <span className="mp-included tertiary" title="已存为歌单">
+            已存为「{savedAt}」
+          </span>
+        ) : (
+          <button
+            className="mp-icon"
+            title="队列存为歌单"
+            disabled={(player?.queue?.length ?? 0) === 0}
+            onClick={() => void saveQueueAs()}
+          >
+            <ListPlus size={15} />
+          </button>
+        )}
         <Volume2 size={15} className="tertiary" />
         <input
           className="mp-slider mp-vol"

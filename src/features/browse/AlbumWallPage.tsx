@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Play } from "lucide-react";
+import { ListPlus, Play } from "lucide-react";
 
-import { api, trackRowToQueueItem } from "../../lib/api";
-import type { AlbumCard, TrackRow } from "../../lib/types";
+import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
+import type { AlbumCard, PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
+import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import "./AlbumWall.css";
 
 export function AlbumWallPage() {
@@ -14,6 +15,8 @@ export function AlbumWallPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -107,6 +110,25 @@ export function AlbumWallPage() {
                   </button>
                   {open && (
                     <div className="album-tracks panel">
+                      {tracks.length > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "flex-end",
+                            gap: 8,
+                            padding: "2px 8px 6px",
+                          }}
+                        >
+                          {toast && <span className="pl-toast">{toast}</span>}
+                          <button
+                            className="link-btn"
+                            title="整专加入歌单"
+                            onClick={() => setPickerItems(tracks.map(trackRowToAddItem))}
+                          >
+                            <ListPlus size={13} /> 加入歌单
+                          </button>
+                        </div>
+                      )}
                       {tracks.length === 0 ? (
                         <div className="tertiary" style={{ padding: 12 }}>
                           无曲目
@@ -137,6 +159,17 @@ export function AlbumWallPage() {
           </div>
         )}
       </div>
+      {pickerItems && (
+        <PlaylistPicker
+          items={pickerItems}
+          onClose={() => setPickerItems(null)}
+          onAdded={(name) => {
+            setToast(`已加入「${name}」`);
+            setPickerItems(null);
+            window.setTimeout(() => setToast(null), 2000);
+          }}
+        />
+      )}
     </>
   );
 }

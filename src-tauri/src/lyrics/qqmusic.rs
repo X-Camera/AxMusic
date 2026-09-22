@@ -27,8 +27,6 @@ struct SongList {
 
 #[derive(Debug, Deserialize)]
 struct SongItem {
-    /// numeric song id
-    songid: Option<i64>,
     /// alphanumeric mid (used by lyric endpoint)
     songmid: Option<String>,
     songname: Option<String>,

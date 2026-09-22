@@ -5,6 +5,7 @@ mod library;
 mod lyrics;
 mod paths;
 mod player;
+mod playlists;
 mod scanner;
 mod scraper;
 mod settings;
@@ -77,6 +78,8 @@ pub fn run() {
             commands::scrape_build_plan,
             commands::catalog_save,
             commands::catalog_compare,
+            commands::cover_search,
+            commands::cover_apply,
             commands::catalog_match_one,
             commands::catalog_match_all,
             commands::catalog_apply_to_track,
@@ -86,6 +89,14 @@ pub fn run() {
             commands::lyrics_export_sidecar,
             commands::lyrics_embed_sidecar,
             commands::lyrics_current,
+            commands::playlist_list,
+            commands::playlist_create,
+            commands::playlist_rename,
+            commands::playlist_delete,
+            commands::playlist_get,
+            commands::playlist_add_tracks,
+            commands::playlist_remove_track,
+            commands::playlist_move_track,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AxMusic");

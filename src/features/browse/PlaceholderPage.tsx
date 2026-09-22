@@ -15,10 +15,6 @@ const COPY: Partial<Record<RouteId, { title: string; body: string }>> = {
     title: "文件夹",
     body: "任意路径文件夹浏览占位页。播放不依赖库目录，本轮可从管理表或专辑墙播放。",
   },
-  playlists: {
-    title: "播放列表",
-    body: "m3u8 歌单在 M1 后续步骤，本轮暂未接入。",
-  },
   settings: {
     title: "设置",
     body: "设置占位页。便携数据目录等信息稍后可在此查看。",

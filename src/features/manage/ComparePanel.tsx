@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { ImagePlus, Search } from "lucide-react";
 import { api } from "../../lib/api";
 import type { CatalogRow, FieldChange, TrackRow } from "../../lib/types";
+import { CoverPicker } from "./CoverPicker";
 import "./ComparePanel.css";
 
 const FIELD_LABEL: Record<string, string> = {
@@ -20,6 +21,8 @@ export interface CompareData {
   track: TrackRow;
   catalog: CatalogRow | null;
   changes: FieldChange[];
+  /** catalog 缓存封面（data URL），未刮取为 null */
+  cover_data: string | null;
 }
 
 export function ComparePanel({
@@ -37,17 +40,23 @@ export function ComparePanel({
   const [writing, setWriting] = useState(false);
   const [writeCover, setWriteCover] = useState(true);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [fileCover, setFileCover] = useState<string | null>(null);
+  const [catalogCover, setCatalogCover] = useState<string | null>(null);
+  const [coverOpen, setCoverOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setData(null);
     setError(null);
     setPicked(new Set());
+    setFileCover(null);
+    setCatalogCover(null);
     (async () => {
       try {
         const d = await api.catalogCompare(trackId);
         if (!cancelled) {
           setData(d);
+          setCatalogCover(d.cover_data);
           // 默认勾选全部有实际差异且 catalog 有值的字段
           const init = new Set(
             d.changes
@@ -55,6 +64,10 @@ export function ComparePanel({
               .map((c) => c.field),
           );
           setPicked(init);
+          if (d.track.has_cover) {
+            const thumb = await api.trackCoverThumb(d.track.path).catch(() => null);
+            if (!cancelled) setFileCover(thumb);
+          }
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -91,6 +104,11 @@ export function ComparePanel({
     } finally {
       setWriting(false);
     }
+  }
+
+  /** 单独刮取封面（多源候选），不改音频文件 */
+  function openCoverPicker() {
+    setCoverOpen(true);
   }
 
   return (
@@ -139,6 +157,34 @@ export function ComparePanel({
                 {data.catalog.artist} — {data.catalog.title}
               </div>
             </div>
+          </div>
+          <div className="cmp-covers">
+            <figure className="cmp-cover">
+              <figcaption className="muted">文件封面</figcaption>
+              {fileCover ? (
+                <img src={fileCover} alt="文件封面" />
+              ) : (
+                <div className="cmp-cover-empty tertiary">无</div>
+              )}
+            </figure>
+            <figure className="cmp-cover">
+              <figcaption className="muted">catalog 封面</figcaption>
+              {catalogCover ? (
+                <img src={catalogCover} alt="catalog 封面" />
+              ) : (
+                <div className="cmp-cover-empty tertiary">
+                  {fileCover ? "未刮取" : "无封面，可刮取"}
+                </div>
+              )}
+            </figure>
+            <button
+              className="btn"
+              title="多源搜索封面（CAA / iTunes / 网易云 / QQ音乐），点选一张采纳到库 covers/"
+              onClick={openCoverPicker}
+            >
+              <ImagePlus size={14} />
+              {catalogCover ? "重新刮取封面" : "刮取封面"}
+            </button>
           </div>
           <table className="cmp-table">
             <thead>
@@ -201,6 +247,16 @@ export function ComparePanel({
             </div>
           )}
         </>
+      )}
+      {coverOpen && (
+        <CoverPicker
+          trackId={trackId}
+          onClose={() => setCoverOpen(false)}
+          onApplied={(coverData) => {
+            setCatalogCover(coverData);
+            setCoverOpen(false);
+          }}
+        />
       )}
     </aside>
   );

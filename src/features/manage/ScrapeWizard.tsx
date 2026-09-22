@@ -33,7 +33,6 @@ export function ScrapeWizard({
   const [candidates, setCandidates] = useState<ScrapeCandidate[]>([]);
   const [selectedCand, setSelectedCand] = useState<ScrapeCandidate | null>(null);
   const [plan, setPlan] = useState<ApplyPlan | null>(null);
-  const [writeCover, setWriteCover] = useState(true);
   const [applying, setApplying] = useState(false);
   const [savedCount, setSavedCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +89,6 @@ export function ScrapeWizard({
         c.release_id,
         tracks.map((t) => t.id),
         mode,
-        writeCover,
       );
       setPlan(p);
       if (p.tracks.length > 0) setActiveLocal(p.tracks[0].track_id);
@@ -107,8 +105,8 @@ export function ScrapeWizard({
     setApplying(true);
     setError(null);
     try {
-      // 只存入本地 catalog（+封面到 covers/），不修改音频文件。
-      const ids = await api.catalogSave(plan, writeCover);
+      // 只存入本地 catalog（文字），不修改音频文件；封面在对比面板单独刮取。
+      const ids = await api.catalogSave(plan);
       setSavedCount(ids.length);
       onApplied();
     } catch (e) {
@@ -133,18 +131,10 @@ export function ScrapeWizard({
           <div>
             <h2>刮削</h2>
             <p className="tertiary">
-              拉取云端字段存入本地 catalog（不改音频）· MusicBrainz + Cover Art Archive
+              拉取云端字段存入本地 catalog（不改音频）· MusicBrainz · 封面在对比面板单独刮取
             </p>
           </div>
           <div className="scrape-head-actions">
-            <label className="scrape-check">
-              <input
-                type="checkbox"
-                checked={writeCover}
-                onChange={(e) => setWriteCover(e.target.checked)}
-              />
-              缓存封面到库 covers/
-            </label>
             <button className="btn" onClick={onClose} title="关闭">
               <X size={16} />
             </button>
@@ -274,7 +264,6 @@ export function ScrapeWizard({
                   <div className="scrape-plan-label">
                     采纳对象：<strong>{plan.candidate_label}</strong>
                     {` · 整张 ${plan.catalog_tracks.length} 首存入 catalog`}
-                    {writeCover ? " · 封面将缓存到库 covers/" : " · 不缓存封面"}
                   </div>
                   {plan.tracks.map((tp) => {
                     const rows = onlyChanged
@@ -352,7 +341,6 @@ export function ScrapeWizard({
               {plan
                 ? `匹配 ${plan.tracks.length} 首 · 与文件差异 ${realChanges} 处 · 共核对 ${changeCount} 行`
                 : "选择候选后核对字段，采纳后仅存入本地 catalog"}
-              {writeCover ? "（含封面缓存）" : ""}
             </span>
           )}
           <div className="scrape-foot-actions">

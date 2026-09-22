@@ -22,6 +22,7 @@ struct MbArtist {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // 完整映射 API 响应，部分字段暂未读取
 struct MbReleaseGroup {
     id: Option<String>,
     title: Option<String>,
@@ -32,6 +33,7 @@ struct MbReleaseGroup {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // 完整映射 API 响应，部分字段暂未读取
 struct MbRelease {
     id: Option<String>,
     title: Option<String>,
@@ -48,6 +50,7 @@ struct MbRelease {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // 完整映射 API 响应，部分字段暂未读取
 struct MbRecording {
     id: Option<String>,
     title: Option<String>,

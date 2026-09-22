@@ -45,6 +45,9 @@ pub struct PlayerSnapshot {
 }
 
 /// Swappable playback engine surface (thin).
+/// 契约样板（docs/技术架构.md §2）：现只有 Symphonia 一个实现、经 `Player` 直调，
+/// 换后端（如 libmpv）时按此接口实现即可。
+#[allow(dead_code)]
 pub trait PlayerEngine {
     fn open(&mut self, path: &Path) -> Result<TrackInfo>;
     fn play(&mut self);
