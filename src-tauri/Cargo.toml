@@ -1,6 +1,6 @@
 [package]
 name = "axmusic"
-version = "0.1.0"
+version = "0.0.1"
 description = "AxMusic — local music player with library management"
 authors = ["AxMusic"]
 edition = "2021"
@@ -45,6 +45,7 @@ cpal = "0.15"
 ringbuf = "0.4"
 crossbeam-channel = "0.5"
 walkdir = "2"
+base64 = "0.22"
 
 [profile.release]
 opt-level = 1          # 默认 3,降到 1 编译快一倍+,exe 稍大几 MB 但运行无感

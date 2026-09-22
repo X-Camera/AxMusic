@@ -61,7 +61,8 @@ export function TrackTable({
           <th style={{ width: 56 }}>年</th>
           <th style={{ width: 44 }}>#</th>
           <th style={{ width: 40 }}>封</th>
-          <th style={{ width: 40 }}>词</th>
+          <th style={{ width: 40 }}>嵌</th>
+          <th style={{ width: 40 }}>挂</th>
           <th style={{ width: 40 }}>年</th>
           <th style={{ width: 40 }}>型</th>
           <th style={{ width: 40 }}>MB</th>
@@ -108,7 +109,10 @@ export function TrackTable({
                 <StatusDot ok={t.has_cover} label="封面" />
               </td>
               <td>
-                <StatusDot ok={t.has_lyrics} label="歌词" />
+                <StatusDot ok={t.has_lyrics} label="内嵌歌词" />
+              </td>
+              <td>
+                <StatusDot ok={t.has_lrc} label="外挂歌词 .lrc" />
               </td>
               <td>
                 <StatusDot ok={t.has_year} label="年份" />

@@ -1,0 +1,231 @@
+.lyr-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 24px;
+}
+
+.lyr-panel {
+  width: min(880px, 100%);
+  max-height: min(680px, 100%);
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lyr-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.lyr-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.lyr-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lyr-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-tertiary);
+}
+
+.lyr-tag.ok {
+  color: var(--success);
+  border-color: rgba(61, 220, 151, 0.4);
+}
+
+.lyr-convert {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 10px;
+}
+
+.lyr-convert .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lyr-body {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+}
+
+.lyr-col h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.lyr-list {
+  max-height: 380px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lyr-item {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+}
+
+.lyr-item:hover {
+  background: var(--bg-hover);
+}
+
+.lyr-item.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lyr-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.lyr-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+
+.lyr-badge.sync {
+  color: var(--success);
+}
+
+.lyr-preview {
+  height: 320px;
+  overflow: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+}
+
+.lyr-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.lyr-empty {
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* 流式源状态 + 候选来源徽标 */
+.lyr-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.lyr-col-head h3 {
+  margin: 0;
+}
+
+.lyr-sources {
+  display: flex;
+  gap: 6px;
+}
+
+.lyr-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+
+.lyr-src.ok {
+  color: var(--success);
+}
+
+.lyr-src.err {
+  color: var(--danger);
+}
+
+.lyr-src-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  margin-right: 6px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+
+.lyr-src-badge.netease {
+  color: #ec4141;
+}
+
+.lyr-src-badge.qq {
+  color: #31c27c;
+}
+
+.lyr-src-badge.lrclib {
+  color: var(--accent);
+}
+
+.lyr-trans-hint {
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.lyr-save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.lyr-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

@@ -568,6 +568,252 @@ pub fn list_dir_audio(path: String) -> Result<Vec<TrackInfo>, String> {
     Ok(out)
 }
 
+
+// ── lyrics (LRCLIB + 网易云 + QQ音乐) ─────────────────────────────
+
+use crate::lyrics::{self, LyricsCandidate, LyricsContent};
+
+/// Fan out a lyrics search to ALL sources concurrently.
+/// Returns immediately; each source pushes its batch via `lyrics://batch`
+/// ({track_id, source, items}) and a final `lyrics://done` ({track_id})
+/// fires when all sources have reported.
+#[tauri::command]
+pub async fn lyrics_search(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<(), String> {
+    let track = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+    };
+    let title = track.title.clone();
+    let artist = track.artist.clone();
+    let album = track.album.clone();
+
+    std::thread::spawn(move || {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel::<(&'static str, Result<Vec<LyricsCandidate>, String>)>();
+        let mut in_flight = 0usize;
+
+        macro_rules! spawn_source {
+            ($name:expr, $call:expr) => {{
+                let tx = tx.clone();
+                let (t, a, al) = (title.clone(), artist.clone(), album.clone());
+                std::thread::spawn(move || {
+                    let r = $call(&t, &a, &al).map_err(|e| e.to_string());
+                    let _ = tx.send(($name, r));
+                });
+                in_flight += 1;
+            }};
+        }
+
+        spawn_source!(lyrics::SOURCE_LRCLIB, lyrics::lrclib::search);
+        spawn_source!(lyrics::SOURCE_NETEASE, lyrics::netease::search);
+        spawn_source!(lyrics::SOURCE_QQ, lyrics::qqmusic::search);
+        drop(tx);
+
+        for _ in 0..in_flight {
+            if let Ok((source, result)) = rx.recv() {
+                match result {
+                    Ok(items) => {
+                        let _ = app.emit(
+                            "lyrics://batch",
+                            serde_json::json!({
+                                "trackId": track_id,
+                                "source": source,
+                                "items": items,
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = app.emit(
+                            "lyrics://batch",
+                            serde_json::json!({
+                                "trackId": track_id,
+                                "source": source,
+                                "items": [],
+                                "error": e,
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+        let _ = app.emit("lyrics://done", serde_json::json!({ "trackId": track_id }));
+    });
+
+    Ok(())
+}
+
+/// Fetch full lyrics text for a candidate (source-prefixed id).
+#[tauri::command]
+pub async fn lyrics_fetch(id: String) -> Result<LyricsContent, String> {
+    tauri::async_runtime::spawn_blocking(move || lyrics::fetch(&id).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Re-read one track's file state into DB (shared by lyrics ops).
+fn rescan_track_row(state: &State<'_, AppState>, path: &Path) {
+    if let Ok(mut guard) = state.db.lock() {
+        if let Some(db) = guard.as_mut() {
+            if let Ok(mut row) = scanner::read_track(path) {
+                let meta = std::fs::metadata(path).ok();
+                let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let mtime = meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                row.path = path.to_string_lossy().to_string();
+                let _ = db.upsert_track(&row, file_size, mtime);
+            }
+        }
+    }
+}
+
+/// Save lyrics for a track. mode: "sidecar"（默认，外挂 .lrc）| "embed"（内嵌到标签）.
+#[tauri::command]
+pub async fn lyrics_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: i64,
+    lrc_id: String,
+    mode: String,
+) -> Result<String, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    let path_buf = PathBuf::from(&path);
+
+    let content = lyrics_fetch(lrc_id).await?;
+    let text = lyrics::best_text(&content)
+        .ok_or("该候选没有歌词内容")?
+        .to_string();
+
+    let desc = if mode == "embed" {
+        let backup_root = crate::paths::data_root().to_path_buf();
+        crate::tagger::backup_file(&path_buf, &backup_root).map_err(|e| e.to_string())?;
+        crate::tagger::write_track(
+            &path_buf,
+            &[crate::scraper::FieldChange {
+                field: "lyrics".into(),
+                old: String::new(),
+                new: text,
+            }],
+            None,
+            "",
+            "",
+        )
+        .map_err(|e| e.to_string())?;
+        "已内嵌到文件标签".to_string()
+    } else {
+        let dest = lyrics::write_sidecar(&path_buf, &text, false).map_err(|e| e.to_string())?;
+        format!("已写入外挂歌词 {}", dest.display())
+    };
+
+    rescan_track_row(&state, &path_buf);
+    let _ = app.emit("library://changed", track_id);
+    Ok(desc)
+}
+
+/// Export embedded lyrics → sidecar .lrc（内嵌转外挂）.
+#[tauri::command]
+pub fn lyrics_export_sidecar(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: i64,
+    overwrite: bool,
+) -> Result<String, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    let path_buf = PathBuf::from(&path);
+    let text = lyrics::read_embedded(&path_buf)
+        .map_err(|e| e.to_string())?
+        .ok_or("文件里没有内嵌歌词")?;
+    let dest = lyrics::write_sidecar(&path_buf, &text, overwrite).map_err(|e| e.to_string())?;
+    rescan_track_row(&state, &path_buf);
+    let _ = app.emit("library://changed", track_id);
+    Ok(format!("已导出到 {}", dest.display()))
+}
+
+/// Embed sidecar .lrc → file tag（外挂转内嵌）.
+#[tauri::command]
+pub fn lyrics_embed_sidecar(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<String, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    let path_buf = PathBuf::from(&path);
+    let text = lyrics::read_sidecar(&path_buf).map_err(|e| e.to_string())?;
+
+    let backup_root = crate::paths::data_root().to_path_buf();
+    crate::tagger::backup_file(&path_buf, &backup_root).map_err(|e| e.to_string())?;
+    crate::tagger::write_track(
+        &path_buf,
+        &[crate::scraper::FieldChange {
+            field: "lyrics".into(),
+            old: String::new(),
+            new: text,
+        }],
+        None,
+        "",
+        "",
+    )
+    .map_err(|e| e.to_string())?;
+
+    rescan_track_row(&state, &path_buf);
+    let _ = app.emit("library://changed", track_id);
+    Ok("已内嵌到文件标签（外挂 .lrc 保留未删）".into())
+}
+
+/// Read current lyrics for preview: embedded first, else sidecar.
+#[tauri::command]
+pub fn lyrics_current(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<serde_json::Value, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    let path_buf = PathBuf::from(&path);
+    let embedded = lyrics::read_embedded(&path_buf).ok().flatten();
+    let sidecar = lyrics::read_sidecar(&path_buf).ok();
+    Ok(serde_json::json!({
+        "embedded": embedded,
+        "sidecar": sidecar,
+    }))
+}
+
 // ���� scrape (MusicBrainz / Cover Art Archive) ������������������������������������������
 
 use crate::scraper::{self, ApplyPlan, CatalogTrackDraft, FieldChange, ScrapeCandidate, TrackPlan};

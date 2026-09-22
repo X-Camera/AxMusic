@@ -45,7 +45,10 @@ export interface TrackRow {
   sample_rate: number | null;
   bit_rate: number | null;
   has_cover: boolean;
+  /** 内嵌歌词（标签内） */
   has_lyrics: boolean;
+  /** 外挂歌词（同目录同名 .lrc） */
+  has_lrc: boolean;
   has_year: boolean;
   has_mb_id: boolean;
   tag_status: string;
@@ -176,4 +179,34 @@ export interface CompareData {
   track: TrackRow;
   catalog: CatalogRow | null;
   changes: FieldChange[];
+}
+
+export interface LyricsCandidate {
+  /** source-prefixed id, e.g. "lrclib:123" / "netease:456" / "qq:xxx" */
+  id: string;
+  source: "lrclib" | "netease" | "qq";
+  track_name: string;
+  artist_name: string;
+  album_name: string;
+  duration: number;
+  has_synced: boolean;
+  has_plain: boolean;
+}
+
+export interface LyricsContent {
+  synced: string | null;
+  plain: string | null;
+  translation: string | null;
+}
+
+export interface LyricsCurrent {
+  embedded: string | null;
+  sidecar: string | null;
+}
+
+export interface LyricsBatch {
+  trackId: number;
+  source: string;
+  items: LyricsCandidate[];
+  error?: string;
 }

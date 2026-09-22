@@ -2,6 +2,7 @@
 
 mod commands;
 mod library;
+mod lyrics;
 mod paths;
 mod player;
 mod scanner;
@@ -77,6 +78,12 @@ pub fn run() {
             commands::catalog_match_one,
             commands::catalog_match_all,
             commands::catalog_apply_to_track,
+            commands::lyrics_search,
+            commands::lyrics_fetch,
+            commands::lyrics_save,
+            commands::lyrics_export_sidecar,
+            commands::lyrics_embed_sidecar,
+            commands::lyrics_current,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AxMusic");

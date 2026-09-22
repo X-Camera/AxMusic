@@ -9,6 +9,7 @@ import { TopBar } from "../../components/TopBar";
 import { TrackTable } from "./TrackTable";
 import { ComparePanel } from "./ComparePanel";
 import { ScrapeWizard } from "./ScrapeWizard";
+import { LyricsPanel } from "./LyricsPanel";
 import "./ManagePage.css";
 
 export function ManagePage() {
@@ -25,6 +26,7 @@ export function ManagePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [scrapeOpen, setScrapeOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   const [compareId, setCompareId] = useState<number | null>(null);
   const [compareVersion, setCompareVersion] = useState(0);
 
@@ -316,7 +318,11 @@ export function ManagePage() {
             <button className="btn btn-primary" onClick={() => void playSelected()}>
               <Play size={15} /> 播放所选
             </button>
-            <button className="btn" disabled title="补歌词在后续里程碑">
+            <button
+              className="btn"
+              title="LRCLIB 在线补歌词（默认外挂 .lrc），支持嵌/挂互转"
+              onClick={() => setLyricsOpen(true)}
+            >
               补歌词
             </button>
             <button
@@ -338,6 +344,14 @@ export function ManagePage() {
             void reloadTracks();
             setSelected(new Set());
           }}
+        />
+      )}
+
+      {lyricsOpen && (
+        <LyricsPanel
+          tracks={filtered.filter((t) => selected.has(t.id))}
+          onClose={() => setLyricsOpen(false)}
+          onSaved={() => void reloadTracks()}
         />
       )}
     </>

@@ -126,6 +126,15 @@ where
     })
 }
 
+/// 外挂歌词 = 与音频文件同目录、同主名、扩展名 .lrc
+pub fn sidecar_lrc_path(path: &Path) -> PathBuf {
+    path.with_extension("lrc")
+}
+
+pub fn sidecar_lrc_exists(path: &Path) -> bool {
+    sidecar_lrc_path(path).is_file()
+}
+
 /// Parse one audio file into a `TrackRow` (path filled by caller).
 pub fn read_track(path: &Path) -> Result<TrackRow> {
     let tagged = Probe::open(path)?.read()?;
@@ -161,6 +170,7 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         bit_rate,
         has_cover: false,
         has_lyrics: false,
+        has_lrc: sidecar_lrc_exists(path),
         has_year: false,
         has_mb_id: false,
         tag_status: "unmatched".into(),
@@ -252,7 +262,10 @@ fn compute_status(row: &mut TrackRow) {
         missing.push("封");
     }
     if !row.has_lyrics {
-        missing.push("词");
+        missing.push("嵌");
+    }
+    if !row.has_lrc {
+        missing.push("挂");
     }
     if !row.has_year {
         missing.push("年");

@@ -35,6 +35,8 @@ pub struct TrackRow {
     pub bit_rate: Option<i64>,
     pub has_cover: bool,
     pub has_lyrics: bool,
+    /// 外挂 .lrc（与音频同目录同名）
+    pub has_lrc: bool,
     pub has_year: bool,
     pub has_mb_id: bool,
     pub tag_status: String,
@@ -79,7 +81,7 @@ pub fn now_iso() -> String {
 /// Shared column list for SELECTs mapped by [`map_track`].
 const TRACK_COLS: &str = "id, path, filename, title, artist, album, album_artist, year, track_no,
         duration_ms, format, sample_rate, bit_rate,
-        has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing,
+        has_cover, has_lyrics, has_lrc, has_year, has_mb_id, tag_status, missing,
         release_type, mb_recording_mbid, mb_release_mbid, catalog_id";
 
 impl LibraryDb {
@@ -147,6 +149,7 @@ impl LibraryDb {
                 bit_rate INTEGER,
                 has_cover INTEGER NOT NULL DEFAULT 0,
                 has_lyrics INTEGER NOT NULL DEFAULT 0,
+                has_lrc INTEGER NOT NULL DEFAULT 0,
                 has_year INTEGER NOT NULL DEFAULT 0,
                 has_mb_id INTEGER NOT NULL DEFAULT 0,
                 tag_status TEXT NOT NULL DEFAULT 'unmatched',
@@ -179,6 +182,7 @@ impl LibraryDb {
             "ALTER TABLE tracks ADD COLUMN release_type TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE tracks ADD COLUMN mb_recording_mbid TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE tracks ADD COLUMN mb_release_mbid TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE tracks ADD COLUMN has_lrc INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE catalog ADD COLUMN release_type TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = self.conn.execute(ddl, []);
@@ -231,11 +235,11 @@ impl LibraryDb {
             INSERT INTO tracks (
                 path, filename, title, artist, album, album_artist, year, track_no,
                 duration_ms, format, sample_rate, bit_rate,
-                has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing,
+                has_cover, has_lyrics, has_lrc, has_year, has_mb_id, tag_status, missing,
                 file_size, mtime, is_deleted,
                 release_type, mb_recording_mbid, mb_release_mbid, updated_at
             ) VALUES (
-                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,0,?21,?22,?23,?24
+                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0,?22,?23,?24,?25
             )
             ON CONFLICT(path) DO UPDATE SET
                 filename=excluded.filename,
@@ -251,6 +255,7 @@ impl LibraryDb {
                 bit_rate=excluded.bit_rate,
                 has_cover=excluded.has_cover,
                 has_lyrics=excluded.has_lyrics,
+                has_lrc=excluded.has_lrc,
                 has_year=excluded.has_year,
                 has_mb_id=excluded.has_mb_id,
                 tag_status=excluded.tag_status,
@@ -278,6 +283,7 @@ impl LibraryDb {
                 t.bit_rate,
                 t.has_cover as i64,
                 t.has_lyrics as i64,
+                t.has_lrc as i64,
                 t.has_year as i64,
                 t.has_mb_id as i64,
                 t.tag_status,
@@ -677,14 +683,15 @@ fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
         bit_rate: r.get(12)?,
         has_cover: r.get::<_, i64>(13)? != 0,
         has_lyrics: r.get::<_, i64>(14)? != 0,
-        has_year: r.get::<_, i64>(15)? != 0,
-        has_mb_id: r.get::<_, i64>(16)? != 0,
-        tag_status: r.get(17)?,
-        missing: r.get(18)?,
-        release_type: r.get(19)?,
-        mb_recording_mbid: r.get(20)?,
-        mb_release_mbid: r.get(21)?,
-        catalog_id: r.get(22)?,
+        has_lrc: r.get::<_, i64>(15)? != 0,
+        has_year: r.get::<_, i64>(16)? != 0,
+        has_mb_id: r.get::<_, i64>(17)? != 0,
+        tag_status: r.get(18)?,
+        missing: r.get(19)?,
+        release_type: r.get(20)?,
+        mb_recording_mbid: r.get(21)?,
+        mb_release_mbid: r.get(22)?,
+        catalog_id: r.get(23)?,
     })
 }
 

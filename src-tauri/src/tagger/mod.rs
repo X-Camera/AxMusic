@@ -60,6 +60,9 @@ fn apply_change(tag: &mut lofty::tag::Tag, field: &str, new: &str) {
                 tag.set_track(n);
             }
         }
+        "lyrics" => {
+            tag.insert_text(ItemKey::Lyrics, new.to_string());
+        }
         "release_type" => {
             tag.insert_text(ItemKey::Unknown("RELEASETYPE".into()), new.to_string());
         }
