@@ -75,6 +75,9 @@ export interface AlbumCard {
   has_cover: boolean;
   track_count: number;
   cover_path: string | null;
+  /** 封面懒加载样例曲目（组内优先有封面的） */
+  cover_track_path: string | null;
+  cover_track_mtime: number;
 }
 
 /** 管理页右栏「库统计」聚合数据 */
@@ -97,6 +100,8 @@ export interface TrackFilter {
   missing_only?: boolean;
   unlinked_only?: boolean;
   limit?: number | null;
+  /** "album"（默认）| "title" | "artist" */
+  sort?: "album" | "title" | "artist" | null;
 }
 
 export interface ScanProgress {
@@ -123,6 +128,7 @@ export interface PathsInfo {
 }
 
 export type RouteId =
+  | "songs"
   | "albums"
   | "artists"
   | "folders"

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { api } from "../lib/api";
-import type { PlayerSnapshot, QueueItem, RouteId } from "../lib/types";
+import type { PlayerSnapshot, QueueItem, RouteId, TrackInfo } from "../lib/types";
 
 interface AppState {
   route: RouteId;
@@ -32,6 +32,19 @@ const emptyPlayer = (): PlayerSnapshot => ({
   queue_index: null,
 });
 
+/** 播放器操作序号：轮询结果不得覆盖更新的点播/控制操作 */
+let playerRev = 0;
+
+function queueItemToTrack(item: QueueItem): TrackInfo {
+  return {
+    path: item.path,
+    title: item.title,
+    duration_ms: item.duration_ms,
+    sample_rate: 0,
+    channels: 2,
+  };
+}
+
 export const useApp = create<AppState>((set, get) => ({
   route: "albums",
   setRoute: (route) => set({ route }),
@@ -43,9 +56,10 @@ export const useApp = create<AppState>((set, get) => ({
   refreshPlayer: async () => {
     if (get().refreshing) return;
     set({ refreshing: true });
+    const rev = playerRev;
     try {
       const p = await api.getPlayerState();
-      set({ player: p });
+      if (rev === playerRev) set({ player: p });
     } catch {
       /* keep last */
     } finally {
@@ -53,31 +67,61 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   playPath: async (path) => {
+    playerRev += 1;
+    const rev = playerRev;
     const p = await api.playFile(path);
-    set({ player: p });
+    if (rev === playerRev) set({ player: p });
   },
   playQueue: async (items, start) => {
+    playerRev += 1;
+    const rev = playerRev;
+    const item = items[start];
+    if (item) {
+      // 先乐观对准本次点击，避免轮询旧快照把界面拨回上一首
+      const prev = get().player;
+      set({
+        player: {
+          status: "Playing",
+          position_ms: 0,
+          duration_ms: item.duration_ms,
+          volume: prev?.volume ?? 0.8,
+          track: queueItemToTrack(item),
+          queue: items,
+          queue_index: start,
+        },
+      });
+    }
     const p = await api.playQueue(items, start);
-    set({ player: p });
+    if (rev === playerRev) set({ player: p });
   },
   toggle: async () => {
+    playerRev += 1;
+    const rev = playerRev;
     const p = await api.playerToggle();
-    set({ player: p });
+    if (rev === playerRev) set({ player: p });
   },
   next: async () => {
+    playerRev += 1;
+    const rev = playerRev;
     const p = await api.playerNext();
-    set({ player: p });
+    if (rev === playerRev) set({ player: p });
   },
   prev: async () => {
+    playerRev += 1;
+    const rev = playerRev;
     const p = await api.playerPrev();
-    set({ player: p });
+    if (rev === playerRev) set({ player: p });
   },
   seek: async (ms) => {
+    playerRev += 1;
+    const rev = playerRev;
     const p = await api.playerSeek(ms);
-    set({ player: p });
+    if (rev === playerRev) set({ player: p });
   },
   setVolume: async (v) => {
+    playerRev += 1;
+    const rev = playerRev;
     const p = await api.playerSetVolume(v);
-    set({ player: p ?? { ...emptyPlayer(), volume: v } });
+    if (rev === playerRev) set({ player: p ?? { ...emptyPlayer(), volume: v } });
   },
 }));

@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { AlbumWallPage } from "./features/browse/AlbumWallPage";
 import { PlaceholderPage } from "./features/browse/PlaceholderPage";
+import { SongsPage } from "./features/browse/SongsPage";
 import { ManagePage } from "./features/manage/ManagePage";
 import { NowPlayingPage } from "./features/player/NowPlayingPage";
 import { PlaylistsPage } from "./features/playlists/PlaylistsPage";
@@ -17,6 +18,7 @@ export default function App() {
       <TitleBar />
       <Sidebar />
       <div className="main-col">
+        {route === "songs" && <SongsPage />}
         {route === "albums" && <AlbumWallPage />}
         {route === "manage" && <ManagePage />}
         {route === "artists" && <PlaceholderPage route="artists" />}

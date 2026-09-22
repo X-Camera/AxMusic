@@ -1,17 +1,35 @@
+/* ── 专辑详情 ── */
+.album-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  animation: browse-fade-in var(--dur-slow) var(--ease-out);
+}
+
 .album-wall {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: var(--space-4) var(--space-4);
   align-items: start;
+  animation: browse-fade-in var(--dur-slow) var(--ease-out);
 }
 
-.album-cell.open {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: var(--space-4);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border);
+@keyframes browse-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .album-detail,
+  .album-wall {
+    animation: none;
+  }
 }
 
 .album-card {
@@ -29,6 +47,10 @@
   transform: translateY(-2px);
 }
 
+.album-cover-wrap {
+  position: relative;
+}
+
 .album-cover {
   position: relative;
   aspect-ratio: 1 / 1;
@@ -41,6 +63,21 @@
   place-items: center;
 }
 
+.album-cover.detail {
+  width: 200px;
+  height: 200px;
+  aspect-ratio: auto;
+  flex-shrink: 0;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.album-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .album-cover.placeholder {
   background: linear-gradient(145deg, #1a1d26 0%, #222632 100%);
 }
@@ -51,6 +88,10 @@
   font-weight: 600;
   color: var(--text-tertiary);
   opacity: 0.85;
+}
+
+.album-cover.detail .album-initial {
+  font-size: 56px;
 }
 
 .album-play {
@@ -89,24 +130,46 @@
   margin-top: -4px;
 }
 
-.album-tracks {
+/* ── 专辑详情内容 ── */
+.album-detail-head {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-end;
+}
+
+.album-detail-meta {
+  min-width: 0;
+  padding-bottom: 4px;
+}
+
+.album-track-list {
   display: flex;
   flex-direction: column;
-  padding: 6px;
-  max-height: 320px;
-  overflow: auto;
+  gap: 2px;
+}
+
+.album-track-head {
+  display: grid;
+  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
+  gap: 8px;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
 }
 
 .album-track-row {
   display: grid;
-  grid-template-columns: 32px 1fr 48px;
+  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
-  height: 36px;
+  min-height: 36px;
   padding: 0 8px;
   border-radius: 6px;
-  text-align: left;
   color: var(--text);
+  cursor: pointer;
 }
 
 .album-track-row:hover {
@@ -117,4 +180,16 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 歌曲页 / 专辑详情共用的操作格 hover 显隐 */
+.song-actions {
+  display: flex;
+  justify-content: center;
+  opacity: 0;
+}
+
+.song-row:hover .song-actions,
+.album-track-row:hover .song-actions {
+  opacity: 1;
 }

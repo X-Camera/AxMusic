@@ -72,6 +72,9 @@ pub struct AlbumCard {
     pub has_cover: bool,
     pub track_count: i64,
     pub cover_path: Option<String>,
+    /// 封面懒加载样例曲目（组内优先有封面的）
+    pub cover_track_path: Option<String>,
+    pub cover_track_mtime: i64,
 }
 
 /// 管理页右栏「库统计」面板的聚合数据。
@@ -94,12 +97,19 @@ pub struct LibraryStats {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrackFilter {
+    #[serde(default)]
     pub query: Option<String>,
     /// Only rows missing at least one of: cover / lyrics / year / type / mb
+    #[serde(default)]
     pub missing_only: bool,
     /// Only rows not yet linked to a catalog record (待刮削).
+    #[serde(default)]
     pub unlinked_only: bool,
+    #[serde(default)]
     pub limit: Option<i64>,
+    /// "album"（默认）| "title" | "artist"
+    #[serde(default)]
+    pub sort: Option<String>,
 }
 
 pub fn now_iso() -> String {
@@ -372,11 +382,16 @@ impl LibraryDb {
         if filter.unlinked_only {
             where_conds.push("(catalog_id IS NULL OR catalog_id = 0)");
         }
+        let order = match filter.sort.as_deref() {
+            Some("title") => "title, album_artist, album, track_no, filename",
+            Some("artist") => "artist, album, track_no, filename",
+            _ => "album_artist, album, track_no, filename",
+        };
         let sql = format!(
             "SELECT {TRACK_COLS}
              FROM tracks
              WHERE {}
-             ORDER BY album_artist, album, track_no, filename
+             ORDER BY {order}
              LIMIT ?1",
             where_conds.join(" AND ")
         );
@@ -431,18 +446,31 @@ impl LibraryDb {
     }
 
     pub fn list_albums(&self) -> Result<Vec<AlbumCard>> {
+        // cover_track_*：组内优先有封面的样例曲目，前端 coverCache 懒加载封面
         let mut stmt = self.conn.prepare(
             "SELECT
-                CASE WHEN album = '' THEN 'Unknown Album' ELSE album END AS album,
-                CASE WHEN album_artist = '' THEN
-                    (CASE WHEN artist = '' THEN 'Unknown Artist' ELSE artist END)
-                ELSE album_artist END AS album_artist,
-                MAX(year) AS year,
-                MAX(has_cover) AS has_cover,
-                COUNT(*) AS track_count
-             FROM tracks
-             WHERE is_deleted = 0
-             GROUP BY album, album_artist
+                CASE WHEN t.album = '' THEN 'Unknown Album' ELSE t.album END AS album,
+                CASE WHEN t.album_artist = '' THEN
+                    (CASE WHEN t.artist = '' THEN 'Unknown Artist' ELSE t.artist END)
+                ELSE t.album_artist END AS album_artist,
+                MAX(t.year) AS year,
+                MAX(t.has_cover) AS has_cover,
+                COUNT(*) AS track_count,
+                (SELECT t2.path FROM tracks t2
+                  WHERE t2.is_deleted = 0
+                    AND t2.album = t.album
+                    AND t2.album_artist = t.album_artist
+                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
+                  LIMIT 1) AS cover_track_path,
+                (SELECT t2.mtime FROM tracks t2
+                  WHERE t2.is_deleted = 0
+                    AND t2.album = t.album
+                    AND t2.album_artist = t.album_artist
+                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
+                  LIMIT 1) AS cover_track_mtime
+             FROM tracks t
+             WHERE t.is_deleted = 0
+             GROUP BY t.album, t.album_artist
              ORDER BY album_artist, album",
         )?;
         let rows = stmt
@@ -454,6 +482,8 @@ impl LibraryDb {
                     has_cover: r.get::<_, i64>(3)? != 0,
                     track_count: r.get(4)?,
                     cover_path: None,
+                    cover_track_path: r.get(5)?,
+                    cover_track_mtime: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

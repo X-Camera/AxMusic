@@ -78,24 +78,13 @@ impl Player {
 
     /// Play a single file (no queue change if empty).
     pub fn play_path(&mut self, path: &Path) -> Result<TrackInfo> {
-        self.engine.open(path)?;
-        self.engine.play_inner();
-        Ok(self.engine.current_track().unwrap_or(TrackInfo {
-            path: path.to_string_lossy().to_string(),
-            title: path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            duration_ms: 0,
-            sample_rate: 0,
-            channels: 2,
-        }))
+        self.engine.play_path_at(path)
     }
 
     /// Play queue starting at index (items = full queue).
+    /// 队列先同步写入 shared，再下发指令，避免首次点击时 play_index 读到空队列。
     pub fn play_queue(&mut self, items: Vec<QueueItem>, start: usize) -> Result<TrackInfo> {
-        self.engine.set_queue(items);
-        self.engine.play_index(start)
+        self.engine.play_queue_at(items, start)
     }
 
     pub fn next(&mut self) -> Result<Option<TrackInfo>> {

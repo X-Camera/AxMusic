@@ -3,6 +3,7 @@ import {
   FolderOpen,
   ListMusic,
   ListVideo,
+  Music2,
   Settings,
   UserRound,
 } from "lucide-react";
@@ -12,6 +13,7 @@ import { useApp } from "../state/useApp";
 import "./Sidebar.css";
 
 const PLAY_ITEMS: { id: RouteId; label: string; icon: typeof Disc3 }[] = [
+  { id: "songs", label: "歌曲", icon: Music2 },
   { id: "albums", label: "专辑墙", icon: Disc3 },
   { id: "artists", label: "歌手", icon: UserRound },
   { id: "folders", label: "文件夹", icon: FolderOpen },

@@ -602,8 +602,10 @@ pub fn play_file(
     let info = player
         .play_path(Path::new(&path))
         .map_err(|e| e.to_string())?;
-    let _ = info;
-    let snap = player.snapshot();
+    let mut snap = player.snapshot();
+    // 以本次点击为准（worker 打开解码前 snapshot 可能仍指向上一首）
+    snap.track = Some(info);
+    snap.status = crate::player::PlayStatus::Playing;
     let _ = app.emit("player://state", &snap);
     Ok(snap)
 }
@@ -616,10 +618,13 @@ pub fn play_queue(
     start: usize,
 ) -> Result<PlayerSnapshot, String> {
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
-    player
+    let info = player
         .play_queue(items, start)
         .map_err(|e| e.to_string())?;
-    let snap = player.snapshot();
+    let mut snap = player.snapshot();
+    // 以本次点击为准，避免界面显示新歌、出声还是上一首
+    snap.track = Some(info);
+    snap.status = crate::player::PlayStatus::Playing;
     let _ = app.emit("player://state", &snap);
     Ok(snap)
 }

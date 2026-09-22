@@ -1,0 +1,173 @@
+/* 视图切换（列表 / 卡片） */
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-card);
+}
+
+.view-toggle-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+}
+
+.view-toggle-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.view-toggle-btn.active {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* ── 列表 ── */
+.songs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: songs-fade-in var(--dur-slow) var(--ease-out);
+}
+
+.songs-head {
+  display: grid;
+  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
+  gap: 8px;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.song-row {
+  display: grid;
+  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.song-row:hover {
+  background: var(--bg-hover);
+}
+
+/* ── 卡片网格 ── */
+.songs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+  animation: songs-fade-in var(--dur-slow) var(--ease-out);
+}
+
+.song-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.song-card:hover {
+  transform: translateY(-2px);
+}
+
+.song-card-cover {
+  position: relative;
+}
+
+.song-card-cover .album-cover {
+  width: 100%;
+}
+
+.song-card-play,
+.song-card-add {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+.song-card-play {
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
+  background: var(--accent);
+  color: var(--text);
+}
+
+.song-card-add {
+  right: 8px;
+  top: 8px;
+  width: 28px;
+  height: 28px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.song-card:hover .song-card-play,
+.song-card:hover .song-card-add {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.song-card-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.song-card-sub {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: -4px;
+}
+
+@keyframes songs-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .songs-list,
+  .songs-grid,
+  .song-card {
+    animation: none;
+    transition: none;
+  }
+}

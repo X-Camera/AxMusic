@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { ArrowLeft, Search } from "lucide-react";
 import type { ReactNode } from "react";
 
 import "./TopBar.css";
@@ -8,15 +8,24 @@ export function TopBar({
   actions,
   searchValue,
   onSearch,
+  onBack,
 }: {
-  title: string;
+  /** 详情页可省略（标题已在内容区展示） */
+  title?: string;
   actions?: ReactNode;
   searchValue?: string;
   onSearch?: (v: string) => void;
+  /** 有则在左上角显示「返回」 */
+  onBack?: () => void;
 }) {
   return (
     <header className="topbar">
-      <h1 className="topbar-title">{title}</h1>
+      {onBack && (
+        <button className="btn topbar-back" onClick={onBack} title="返回">
+          <ArrowLeft size={15} /> 返回
+        </button>
+      )}
+      {title != null && title !== "" && <h1 className="topbar-title">{title}</h1>}
       {onSearch && (
         <div className="topbar-search">
           <Search size={14} className="tertiary" />

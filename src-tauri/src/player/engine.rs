@@ -34,6 +34,8 @@ const BLOCK_SAMPLES: usize = 2048;
 const BLOCK_QUEUE: usize = 8;
 
 enum Cmd {
+    /// 原子切歌：写队列 + 打开 + 播放，避免多条指令交错导致出声与 UI 不一致
+    PlayQueue { items: Vec<QueueItem>, start: usize },
     Open { path: PathBuf, index: Option<usize> },
     Play,
     Pause,
@@ -174,25 +176,58 @@ impl SymphoniaPlayer {
         }
     }
 
-    pub fn play_index(&mut self, index: usize) -> Result<TrackInfo> {
-        let item = {
-            let q = self.shared.queue.lock().unwrap();
-            q.get(index).cloned()
-        };
-        let item = item.ok_or_else(|| anyhow!("队列中无此曲目"))?;
-        let path = PathBuf::from(&item.path);
-        let _ = self.cmd_tx.send(Cmd::Open {
-            path,
-            index: Some(index),
-        });
-        let _ = self.cmd_tx.send(Cmd::Play);
-        Ok(TrackInfo {
-            path: item.path,
-            title: item.title,
+    /// 同步写入 shared（UI 立刻对准本次点击），再下发原子 PlayQueue 打开解码。
+    pub fn play_queue_at(&mut self, items: Vec<QueueItem>, start: usize) -> Result<TrackInfo> {
+        let item = items
+            .get(start)
+            .cloned()
+            .ok_or_else(|| anyhow!("队列中无此曲目"))?;
+        let info = TrackInfo {
+            path: item.path.clone(),
+            title: item.title.clone(),
             duration_ms: item.duration_ms,
             sample_rate: self.output_sample_rate,
             channels: 2,
-        })
+        };
+        if let Ok(mut q) = self.shared.queue.lock() {
+            *q = items.clone();
+        }
+        if let Ok(mut qi) = self.shared.queue_index.lock() {
+            *qi = Some(start);
+        }
+        if let Ok(mut t) = self.shared.track.lock() {
+            *t = Some(info.clone());
+        }
+        self.shared
+            .duration_ms
+            .store(info.duration_ms.max(1), Ordering::SeqCst);
+        self.shared.position_frames.store(0, Ordering::SeqCst);
+        self.shared.track_ended.store(false, Ordering::SeqCst);
+        self.shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+        self.shared.request_flush();
+        let _ = self.cmd_tx.send(Cmd::PlayQueue { items, start });
+        Ok(info)
+    }
+
+    /// 同步写入 shared.track 后打开单文件，保证 snapshot 与点击一致。
+    pub fn play_path_at(&mut self, path: &Path) -> Result<TrackInfo> {
+        let info = quick_track_info(path);
+        if let Ok(mut t) = self.shared.track.lock() {
+            *t = Some(info.clone());
+        }
+        self.shared
+            .duration_ms
+            .store(info.duration_ms.max(1), Ordering::SeqCst);
+        self.shared.position_frames.store(0, Ordering::SeqCst);
+        self.shared.track_ended.store(false, Ordering::SeqCst);
+        self.shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+        self.shared.request_flush();
+        let _ = self.cmd_tx.send(Cmd::Open {
+            path: path.to_path_buf(),
+            index: None,
+        });
+        let _ = self.cmd_tx.send(Cmd::Play);
+        Ok(info)
     }
 
     pub fn next(&mut self) -> Result<Option<TrackInfo>> {
@@ -247,11 +282,7 @@ impl SymphoniaPlayer {
 
 impl PlayerEngine for SymphoniaPlayer {
     fn open(&mut self, path: &Path) -> Result<TrackInfo> {
-        let _ = self.cmd_tx.send(Cmd::Open {
-            path: path.to_path_buf(),
-            index: None,
-        });
-        Ok(quick_track_info(path))
+        self.play_path_at(path)
     }
 
     fn play(&mut self) {
@@ -727,6 +758,7 @@ fn decode_loop(
     let mut playing = false;
     let mut queue: Vec<QueueItem> = Vec::new();
     let mut queue_index: Option<usize> = None;
+    let mut pending_block: Option<Vec<f32>> = None;
 
     // drop leftover blocks helper
     let flush = || {
@@ -736,8 +768,33 @@ fn decode_loop(
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
+                Cmd::PlayQueue { items, start } => {
+                    queue = items;
+                    queue_index = Some(start);
+                    if let Ok(mut q) = shared.queue.lock() {
+                        *q = queue.clone();
+                    }
+                    if let Ok(mut qi) = shared.queue_index.lock() {
+                        *qi = Some(start);
+                    }
+                    flush();
+                    pending_block = None;
+                    if let Some(item) = queue.get(start).cloned() {
+                        let path = PathBuf::from(&item.path);
+                        dec = open_track_full(&shared, &path, Some(start), Some(&item));
+                        playing = dec.is_some();
+                        if playing {
+                            shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                        }
+                    } else {
+                        dec = None;
+                        playing = false;
+                        shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
+                    }
+                }
                 Cmd::Open { path, index } => {
                     flush();
+                    pending_block = None;
                     let item = index.and_then(|i| queue.get(i).cloned());
                     dec = open_track_full(&shared, &path, index, item.as_ref());
                 }
@@ -819,12 +876,21 @@ fn decode_loop(
 
         if playing {
             if let Some(d) = dec.as_mut() {
-                match fill_block(d, out_rate) {
+                if pending_block.is_none() {
+                    pending_block = fill_block(d, out_rate);
+                }
+                match pending_block.take() {
                     Some(block) => {
-                        // block if queue full (backpressure) so we don't spin
-                        if block_tx.send(block).is_err() {
-                            // audio side gone
-                            playing = false;
+                        // try_send：满则暂存，绝不阻塞，保证切歌指令能被立刻处理
+                        match block_tx.try_send(block) {
+                            Ok(()) => {}
+                            Err(crossbeam_channel::TrySendError::Full(b)) => {
+                                pending_block = Some(b);
+                                std::thread::sleep(Duration::from_millis(2));
+                            }
+                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                                playing = false;
+                            }
                         }
                     }
                     None => {
@@ -835,6 +901,7 @@ fn decode_loop(
                                 let item = queue[idx + 1].clone();
                                 let path = PathBuf::from(&item.path);
                                 flush();
+                                pending_block = None;
                                 queue_index = Some(idx + 1);
                                 let d2 = open_track_full(&shared, &path, queue_index, Some(&item));
                                 dec = d2;
