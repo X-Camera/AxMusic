@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "AxMusic",
         "width": 1200,
         "height": 800,
@@ -22,7 +23,8 @@
     ],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": false
   },
   "bundle": {
     "active": true,

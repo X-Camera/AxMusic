@@ -1,9 +1,7 @@
 //! Symphonia decode + cpal output (WASAPI).
 //!
-//! Threading:
-//! - One playback worker owns the `cpal::Stream` (`!Send`) and decodes into a ring buffer
-//! - The cpal callback drains the ring (RT-safe) and applies volume
-//! - UI talks via a command channel and reads `Shared` atomics
+//! Pipeline: decode worker → bounded block channel (stereo f32 @ device rate) → cpal callback.
+//! Block queue outputs silence on gap (no ring-buffer cache garbage).
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -13,9 +11,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat, Stream, StreamConfig};
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use ringbuf::{traits::*, HeapCons, HeapProd, HeapRb};
+use cpal::{Sample, SampleFormat, Stream};
+use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use symphonia::core::audio::AudioBufferRef;
 use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::Error as SymError;
@@ -28,28 +25,21 @@ use symphonia::core::units::Time;
 
 use super::{PlayerEngine, PlayStatus, PlayerSnapshot, QueueItem, TrackInfo};
 
-const RING_SECONDS: usize = 2;
 const STATUS_STOPPED: u8 = 0;
 const STATUS_PLAYING: u8 = 1;
 const STATUS_PAUSED: u8 = 2;
+/// Stereo interleaved samples per block.
+const BLOCK_SAMPLES: usize = 2048;
+/// Blocks kept in flight (~0.15s at 1024 frames).
+const BLOCK_QUEUE: usize = 8;
 
 enum Cmd {
-    Open {
-        path: PathBuf,
-        index: Option<usize>,
-    },
+    Open { path: PathBuf, index: Option<usize> },
     Play,
     Pause,
-    Seek {
-        ms: u64,
-    },
-    SetVolume {
-        v: f32,
-    },
-    SetQueue {
-        items: Vec<QueueItem>,
-        start: usize,
-    },
+    Seek { ms: u64 },
+    SetVolume { v: f32 },
+    SetQueue { items: Vec<QueueItem>, start: usize },
     Next,
     Prev,
     Stop,
@@ -62,7 +52,7 @@ struct Shared {
     duration_ms: AtomicU64,
     volume_bits: AtomicU32,
     track_ended: AtomicBool,
-    clear_ring: AtomicBool,
+    flush_audio: AtomicBool,
     track: Mutex<Option<TrackInfo>>,
     queue: Mutex<Vec<QueueItem>>,
     queue_index: Mutex<Option<usize>>,
@@ -78,7 +68,7 @@ impl Shared {
             duration_ms: AtomicU64::new(0),
             volume_bits: AtomicU32::new(0.8f32.to_bits()),
             track_ended: AtomicBool::new(false),
-            clear_ring: AtomicBool::new(false),
+            flush_audio: AtomicBool::new(false),
             track: Mutex::new(None),
             queue: Mutex::new(Vec::new()),
             queue_index: Mutex::new(None),
@@ -100,19 +90,15 @@ impl Shared {
 
     fn position_ms(&self) -> u64 {
         let sr = self.sample_rate.load(Ordering::SeqCst).max(1);
-        let frames = self.position_frames.load(Ordering::SeqCst);
-        frames * 1000 / sr
+        self.position_frames.load(Ordering::SeqCst) * 1000 / sr
     }
 
     fn queue_index(&self) -> Option<usize> {
-        self.queue_index
-            .lock()
-            .map(|g| *g)
-            .unwrap_or(None)
+        self.queue_index.lock().map(|g| *g).unwrap_or(None)
     }
 
-    fn request_clear(&self) {
-        self.clear_ring.store(true, Ordering::SeqCst);
+    fn request_flush(&self) {
+        self.flush_audio.store(true, Ordering::SeqCst);
     }
 }
 
@@ -134,11 +120,23 @@ impl SymphoniaPlayer {
             .spawn(move || worker_main(cmd_rx, worker_shared))
             .context("启动播放线程失败")?;
 
-        for _ in 0..50 {
+        for _ in 0..80 {
             if shared.error.lock().map(|e| e.is_some()).unwrap_or(false) {
                 break;
             }
-            if shared.sample_rate.load(Ordering::SeqCst) > 0 {
+            if shared.sample_rate.load(Ordering::SeqCst) != 48_000
+                || shared.sample_rate.load(Ordering::SeqCst) > 0
+            {
+                // wait until worker publishes device rate (starts at 48000; real value overwrites)
+                if shared
+                    .error
+                    .lock()
+                    .map(|e| e.is_some())
+                    .unwrap_or(false)
+                {
+                    break;
+                }
+                // break once worker has run a moment — sample_rate always > 0
                 break;
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -299,13 +297,12 @@ fn quick_track_info(path: &Path) -> TrackInfo {
         channels: 2,
     };
     if let Ok(tagged) = lofty::read_from_path(path) {
-        use lofty::file::AudioFile;
+        use lofty::file::{AudioFile, TaggedFileExt};
         use lofty::prelude::Accessor;
         let props = tagged.properties();
         info.duration_ms = props.duration().as_millis() as u64;
         info.sample_rate = props.sample_rate().unwrap_or(44_100);
         info.channels = props.channels().map(|c| c as u16).unwrap_or(2);
-        use lofty::file::TaggedFileExt;
         if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
             if let Some(title) = tag.title() {
                 let t = title.to_string();
@@ -318,7 +315,7 @@ fn quick_track_info(path: &Path) -> TrackInfo {
     info
 }
 
-// ── worker ────────────────────────────────────────────────────────
+// ── worker + audio callback ───────────────────────────────────────
 
 struct DecoderState {
     reader: Box<dyn FormatReader>,
@@ -326,42 +323,79 @@ struct DecoderState {
     track_id: u32,
     duration_ms: u64,
     src_sample_rate: u32,
-    src_channels: u16,
     end: bool,
 }
 
 fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
     let host = cpal::default_host();
-    let device = match host.default_output_device() {
-        Some(d) => d,
-        None => {
-            *shared.error.lock().unwrap() = Some("无默认音频输出设备".into());
-            return;
-        }
+    let Some(device) = host.default_output_device() else {
+        *shared.error.lock().unwrap() = Some("无默认音频输出设备".into());
+        return;
     };
-    let default_config = match device.default_output_config() {
-        Ok(c) => c,
-        Err(e) => {
-            *shared.error.lock().unwrap() = Some(format!("读取输出配置失败: {e}"));
-            return;
-        }
+    let Ok(default_config) = device.default_output_config() else {
+        *shared.error.lock().unwrap() = Some("读取输出配置失败".into());
+        return;
     };
     let out_rate = default_config.sample_rate().0;
     shared.sample_rate.store(out_rate as u64, Ordering::SeqCst);
 
-    let ring_capacity = (out_rate as usize) * 2 * RING_SECONDS;
-    let (ring_producer, ring_consumer): (HeapProd<f32>, HeapCons<f32>) =
-        HeapRb::<f32>::new(ring_capacity).split();
+    let (block_tx, block_rx) = bounded::<Vec<f32>>(BLOCK_QUEUE);
+    let mut audio = AudioOut {
+        cur: Vec::new(),
+        pos: 0,
+        block_rx,
+        shared: Arc::clone(&shared),
+    };
 
-    let stream = match build_output_stream(
-        &device,
-        &default_config.into(),
-        ring_consumer,
-        Arc::clone(&shared),
-    ) {
+    let stream = match default_config.sample_format() {
+        SampleFormat::F32 => device.build_output_stream(
+            &default_config.into(),
+            move |data: &mut [f32], _| audio.fill(data),
+            |e| eprintln!("audio stream error: {e}"),
+            None,
+        ),
+        SampleFormat::I16 => {
+            let mut tmp = Vec::new();
+            device.build_output_stream(
+                &default_config.into(),
+                move |data: &mut [i16], _| {
+                    tmp.clear();
+                    tmp.resize(data.len(), 0.0);
+                    audio.fill(&mut tmp);
+                    for (o, i) in data.iter_mut().zip(tmp.iter()) {
+                        *o = Sample::from_sample(*i);
+                    }
+                },
+                |e| eprintln!("audio stream error: {e}"),
+                None,
+            )
+        }
+        SampleFormat::U16 => {
+            let mut tmp = Vec::new();
+            device.build_output_stream(
+                &default_config.into(),
+                move |data: &mut [u16], _| {
+                    tmp.clear();
+                    tmp.resize(data.len(), 0.0);
+                    audio.fill(&mut tmp);
+                    for (o, i) in data.iter_mut().zip(tmp.iter()) {
+                        *o = Sample::from_sample(*i);
+                    }
+                },
+                |e| eprintln!("audio stream error: {e}"),
+                None,
+            )
+        }
+        _ => {
+            *shared.error.lock().unwrap() = Some("不支持的采样格式".into());
+            return;
+        }
+    };
+
+    let stream = match stream {
         Ok(s) => s,
         Err(e) => {
-            *shared.error.lock().unwrap() = Some(format!("打开音频输出失败: {e:#}"));
+            *shared.error.lock().unwrap() = Some(format!("打开音频输出失败: {e}"));
             return;
         }
     };
@@ -370,9 +404,104 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
         return;
     }
 
-    // cpal::Stream is !Send — must stay on this thread.
+    // cpal::Stream is !Send — keep on this thread.
     let _stream: Stream = stream;
-    decode_loop(cmd_rx, shared, ring_producer, out_rate);
+    decode_loop(cmd_rx, shared, block_tx, out_rate);
+}
+
+struct AudioOut {
+    cur: Vec<f32>,
+    pos: usize,
+    block_rx: Receiver<Vec<f32>>,
+    shared: Arc<Shared>,
+}
+
+impl AudioOut {
+    fn fill(&mut self, data: &mut [f32]) {
+        if self.shared.flush_audio.swap(false, Ordering::SeqCst) {
+            self.cur.clear();
+            self.pos = 0;
+            while self.block_rx.try_recv().is_ok() {}
+        }
+        let vol = self.shared.volume();
+        let paused = self.shared.status.load(Ordering::SeqCst) != STATUS_PLAYING;
+        let n = data.len();
+        let mut frames_written = 0u64;
+
+        for i in 0..n {
+            if paused {
+                data[i] = 0.0;
+                continue;
+            }
+            if self.pos >= self.cur.len() {
+                self.cur = self.block_rx.try_recv().unwrap_or_default();
+                self.pos = 0;
+            }
+            if self.pos < self.cur.len() {
+                data[i] = self.cur[self.pos] * vol;
+                self.pos += 1;
+                if i % 2 == 0 {
+                    frames_written += 1;
+                }
+            } else {
+                data[i] = 0.0;
+            }
+        }
+        if frames_written > 0 {
+            self.shared
+                .position_frames
+                .fetch_add(frames_written, Ordering::SeqCst);
+        }
+    }
+}
+
+struct DecoderState2 {
+    inner: DecoderState,
+    /// pending samples at device rate (stereo interleaved)
+    pending: Vec<f32>,
+    resample_pos: f64,
+}
+
+fn open_decoder(path: &Path) -> Result<DecoderState> {
+    let file = File::open(path).with_context(|| format!("无法打开 {}", path.display()))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .context("无法解析音频容器")?;
+    let mut reader = probed.format;
+    let track = reader
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| anyhow!("无可用音频轨"))?
+        .clone();
+    let track_id = track.id;
+    let params = track.codec_params.clone();
+    let duration_ms = match (params.n_frames, params.sample_rate) {
+        (Some(frames), Some(rate)) if rate > 0 => (frames as u128 * 1000 / rate as u128) as u64,
+        _ => 0,
+    };
+    let src_sample_rate = params.sample_rate.unwrap_or(44_100).max(1);
+    let decoder = symphonia::default::get_codecs()
+        .make(&params, &DecoderOptions::default())
+        .context("不支持的编解码器")?;
+    Ok(DecoderState {
+        reader,
+        decoder,
+        track_id,
+        duration_ms,
+        src_sample_rate,
+        end: false,
+    })
 }
 
 fn open_track_full(
@@ -380,8 +509,8 @@ fn open_track_full(
     path: &Path,
     index: Option<usize>,
     queue_item: Option<&QueueItem>,
-) -> Option<DecoderState> {
-    shared.request_clear();
+) -> Option<DecoderState2> {
+    shared.request_flush();
     shared.position_frames.store(0, Ordering::SeqCst);
     shared.track_ended.store(false, Ordering::SeqCst);
 
@@ -402,7 +531,7 @@ fn open_track_full(
                     .duration_ms
                     .max(queue_item.map(|q| q.duration_ms).unwrap_or(0)),
                 sample_rate: st.src_sample_rate,
-                channels: st.src_channels,
+                channels: 2,
             };
             shared
                 .duration_ms
@@ -414,7 +543,11 @@ fn open_track_full(
                 *qi = index;
             }
             *shared.error.lock().unwrap() = None;
-            Some(st)
+            Some(DecoderState2 {
+                inner: st,
+                pending: Vec::new(),
+                resample_pos: 0.0,
+            })
         }
         Err(err) => {
             *shared.error.lock().unwrap() = Some(format!("{err:#}"));
@@ -425,200 +558,6 @@ fn open_track_full(
             None
         }
     }
-}
-
-fn decode_loop(
-    cmd_rx: Receiver<Cmd>,
-    shared: Arc<Shared>,
-    mut ring: HeapProd<f32>,
-    out_rate: u32,
-) {
-    let mut decoder: Option<DecoderState> = None;
-    let mut playing = false;
-    let mut queue: Vec<QueueItem> = Vec::new();
-    let mut queue_index: Option<usize> = None;
-    let mut resample_pos = 0.0f64;
-
-    loop {
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                Cmd::Open { path, index } => {
-                    resample_pos = 0.0;
-                    let item = index.and_then(|i| queue.get(i).cloned());
-                    decoder = open_track_full(&shared, &path, index, item.as_ref());
-                }
-                Cmd::Play => {
-                    playing = true;
-                    shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
-                }
-                Cmd::Pause => {
-                    playing = false;
-                    shared.status.store(STATUS_PAUSED, Ordering::SeqCst);
-                }
-                Cmd::Seek { ms } => {
-                    if let Some(st) = decoder.as_mut() {
-                        if seek_decoder(st, ms).is_ok() {
-                            shared.request_clear();
-                            resample_pos = 0.0;
-                            let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
-                            shared
-                                .position_frames
-                                .store(ms * rate / 1000, Ordering::SeqCst);
-                        }
-                    }
-                }
-                Cmd::SetVolume { v } => {
-                    shared.volume_bits.store(v.to_bits(), Ordering::SeqCst);
-                }
-                Cmd::SetQueue { items, start } => {
-                    queue = items;
-                    queue_index = Some(start);
-                    if let Ok(mut qi) = shared.queue_index.lock() {
-                        *qi = Some(start);
-                    }
-                    if let Ok(mut q) = shared.queue.lock() {
-                        *q = queue.clone();
-                    }
-                }
-                Cmd::Next => {
-                    if let Some(idx) = queue_index {
-                        if idx + 1 < queue.len() {
-                            let item = queue[idx + 1].clone();
-                            let path = PathBuf::from(&item.path);
-                            resample_pos = 0.0;
-                            queue_index = Some(idx + 1);
-                            decoder = open_track_full(&shared, &path, queue_index, Some(&item));
-                            if decoder.is_some() {
-                                playing = true;
-                                shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
-                            }
-                        }
-                    }
-                }
-                Cmd::Prev => {
-                    if let Some(idx) = queue_index {
-                        let target = idx.saturating_sub(1);
-                        if let Some(item) = queue.get(target).cloned() {
-                            let path = PathBuf::from(&item.path);
-                            resample_pos = 0.0;
-                            queue_index = Some(target);
-                            decoder = open_track_full(&shared, &path, queue_index, Some(&item));
-                            if decoder.is_some() {
-                                playing = true;
-                                shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
-                            }
-                        }
-                    }
-                }
-                Cmd::Stop => {
-                    decoder = None;
-                    playing = false;
-                    shared.request_clear();
-                    shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
-                    if let Ok(mut t) = shared.track.lock() {
-                        *t = None;
-                    }
-                }
-            }
-        }
-
-        if playing {
-            if let Some(st) = decoder.as_mut() {
-                if ring.vacant_len() > 512 {
-                    match decode_chunk(st, out_rate, &mut resample_pos) {
-                        Ok(Some(samples)) => {
-                            for s in samples {
-                                let _ = ring.try_push(s);
-                            }
-                        }
-                        Ok(None) => {
-                            if ring.occupied_len() <= 2 {
-                                shared.track_ended.store(true, Ordering::SeqCst);
-                                let advanced = if let Some(idx) = queue_index {
-                                    if idx + 1 < queue.len() {
-                                        let item = queue[idx + 1].clone();
-                                        let path = PathBuf::from(&item.path);
-                                        resample_pos = 0.0;
-                                        queue_index = Some(idx + 1);
-                                        let st2 =
-                                            open_track_full(&shared, &path, queue_index, Some(&item));
-                                        decoder = st2;
-                                        decoder.is_some()
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                };
-                                if !advanced {
-                                    decoder = None;
-                                    playing = false;
-                                    shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
-                                }
-                            }
-                        }
-                        Err(SymError::DecodeError(_)) => {}
-                        Err(_) => {
-                            st.end = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        if !playing {
-            std::thread::sleep(Duration::from_millis(20));
-        } else {
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-}
-
-fn open_decoder(path: &Path) -> Result<DecoderState> {
-    let file = File::open(path).with_context(|| format!("无法打开 {}", path.display()))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .context("无法解析音频容器")?;
-
-    let reader = probed.format;
-    let track = reader
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| anyhow!("无可用音频轨"))?
-        .clone();
-    let track_id = track.id;
-    let params = track.codec_params.clone();
-    let duration_ms = match (params.n_frames, params.sample_rate) {
-        (Some(frames), Some(rate)) if rate > 0 => (frames as u128 * 1000 / rate as u128) as u64,
-        _ => 0,
-    };
-    let src_sample_rate = params.sample_rate.unwrap_or(44_100);
-    let src_channels = params.channels.map(|c| c.count() as u16).unwrap_or(2);
-
-    let decoder = symphonia::default::get_codecs()
-        .make(&params, &DecoderOptions::default())
-        .context("不支持的编解码器")?;
-
-    Ok(DecoderState {
-        reader,
-        decoder,
-        track_id,
-        duration_ms,
-        src_sample_rate: src_sample_rate.max(1),
-        src_channels: src_channels.clamp(1, 8),
-        end: false,
-    })
 }
 
 fn seek_decoder(st: &mut DecoderState, ms: u64) -> Result<()> {
@@ -635,11 +574,7 @@ fn seek_decoder(st: &mut DecoderState, ms: u64) -> Result<()> {
     Ok(())
 }
 
-fn decode_chunk(
-    st: &mut DecoderState,
-    out_rate: u32,
-    resample_pos: &mut f64,
-) -> std::result::Result<Option<Vec<f32>>, SymError> {
+fn decode_chunk_native(st: &mut DecoderState) -> std::result::Result<Option<Vec<f32>>, SymError> {
     if st.end {
         return Ok(None);
     }
@@ -660,11 +595,7 @@ fn decode_chunk(
             continue;
         }
         match st.decoder.decode(&packet) {
-            Ok(audio_buf) => {
-                let native = to_interleaved_stereo(&audio_buf);
-                let out = resample_linear(&native, st.src_sample_rate, out_rate, resample_pos);
-                return Ok(Some(out));
-            }
+            Ok(buf) => return Ok(Some(to_interleaved_stereo(&buf))),
             Err(SymError::DecodeError(_)) => continue,
             Err(e) => return Err(e),
         }
@@ -701,8 +632,12 @@ fn pack_planes<T: Copy>(planes: &[&[T]], convert: impl Fn(T) -> f32) -> Vec<f32>
 fn to_interleaved_stereo(buf: &AudioBufferRef<'_>) -> Vec<f32> {
     match buf {
         AudioBufferRef::F32(b) => pack_planes(b.planes().planes(), |s: f32| s),
-        AudioBufferRef::U8(b) => pack_planes(b.planes().planes(), |s: u8| (s as f32 - 128.0) / 128.0),
-        AudioBufferRef::U16(b) => pack_planes(b.planes().planes(), |s: u16| (s as f32 / 32768.0) - 1.0),
+        AudioBufferRef::U8(b) => {
+            pack_planes(b.planes().planes(), |s: u8| (s as f32 - 128.0) / 128.0)
+        }
+        AudioBufferRef::U16(b) => {
+            pack_planes(b.planes().planes(), |s: u16| (s as f32 / 32768.0) - 1.0)
+        }
         AudioBufferRef::U24(b) => pack_planes(b.planes().planes(), |s: u24| {
             (s.inner() as f32 / 8_388_608.0) - 1.0
         }),
@@ -721,27 +656,30 @@ fn to_interleaved_stereo(buf: &AudioBufferRef<'_>) -> Vec<f32> {
     }
 }
 
-fn resample_linear(input: &[f32], in_rate: u32, out_rate: u32, pos: &mut f64) -> Vec<f32> {
-    if in_rate == out_rate || input.is_empty() {
+/// Convert a source-rate stereo block to device rate (linear interpolation).
+fn resample_stereo(input: &[f32], in_rate: u32, out_rate: u32, pos: &mut f64) -> Vec<f32> {
+    if in_rate == out_rate {
         return input.to_vec();
     }
     let frames_in = input.len() / 2;
     if frames_in == 0 {
         return Vec::new();
     }
-    let ratio = in_rate as f64 / out_rate as f64;
-    let mut out = Vec::with_capacity(((frames_in as f64) / ratio).ceil() as usize * 2);
-    while *pos < (frames_in as f64 - 1.0).max(0.0) {
+    let step = in_rate as f64 / out_rate as f64;
+    let mut out = Vec::with_capacity(((frames_in as f64) / step).ceil() as usize * 2 + 4);
+    // pos is the fractional read cursor in input frames
+    while *pos + 1.0 < frames_in as f64 {
         let i0 = (*pos).floor() as usize;
-        let i1 = (i0 + 1).min(frames_in - 1);
-        let frac = *pos - i0 as f64;
+        let i1 = i0 + 1;
+        let frac = (*pos) - i0 as f64;
         for ch in 0..2 {
             let a = input[i0 * 2 + ch];
             let b = input[i1 * 2 + ch];
             out.push(a + (b - a) * frac as f32);
         }
-        *pos += ratio;
+        *pos += step;
     }
+    // keep leftover position relative to next buffer
     *pos -= frames_in as f64;
     if *pos < 0.0 {
         *pos = 0.0;
@@ -749,81 +687,174 @@ fn resample_linear(input: &[f32], in_rate: u32, out_rate: u32, pos: &mut f64) ->
     out
 }
 
-fn build_output_stream(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    mut ring: HeapCons<f32>,
-    shared: Arc<Shared>,
-) -> Result<Stream> {
-    let sample_format = device.default_output_config()?.sample_format();
-    let err_fn = |e| eprintln!("audio stream error: {e}");
-
-    let stream = match sample_format {
-        SampleFormat::F32 => device.build_output_stream(
-            config,
-            move |data: &mut [f32], _| write_output(data, &mut ring, &shared),
-            err_fn,
-            None,
-        )?,
-        SampleFormat::I16 => device.build_output_stream(
-            config,
-            move |data: &mut [i16], _| {
-                let mut tmp = vec![0.0f32; data.len()];
-                write_output(&mut tmp, &mut ring, &shared);
-                for (o, i) in data.iter_mut().zip(tmp.iter()) {
-                    *o = Sample::from_sample(*i);
-                }
-            },
-            err_fn,
-            None,
-        )?,
-        SampleFormat::U16 => device.build_output_stream(
-            config,
-            move |data: &mut [u16], _| {
-                let mut tmp = vec![0.0f32; data.len()];
-                write_output(&mut tmp, &mut ring, &shared);
-                for (o, i) in data.iter_mut().zip(tmp.iter()) {
-                    *o = Sample::from_sample(*i);
-                }
-            },
-            err_fn,
-            None,
-        )?,
-        _ => {
-            return Err(anyhow!("不支持的采样格式"));
+fn fill_block(dec: &mut DecoderState2, out_rate: u32) -> Option<Vec<f32>> {
+    while dec.pending.len() < BLOCK_SAMPLES {
+        match decode_chunk_native(&mut dec.inner) {
+            Ok(Some(native)) => {
+                let rs = resample_stereo(
+                    &native,
+                    dec.inner.src_sample_rate,
+                    out_rate,
+                    &mut dec.resample_pos,
+                );
+                dec.pending.extend_from_slice(&rs);
+            }
+            Ok(None) => break,
+            Err(SymError::DecodeError(_)) => {}
+            Err(_) => {
+                dec.inner.end = true;
+                break;
+            }
         }
-    };
-    Ok(stream)
+    }
+    if dec.pending.is_empty() {
+        return None;
+    }
+    let n = BLOCK_SAMPLES.min(dec.pending.len());
+    let block: Vec<f32> = dec.pending.drain(..n).collect();
+    Some(block)
 }
 
-fn write_output(data: &mut [f32], ring: &mut HeapCons<f32>, shared: &Shared) {
-    if shared.clear_ring.swap(false, Ordering::SeqCst) {
-        ring.clear();
-    }
-    let vol = shared.volume();
-    let paused = shared.status.load(Ordering::SeqCst) != STATUS_PLAYING;
-    let n_frames = data.len() / 2;
-    let mut frames_written = 0u64;
+fn decode_loop(
+    cmd_rx: Receiver<Cmd>,
+    shared: Arc<Shared>,
+    block_tx: Sender<Vec<f32>>,
+    out_rate: u32,
+) {
+    let mut dec: Option<DecoderState2> = None;
+    let mut playing = false;
+    let mut queue: Vec<QueueItem> = Vec::new();
+    let mut queue_index: Option<usize> = None;
 
-    for frame in 0..n_frames {
-        let (l, r) = if paused {
-            (0.0, 0.0)
-        } else {
-            match (ring.try_pop(), ring.try_pop()) {
-                (Some(a), Some(b)) => {
-                    frames_written += 1;
-                    (a * vol, b * vol)
+    // drop leftover blocks helper
+    let flush = || {
+        shared.request_flush();
+    };
+
+    loop {
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                Cmd::Open { path, index } => {
+                    flush();
+                    let item = index.and_then(|i| queue.get(i).cloned());
+                    dec = open_track_full(&shared, &path, index, item.as_ref());
                 }
-                _ => (0.0, 0.0),
+                Cmd::Play => {
+                    playing = true;
+                    shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                }
+                Cmd::Pause => {
+                    playing = false;
+                    shared.status.store(STATUS_PAUSED, Ordering::SeqCst);
+                }
+                Cmd::Seek { ms } => {
+                    if let Some(d) = dec.as_mut() {
+                        if seek_decoder(&mut d.inner, ms).is_ok() {
+                            d.pending.clear();
+                            d.resample_pos = 0.0;
+                            flush();
+                            let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
+                            shared
+                                .position_frames
+                                .store(ms * rate / 1000, Ordering::SeqCst);
+                        }
+                    }
+                }
+                Cmd::SetVolume { v } => {
+                    shared.volume_bits.store(v.to_bits(), Ordering::SeqCst);
+                }
+                Cmd::SetQueue { items, start } => {
+                    queue = items;
+                    queue_index = Some(start);
+                    if let Ok(mut qi) = shared.queue_index.lock() {
+                        *qi = Some(start);
+                    }
+                    if let Ok(mut q) = shared.queue.lock() {
+                        *q = queue.clone();
+                    }
+                }
+                Cmd::Next => {
+                    if let Some(idx) = queue_index {
+                        if idx + 1 < queue.len() {
+                            let item = queue[idx + 1].clone();
+                            let path = PathBuf::from(&item.path);
+                            flush();
+                            queue_index = Some(idx + 1);
+                            dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                            if dec.is_some() {
+                                playing = true;
+                                shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                }
+                Cmd::Prev => {
+                    if let Some(idx) = queue_index {
+                        let target = idx.saturating_sub(1);
+                        if let Some(item) = queue.get(target).cloned() {
+                            let path = PathBuf::from(&item.path);
+                            flush();
+                            queue_index = Some(target);
+                            dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                            if dec.is_some() {
+                                playing = true;
+                                shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                }
+                Cmd::Stop => {
+                    dec = None;
+                    playing = false;
+                    flush();
+                    shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
+                    if let Ok(mut t) = shared.track.lock() {
+                        *t = None;
+                    }
+                }
             }
-        };
-        data[frame * 2] = l;
-        data[frame * 2 + 1] = r;
-    }
+        }
 
-    if frames_written > 0 {
-        shared
-            .position_frames
-            .fetch_add(frames_written, Ordering::SeqCst);
+        if playing {
+            if let Some(d) = dec.as_mut() {
+                match fill_block(d, out_rate) {
+                    Some(block) => {
+                        // block if queue full (backpressure) so we don't spin
+                        if block_tx.send(block).is_err() {
+                            // audio side gone
+                            playing = false;
+                        }
+                    }
+                    None => {
+                        // EOF — wait until output drains (blocks already in queue)
+                        shared.track_ended.store(true, Ordering::SeqCst);
+                        let advanced = if let Some(idx) = queue_index {
+                            if idx + 1 < queue.len() {
+                                let item = queue[idx + 1].clone();
+                                let path = PathBuf::from(&item.path);
+                                flush();
+                                queue_index = Some(idx + 1);
+                                let d2 = open_track_full(&shared, &path, queue_index, Some(&item));
+                                dec = d2;
+                                dec.is_some()
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if !advanced {
+                            dec = None;
+                            playing = false;
+                            shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
+                        }
+                    }
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }

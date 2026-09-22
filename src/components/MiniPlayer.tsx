@@ -1,7 +1,7 @@
-import { Pause, Play, Repeat, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
+import { FolderInput, Pause, Play, Repeat, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { formatTime } from "../lib/api";
+import { api, formatTime } from "../lib/api";
 import { useApp } from "../state/useApp";
 import "./MiniPlayer.css";
 
@@ -16,6 +16,9 @@ export function MiniPlayer() {
 
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
+  const [outsideLib, setOutsideLib] = useState(false);
+  const [including, setIncluding] = useState(false);
+  const [includedAt, setIncludedAt] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -29,6 +32,42 @@ export function MiniPlayer() {
   }, [refreshPlayer]);
 
   const track = player?.track ?? null;
+
+  // 「纳入库管理」只对库外文件有意义
+  useEffect(() => {
+    let cancelled = false;
+    setIncludedAt(null);
+    if (!track?.path) {
+      setOutsideLib(false);
+      return;
+    }
+    void api
+      .isInLibrary(track.path)
+      .then((inLib) => {
+        if (!cancelled) setOutsideLib(!inLib);
+      })
+      .catch(() => {
+        if (!cancelled) setOutsideLib(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [track?.path]);
+
+  async function includeInLibrary() {
+    if (!track?.path || including) return;
+    setIncluding(true);
+    try {
+      await api.includeInLibrary(track.path);
+      setOutsideLib(false);
+      setIncludedAt(track.path);
+    } catch {
+      /* keep button visible for retry */
+    } finally {
+      setIncluding(false);
+    }
+  }
+
   const duration = player?.duration_ms ?? 0;
   const position = seeking ? seekMs : (player?.position_ms ?? 0);
   const volume = player?.volume ?? 0.8;
@@ -48,6 +87,22 @@ export function MiniPlayer() {
             {track ? track.path.split(/[\\/]/).slice(-2).join(" / ") : "双击专辑墙或管理表开始"}
           </div>
         </div>
+        {outsideLib && (
+          <button
+            className="mp-include"
+            title="纳入库管理：复制进库目录并登记（当前文件在库外）"
+            disabled={including}
+            onClick={() => void includeInLibrary()}
+          >
+            <FolderInput size={14} />
+            入库
+          </button>
+        )}
+        {includedAt && track?.path === includedAt && (
+          <span className="mp-included tertiary" title="已复制进库">
+            已入库
+          </span>
+        )}
       </div>
 
       <div className="mp-center">

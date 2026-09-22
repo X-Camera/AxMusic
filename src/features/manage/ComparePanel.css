@@ -1,0 +1,95 @@
+/* 侧栏对比面板（非模态）：管理表选中行时贴右侧显示 */
+.cmp-panel {
+  width: 380px;
+  flex-shrink: 0;
+  overflow: auto;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cmp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cmp-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.cmp-error {
+  margin-bottom: 0;
+}
+
+.cmp-empty {
+  padding: 24px 0;
+}
+
+.cmp-meta {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cmp-table th {
+  text-align: left;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  padding: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmp-table td {
+  padding: 4px;
+  vertical-align: top;
+  word-break: break-all;
+}
+
+.cmp-table tr.changed .old {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+.cmp-table tr.changed .new {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.cmp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.cmp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cmp-foot .btn + .btn {
+  margin-left: 8px;
+}
+
+.cmp-hint {
+  font-size: 11px;
+}

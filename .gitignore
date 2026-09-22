@@ -17,6 +17,9 @@ src-tauri/gen/
 data/
 AxMusic-portable.ini
 
+# 本地测试/临时库
+TmpLibrary/
+
 # 应用图标（本地产物/母图，不入库）
 assets/icon-source.png
 assets/icon-master.png

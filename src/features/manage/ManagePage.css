@@ -86,6 +86,22 @@
   animation: spin 1s linear infinite;
 }
 
+/* 表格 + 右侧对比面板 */
+.manage-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.manage-table-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.manage-body .cmp-panel {
+  width: 380px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

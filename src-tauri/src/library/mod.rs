@@ -39,6 +39,11 @@ pub struct TrackRow {
     pub has_mb_id: bool,
     pub tag_status: String,
     pub missing: String,
+    pub release_type: String,
+    pub mb_recording_mbid: String,
+    pub mb_release_mbid: String,
+    /// Linked catalog row (metadata match), None = 待刮削.
+    pub catalog_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +61,8 @@ pub struct TrackFilter {
     pub query: Option<String>,
     /// Only rows missing at least one of: cover / lyrics / year / type / mb
     pub missing_only: bool,
+    /// Only rows not yet linked to a catalog record (待刮削).
+    pub unlinked_only: bool,
     pub limit: Option<i64>,
 }
 
@@ -69,7 +76,14 @@ pub fn now_iso() -> String {
     format!("{secs}")
 }
 
+/// Shared column list for SELECTs mapped by [`map_track`].
+const TRACK_COLS: &str = "id, path, filename, title, artist, album, album_artist, year, track_no,
+        duration_ms, format, sample_rate, bit_rate,
+        has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing,
+        release_type, mb_recording_mbid, mb_release_mbid, catalog_id";
+
 impl LibraryDb {
+    /// Open the working DB at an explicit path (usually `<library>/axmusic.db`).
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -79,11 +93,6 @@ impl LibraryDb {
         let db = Self { conn };
         db.migrate()?;
         Ok(db)
-    }
-
-    pub fn open_default() -> Result<Self> {
-        crate::paths::ensure_data_root();
-        Self::open(&crate::paths::db_path())
     }
 
     fn migrate(&self) -> Result<()> {
@@ -96,6 +105,30 @@ impl LibraryDb {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
                 initialized_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS catalog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL DEFAULT 'musicbrainz',
+                kind TEXT NOT NULL DEFAULT 'track',
+                mbid TEXT,
+                release_mbid TEXT,
+                title TEXT NOT NULL DEFAULT '',
+                artist TEXT NOT NULL DEFAULT '',
+                album TEXT NOT NULL DEFAULT '',
+                album_artist TEXT NOT NULL DEFAULT '',
+                year TEXT NOT NULL DEFAULT '',
+                track_no INTEGER,
+                release_type TEXT NOT NULL DEFAULT '',
+                cover_path TEXT,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS path_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_path TEXT NOT NULL,
+                dest_path TEXT NOT NULL,
+                operated_at TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS tracks (
@@ -121,6 +154,10 @@ impl LibraryDb {
                 file_size INTEGER NOT NULL DEFAULT 0,
                 mtime INTEGER NOT NULL DEFAULT 0,
                 is_deleted INTEGER NOT NULL DEFAULT 0,
+                catalog_id INTEGER,
+                release_type TEXT NOT NULL DEFAULT '',
+                mb_recording_mbid TEXT NOT NULL DEFAULT '',
+                mb_release_mbid TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT ''
             );
 
@@ -128,6 +165,8 @@ impl LibraryDb {
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
             CREATE INDEX IF NOT EXISTS idx_tracks_status ON tracks(tag_status);
             CREATE INDEX IF NOT EXISTS idx_tracks_deleted ON tracks(is_deleted);
+            CREATE INDEX IF NOT EXISTS idx_tracks_catalog ON tracks(catalog_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_mb_rec ON tracks(mb_recording_mbid);
 
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -135,6 +174,15 @@ impl LibraryDb {
             );
             "#,
         )?;
+        // Migrate DBs created before the mbid columns existed.
+        for ddl in [
+            "ALTER TABLE tracks ADD COLUMN release_type TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE tracks ADD COLUMN mb_recording_mbid TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE tracks ADD COLUMN mb_release_mbid TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE catalog ADD COLUMN release_type TEXT NOT NULL DEFAULT ''",
+        ] {
+            let _ = self.conn.execute(ddl, []);
+        }
         Ok(())
     }
 
@@ -184,9 +232,10 @@ impl LibraryDb {
                 path, filename, title, artist, album, album_artist, year, track_no,
                 duration_ms, format, sample_rate, bit_rate,
                 has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing,
-                file_size, mtime, is_deleted, updated_at
+                file_size, mtime, is_deleted,
+                release_type, mb_recording_mbid, mb_release_mbid, updated_at
             ) VALUES (
-                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,0,?21
+                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,0,?21,?22,?23,?24
             )
             ON CONFLICT(path) DO UPDATE SET
                 filename=excluded.filename,
@@ -209,6 +258,9 @@ impl LibraryDb {
                 file_size=excluded.file_size,
                 mtime=excluded.mtime,
                 is_deleted=0,
+                release_type=excluded.release_type,
+                mb_recording_mbid=excluded.mb_recording_mbid,
+                mb_release_mbid=excluded.mb_release_mbid,
                 updated_at=excluded.updated_at
             "#,
             params![
@@ -232,9 +284,13 @@ impl LibraryDb {
                 t.missing,
                 file_size as i64,
                 mtime as i64,
+                t.release_type,
+                t.mb_recording_mbid,
+                t.mb_release_mbid,
                 now_iso(),
             ],
         )?;
+        // Re-apply any known catalog link (upsert keeps catalog_id on conflict).
         Ok(())
     }
 
@@ -260,34 +316,28 @@ impl LibraryDb {
 
     pub fn list_tracks(&self, filter: &TrackFilter) -> Result<Vec<TrackRow>> {
         let limit = filter.limit.unwrap_or(2000);
-        let rows = if filter.missing_only {
-            self.conn
-                .prepare(
-                    "SELECT id, path, filename, title, artist, album, album_artist, year, track_no,
-                            duration_ms, format, sample_rate, bit_rate,
-                            has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing
-                     FROM tracks
-                     WHERE is_deleted = 0
-                       AND (has_cover = 0 OR has_lyrics = 0 OR has_year = 0 OR has_mb_id = 0 OR tag_status != 'complete')
-                     ORDER BY album_artist, album, track_no, filename
-                     LIMIT ?1",
-                )?
-                .query_map(params![limit], map_track)?
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            self.conn
-                .prepare(
-                    "SELECT id, path, filename, title, artist, album, album_artist, year, track_no,
-                            duration_ms, format, sample_rate, bit_rate,
-                            has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing
-                     FROM tracks
-                     WHERE is_deleted = 0
-                     ORDER BY album_artist, album, track_no, filename
-                     LIMIT ?1",
-                )?
-                .query_map(params![limit], map_track)?
-                .collect::<Result<Vec<_>, _>>()?
-        };
+        let mut where_conds: Vec<&str> = vec!["is_deleted = 0"];
+        if filter.missing_only {
+            where_conds.push(
+                "(has_cover = 0 OR has_lyrics = 0 OR has_year = 0 OR has_mb_id = 0 OR tag_status != 'complete')",
+            );
+        }
+        if filter.unlinked_only {
+            where_conds.push("(catalog_id IS NULL OR catalog_id = 0)");
+        }
+        let sql = format!(
+            "SELECT {TRACK_COLS}
+             FROM tracks
+             WHERE {}
+             ORDER BY album_artist, album, track_no, filename
+             LIMIT ?1",
+            where_conds.join(" AND ")
+        );
+        let rows = self
+            .conn
+            .prepare(&sql)?
+            .query_map(params![limit], map_track)?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -333,10 +383,8 @@ impl LibraryDb {
     pub fn tracks_of_album(&self, album: &str, album_artist: &str) -> Result<Vec<TrackRow>> {
         let rows = self
             .conn
-            .prepare(
-                "SELECT id, path, filename, title, artist, album, album_artist, year, track_no,
-                        duration_ms, format, sample_rate, bit_rate,
-                        has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing
+            .prepare(&format!(
+                "SELECT {TRACK_COLS}
                  FROM tracks
                  WHERE is_deleted = 0
                    AND CASE WHEN ?1 = 'Unknown Album' THEN album = '' ELSE album = ?1 END
@@ -345,8 +393,8 @@ impl LibraryDb {
                      WHEN ?2 = 'Unknown Album Artist' THEN album_artist = ''
                      ELSE album_artist = ?2 OR (album_artist = '' AND artist = ?2) END
                    )
-                 ORDER BY track_no, filename",
-            )?
+                 ORDER BY track_no, filename"
+            ))?
             .query_map(params![album, album_artist], map_track)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
@@ -357,16 +405,259 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, path, filename, title, artist, album, album_artist, year, track_no,
-                        duration_ms, format, sample_rate, bit_rate,
-                        has_cover, has_lyrics, has_year, has_mb_id, tag_status, missing
-                 FROM tracks WHERE path = ?1",
+                &format!("SELECT {TRACK_COLS} FROM tracks WHERE path = ?1"),
                 params![path],
                 map_track,
             )
             .optional()?;
         Ok(row)
     }
+
+    pub fn get_track_by_id(&self, id: i64) -> Result<Option<TrackRow>> {
+        let row = self
+            .conn
+            .query_row(
+                &format!("SELECT {TRACK_COLS} FROM tracks WHERE id = ?1"),
+                params![id],
+                map_track,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    // ── catalog (online metadata subset; covers are files) ─────────
+
+    /// Insert catalog row (online-metadata subset). Re-scraping the same recording
+    /// updates the existing row instead of duplicating it.
+    pub fn insert_catalog(&self, c: &CatalogRow) -> Result<i64> {
+        if !c.mbid.is_empty() {
+            let existing: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT id FROM catalog WHERE mbid = ?1 ORDER BY id LIMIT 1",
+                    params![c.mbid],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(id) = existing {
+                self.conn.execute(
+                    "UPDATE catalog SET
+                        source=?1, kind=?2, release_mbid=?3, title=?4, artist=?5,
+                        album=?6, album_artist=?7, year=?8, track_no=?9,
+                        release_type=?10, cover_path=COALESCE(?11, cover_path)
+                     WHERE id=?12",
+                    params![
+                        c.source,
+                        c.kind,
+                        c.release_mbid,
+                        c.title,
+                        c.artist,
+                        c.album,
+                        c.album_artist,
+                        c.year,
+                        c.track_no,
+                        c.release_type,
+                        c.cover_path,
+                        id,
+                    ],
+                )?;
+                return Ok(id);
+            }
+        }
+        self.conn.execute(
+            "INSERT INTO catalog (
+                source, kind, mbid, release_mbid, title, artist, album,
+                album_artist, year, track_no, release_type, cover_path, created_at
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![
+                c.source,
+                c.kind,
+                c.mbid,
+                c.release_mbid,
+                c.title,
+                c.artist,
+                c.album,
+                c.album_artist,
+                c.year,
+                c.track_no,
+                c.release_type,
+                c.cover_path,
+                now_iso(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn link_track_catalog(&self, track_id: i64, catalog_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET catalog_id = ?1 WHERE id = ?2",
+            params![catalog_id, track_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_catalog(&self, id: i64) -> Result<Option<CatalogRow>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, source, kind, mbid, release_mbid, title, artist, album,
+                        album_artist, year, track_no, release_type, cover_path, created_at
+                 FROM catalog WHERE id = ?1",
+                params![id],
+                map_catalog,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Match local track → catalog by fields: MBID → title+artist+album → title+artist.
+    pub fn find_catalog_fuzzy(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
+        const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
+                        album_artist, year, track_no, release_type, cover_path, created_at";
+        // 1. MBID (recording, else release) — strongest key.
+        if !t.mb_recording_mbid.is_empty() {
+            let row = self
+                .conn
+                .query_row(
+                    &format!(
+                        "SELECT {COLS} FROM catalog
+                         WHERE mbid = ?1 ORDER BY id DESC LIMIT 1"
+                    ),
+                    params![t.mb_recording_mbid],
+                    map_catalog,
+                )
+                .optional()?;
+            if row.is_some() {
+                return Ok(row);
+            }
+        }
+        if !t.mb_release_mbid.is_empty() && t.track_no.is_some() {
+            let row = self
+                .conn
+                .query_row(
+                    &format!(
+                        "SELECT {COLS} FROM catalog
+                         WHERE release_mbid = ?1 AND track_no = ?2
+                         ORDER BY id DESC LIMIT 1"
+                    ),
+                    params![t.mb_release_mbid, t.track_no],
+                    map_catalog,
+                )
+                .optional()?;
+            if row.is_some() {
+                return Ok(row);
+            }
+        }
+        // 2. title + artist + album (exact).
+        if !t.title.is_empty() && !t.artist.is_empty() {
+            let row = self
+                .conn
+                .query_row(
+                    &format!(
+                        "SELECT {COLS} FROM catalog
+                         WHERE title = ?1 AND artist = ?2
+                           AND ((?3 != '' AND album = ?3) OR album = '')
+                         ORDER BY (album = ?3) DESC, id DESC LIMIT 1"
+                    ),
+                    params![t.title, t.artist, t.album],
+                    map_catalog,
+                )
+                .optional()?;
+            if row.is_some() {
+                return Ok(row);
+            }
+            // 3. looser: title + artist
+            let row = self
+                .conn
+                .query_row(
+                    &format!(
+                        "SELECT {COLS} FROM catalog
+                         WHERE title = ?1 AND artist = ?2
+                         ORDER BY id DESC LIMIT 1"
+                    ),
+                    params![t.title, t.artist],
+                    map_catalog,
+                )
+                .optional()?;
+            return Ok(row);
+        }
+        Ok(None)
+    }
+
+    /// Find catalog entry for a local track: linked id → match fields → link on hit.
+    pub fn find_catalog_for_track(&self, track_id: i64) -> Result<Option<CatalogRow>> {
+        let Some(t) = self.get_track_by_id(track_id)? else {
+            return Ok(None);
+        };
+        if let Some(cid) = t.catalog_id {
+            if cid > 0 {
+                return self.get_catalog(cid);
+            }
+        }
+        // Try field match and persist the link so it survives rescans.
+        if let Some(c) = self.find_catalog_fuzzy(&t)? {
+            self.link_track_catalog(track_id, c.id)?;
+            return Ok(Some(c));
+        }
+        Ok(None)
+    }
+
+    /// Batch field-match for all unlinked tracks (after scan / after catalog save).
+    pub fn auto_match_unlinked(&self) -> Result<usize> {
+        let rows = self
+            .conn
+            .prepare(&format!(
+                "SELECT {TRACK_COLS} FROM tracks
+                 WHERE is_deleted = 0 AND (catalog_id IS NULL OR catalog_id = 0)"
+            ))?
+            .query_map([], map_track)?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut n = 0;
+        for t in rows {
+            if let Some(c) = self.find_catalog_fuzzy(&t)? {
+                self.link_track_catalog(t.id, c.id)?;
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogRow {
+    pub id: i64,
+    pub source: String,
+    pub kind: String,
+    pub mbid: String,
+    pub release_mbid: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub album_artist: String,
+    pub year: String,
+    pub track_no: Option<i64>,
+    pub release_type: String,
+    pub cover_path: Option<String>,
+    pub created_at: String,
+}
+
+fn map_catalog(r: &rusqlite::Row<'_>) -> rusqlite::Result<CatalogRow> {
+    Ok(CatalogRow {
+        id: r.get(0)?,
+        source: r.get(1)?,
+        kind: r.get(2)?,
+        mbid: r.get(3)?,
+        release_mbid: r.get(4)?,
+        title: r.get(5)?,
+        artist: r.get(6)?,
+        album: r.get(7)?,
+        album_artist: r.get(8)?,
+        year: r.get(9)?,
+        track_no: r.get(10)?,
+        release_type: r.get(11)?,
+        cover_path: r.get(12)?,
+        created_at: r.get(13)?,
+    })
 }
 
 fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
@@ -390,6 +681,10 @@ fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
         has_mb_id: r.get::<_, i64>(16)? != 0,
         tag_status: r.get(17)?,
         missing: r.get(18)?,
+        release_type: r.get(19)?,
+        mb_recording_mbid: r.get(20)?,
+        mb_release_mbid: r.get(21)?,
+        catalog_id: r.get(22)?,
     })
 }
 

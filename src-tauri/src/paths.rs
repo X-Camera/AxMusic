@@ -60,9 +60,14 @@ fn appdata_root() -> PathBuf {
         .join("AxMusic")
 }
 
-/// Working SQLite database path (`axmusic.db`).
-pub fn db_path() -> PathBuf {
-    data_root().join("axmusic.db")
+/// App settings JSON (not the library DB).
+pub fn settings_path() -> PathBuf {
+    data_root().join("settings.json")
+}
+
+/// Library working DB lives **inside the library root** (next to the audio).
+pub fn library_db_path(library_root: &Path) -> PathBuf {
+    library_root.join("axmusic.db")
 }
 
 /// True when running in portable mode (data next to exe / marked by ini).
@@ -83,9 +88,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn db_path_under_data_root() {
-        let p = db_path();
+    fn library_db_under_root() {
+        let p = library_db_path(Path::new(r"D:\Lib"));
         assert!(p.ends_with("axmusic.db"));
-        assert!(p.parent().is_some());
     }
 }

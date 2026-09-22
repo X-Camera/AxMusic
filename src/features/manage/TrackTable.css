@@ -37,6 +37,11 @@
   background: var(--accent-soft);
 }
 
+.track-table tr.row.active {
+  background: var(--bg-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .bar-cell {
   width: 28px;
   padding: 0 !important;

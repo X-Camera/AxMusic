@@ -15,15 +15,20 @@ function StatusDot({ ok, label }: { ok: boolean; label: string }) {
 export function TrackTable({
   rows,
   selected,
+  activeId,
   onSelectedChange,
   onPlay,
-  onInclude,
+  onActivate,
+  onScrape,
 }: {
   rows: TrackRow[];
   selected: Set<number>;
+  activeId: number | null;
   onSelectedChange: (s: Set<number>) => void;
   onPlay: (row: TrackRow, indexInView: number) => void;
-  onInclude: (row: TrackRow) => void;
+  /** 单击行 → 右侧显示 文件 vs catalog 对比 */
+  onActivate: (row: TrackRow) => void;
+  onScrape: (row: TrackRow) => void;
 }) {
   function toggle(id: number) {
     const next = new Set(selected);
@@ -60,7 +65,8 @@ export function TrackTable({
           <th style={{ width: 40 }}>年</th>
           <th style={{ width: 40 }}>型</th>
           <th style={{ width: 40 }}>MB</th>
-          <th style={{ width: 88 }} />
+          <th style={{ width: 40 }}>联</th>
+          <th style={{ width: 72 }} />
         </tr>
       </thead>
       <tbody>
@@ -68,12 +74,12 @@ export function TrackTable({
           const status = t.tag_status;
           const bar =
             status === "complete" ? "ok" : status === "partial" ? "warn" : "bad";
-          const inLib = t.path.replace(/\\/g, "/").includes("/"); // always true; real check via include shortcut
-          void inLib;
+          const linked = t.catalog_id != null && t.catalog_id > 0;
           return (
             <tr
               key={t.id}
-              className={`row bar-${bar}${selected.has(t.id) ? " selected" : ""}`}
+              className={`row bar-${bar}${activeId === t.id ? " active" : ""}${selected.has(t.id) ? " selected" : ""}`}
+              onClick={() => onActivate(t)}
               onDoubleClick={() => onPlay(t, idx)}
             >
               <td onClick={(e) => e.stopPropagation()}>
@@ -108,17 +114,25 @@ export function TrackTable({
                 <StatusDot ok={t.has_year} label="年份" />
               </td>
               <td>
-                <StatusDot ok={!!t.album} label="类型/专辑" />
+                <StatusDot ok={!!t.release_type} label="专辑类型" />
               </td>
               <td>
                 <StatusDot ok={t.has_mb_id} label="MusicBrainz" />
+              </td>
+              <td>
+                <span
+                  className={`status-dot${linked ? " ok" : " miss"}`}
+                  title={linked ? "已关联本地 catalog ✓" : "未关联 catalog（待刮削）"}
+                >
+                  {linked ? "✓" : "—"}
+                </span>
               </td>
               <td className="row-actions" onClick={(e) => e.stopPropagation()}>
                 <button className="link-btn" onClick={() => onPlay(t, idx)} title="播放">
                   播放
                 </button>
-                <button className="link-btn" onClick={() => onInclude(t)} title="纳入库管理（复制进库）">
-                  入库
+                <button className="link-btn" onClick={() => onScrape(t)} title="刮削此曲到 catalog">
+                  刮削
                 </button>
               </td>
             </tr>

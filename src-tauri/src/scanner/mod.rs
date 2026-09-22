@@ -165,6 +165,10 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         has_mb_id: false,
         tag_status: "unmatched".into(),
         missing: String::new(),
+        release_type: String::new(),
+        mb_recording_mbid: String::new(),
+        mb_release_mbid: String::new(),
+        catalog_id: None,
     };
 
     if let Some(tag) = tag {
@@ -187,6 +191,14 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
             .map(|s| s.to_string())
             .unwrap_or_default();
 
+        // Album type (Album / EP / Single …) when the file carries it.
+        // Picard writes RELEASETYPE (Vorbis) / TXXX:RELEASETYPE; fall back to MB album type.
+        row.release_type = tag
+            .get_string(&ItemKey::Unknown("RELEASETYPE".into()))
+            .or_else(|| tag.get_string(&ItemKey::Unknown("MusicBrainz Album Type".into())))
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         // Any picture counts as cover for status chip
         row.has_cover = !tag.pictures().is_empty();
 
@@ -195,6 +207,17 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
             .map(|s| !s.is_empty())
             .unwrap_or(false);
 
+        // MBID values (used for catalog matching) — recording first, then track id.
+        row.mb_recording_mbid = tag
+            .get_string(&ItemKey::MusicBrainzRecordingId)
+            .or_else(|| tag.get_string(&ItemKey::MusicBrainzTrackId))
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        row.mb_release_mbid = tag
+            .get_string(&ItemKey::MusicBrainzReleaseId)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         let mb_keys = [
             ItemKey::MusicBrainzRecordingId,
             ItemKey::MusicBrainzTrackId,
@@ -202,9 +225,11 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
             ItemKey::MusicBrainzArtistId,
             ItemKey::MusicBrainzReleaseGroupId,
         ];
-        row.has_mb_id = mb_keys
-            .iter()
-            .any(|k| tag.get_string(k).map(|s| !s.is_empty()).unwrap_or(false));
+        row.has_mb_id = !row.mb_recording_mbid.is_empty()
+            || !row.mb_release_mbid.is_empty()
+            || mb_keys
+                .iter()
+                .any(|k| tag.get_string(k).map(|s| !s.is_empty()).unwrap_or(false));
     }
 
     // Fallback title from filename when tag empty
@@ -232,7 +257,7 @@ fn compute_status(row: &mut TrackRow) {
     if !row.has_year {
         missing.push("年");
     }
-    if row.album.is_empty() {
+    if row.release_type.is_empty() {
         missing.push("型");
     }
     if !row.has_mb_id {

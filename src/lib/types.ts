@@ -50,6 +50,11 @@ export interface TrackRow {
   has_mb_id: boolean;
   tag_status: string;
   missing: string;
+  release_type: string;
+  mb_recording_mbid: string;
+  mb_release_mbid: string;
+  /** Linked local catalog row id; null = 待刮削 */
+  catalog_id: number | null;
 }
 
 export interface AlbumCard {
@@ -64,6 +69,7 @@ export interface AlbumCard {
 export interface TrackFilter {
   query?: string | null;
   missing_only?: boolean;
+  unlinked_only?: boolean;
   limit?: number | null;
 }
 
@@ -87,6 +93,7 @@ export interface PathsInfo {
   data_root: string;
   portable: boolean;
   db_path: string;
+  settings_path: string;
 }
 
 export type RouteId =
@@ -97,3 +104,76 @@ export type RouteId =
   | "playlists"
   | "manage"
   | "settings";
+
+export interface ScrapeCandidate {
+  id: string;
+  kind: string;
+  title: string;
+  artist: string;
+  year: string;
+  track_count: number;
+  country: string;
+  disambiguation: string;
+  release_id: string;
+}
+
+export interface FieldChange {
+  field: string;
+  old: string;
+  new: string;
+}
+
+export interface TrackPlan {
+  track_id: number;
+  path: string;
+  display: string;
+  matched_title: string;
+  changes: FieldChange[];
+}
+
+export interface CatalogTrackDraft {
+  /** recording MBID */
+  mbid: string;
+  release_mbid: string;
+  title: string;
+  artist: string;
+  album: string;
+  album_artist: string;
+  year: string;
+  track_no: number | null;
+  release_type: string;
+}
+
+export interface ApplyPlan {
+  candidate_id: string;
+  release_id: string;
+  candidate_label: string;
+  tracks: TrackPlan[];
+  /** 采纳后存入本地 catalog 的完整曲目表（专辑模式为整张） */
+  catalog_tracks: CatalogTrackDraft[];
+  cover_will_write: boolean;
+  unmatched: string[];
+}
+
+export interface CatalogRow {
+  id: number;
+  source: string;
+  kind: string;
+  mbid: string;
+  release_mbid: string;
+  title: string;
+  artist: string;
+  album: string;
+  album_artist: string;
+  year: string;
+  track_no: number | null;
+  release_type: string;
+  cover_path: string | null;
+  created_at: string;
+}
+
+export interface CompareData {
+  track: TrackRow;
+  catalog: CatalogRow | null;
+  changes: FieldChange[];
+}

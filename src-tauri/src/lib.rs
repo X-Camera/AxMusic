@@ -5,7 +5,11 @@ mod library;
 mod paths;
 mod player;
 mod scanner;
+mod scraper;
+mod settings;
+mod tagger;
 
+use std::path::Path;
 use std::sync::Mutex;
 
 use tauri::Manager;
@@ -18,13 +22,26 @@ pub fn run() {
             let data_root = paths::ensure_data_root();
             eprintln!("[AxMusic] data_root = {}", data_root.display());
 
-            let db = library::LibraryDb::open_default()?;
-            let player = player::Player::new()?;
+            let app_settings = settings::load();
+            let db = match app_settings.library_root.as_deref() {
+                Some(root) if Path::new(root).is_dir() => {
+                    let db_path = paths::library_db_path(Path::new(root));
+                    eprintln!("[AxMusic] library_db = {}", db_path.display());
+                    Some(library::LibraryDb::open(&db_path)?)
+                }
+                _ => None,
+            };
+
+            let mut player = player::Player::new()?;
+            player
+                .engine
+                .set_volume_f32(app_settings.volume.clamp(0.0, 1.0));
 
             let state = commands::AppState {
                 db: Mutex::new(db),
                 player: Mutex::new(player),
                 scanning: Mutex::new(false),
+                settings: Mutex::new(app_settings),
             };
             _app.manage(state);
             Ok(())
@@ -39,6 +56,7 @@ pub fn run() {
             commands::get_album_tracks,
             commands::get_track_count,
             commands::refresh_scan,
+            commands::is_in_library,
             commands::include_in_library,
             commands::get_player_state,
             commands::play_file,
@@ -51,6 +69,14 @@ pub fn run() {
             commands::player_seek,
             commands::player_set_volume,
             commands::list_dir_audio,
+            commands::scrape_search_album,
+            commands::scrape_search_track,
+            commands::scrape_build_plan,
+            commands::catalog_save,
+            commands::catalog_compare,
+            commands::catalog_match_one,
+            commands::catalog_match_all,
+            commands::catalog_apply_to_track,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AxMusic");

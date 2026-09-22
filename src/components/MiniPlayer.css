@@ -48,6 +48,37 @@
   text-overflow: ellipsis;
 }
 
+.mp-include {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 8px;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 11px;
+  color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.mp-include:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.mp-include:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mp-included {
+  flex-shrink: 0;
+  margin-left: 6px;
+  font-size: 11px;
+}
+
 .mp-center {
   display: flex;
   flex-direction: column;

@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AlbumCard,
+  ApplyPlan,
   LibraryRoot,
   PathsInfo,
   PlayerSnapshot,
   QueueItem,
   ScanResult,
+  ScrapeCandidate,
   TrackFilter,
   TrackInfo,
   TrackRow,
@@ -47,6 +49,33 @@ export const api = {
     invoke<PlayerSnapshot>("player_set_volume", { volume }),
 
   listDirAudio: (path: string) => invoke<TrackInfo[]>("list_dir_audio", { path }),
+
+  scrapeSearchAlbum: (album: string, artist: string) =>
+    invoke<ScrapeCandidate[]>("scrape_search_album", { album, artist }),
+  scrapeSearchTrack: (title: string, artist: string) =>
+    invoke<ScrapeCandidate[]>("scrape_search_track", { title, artist }),
+  scrapeBuildPlan: (
+    releaseMbid: string,
+    trackIds: number[],
+    mode: "album" | "track",
+    writeCover: boolean,
+  ) =>
+    invoke<ApplyPlan>("scrape_build_plan", {
+      releaseMbid,
+      trackIds,
+      mode,
+      writeCover,
+    }),
+  catalogSave: (plan: ApplyPlan, fetchCover: boolean) =>
+    invoke<number[]>("catalog_save", { plan, fetchCover }),
+  catalogCompare: (trackId: number) =>
+    invoke<import("./types").CompareData>("catalog_compare", { trackId }),
+  catalogApplyToTrack: (trackId: number, fields: string[], writeCover: boolean) =>
+    invoke<number>("catalog_apply_to_track", { trackId, fields, writeCover }),
+  catalogMatchOne: (trackId: number) =>
+    invoke<number | null>("catalog_match_one", { trackId }),
+  catalogMatchAll: () => invoke<number>("catalog_match_all"),
+  isInLibrary: (path: string) => invoke<boolean>("is_in_library", { path }),
 };
 
 export function formatTime(ms: number): string {
