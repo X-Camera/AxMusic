@@ -269,6 +269,13 @@ impl SymphoniaPlayer {
     }
 
     pub fn seek_to(&mut self, ms: u64) -> Result<()> {
+        // 乐观对准目标进度：snapshot 立刻反映本次 seek，避免 UI 松手回弹
+        // （真正的解码跳转在 worker 的 Cmd::Seek 里完成，成功后会再写一次 position）
+        let rate = self.shared.sample_rate.load(Ordering::SeqCst).max(1);
+        self.shared
+            .position_frames
+            .store(ms.saturating_mul(rate) / 1000, Ordering::SeqCst);
+        self.shared.request_flush();
         let _ = self.cmd_tx.send(Cmd::Seek { ms });
         Ok(())
     }
