@@ -17,15 +17,16 @@ export function TopBar({
   return (
     <header className="topbar">
       <h1 className="topbar-title">{title}</h1>
-      <div className="topbar-search">
-        <Search size={14} className="tertiary" />
-        <input
-          placeholder="搜索曲目、歌手、专辑"
-          value={searchValue ?? ""}
-          onChange={(e) => onSearch?.(e.target.value)}
-          disabled={!onSearch}
-        />
-      </div>
+      {onSearch && (
+        <div className="topbar-search">
+          <Search size={14} className="tertiary" />
+          <input
+            placeholder="搜索曲目、歌手、专辑"
+            value={searchValue ?? ""}
+            onChange={(e) => onSearch(e.target.value)}
+          />
+        </div>
+      )}
       <div className="topbar-actions">{actions}</div>
     </header>
   );

@@ -1,6 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderPlus, FolderSearch, Link2, ListPlus, ListRestart, Loader2, Play } from "lucide-react";
+import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search } from "lucide-react";
 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
@@ -27,7 +27,7 @@ export function ManagePage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
-  const [scrapeOpen, setScrapeOpen] = useState(false);
+  const [scrapeTrack, setScrapeTrack] = useState<TrackRow | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const [lyricsTrackId, setLyricsTrackId] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null);
@@ -44,7 +44,7 @@ export function ManagePage() {
 
   const reloadTracks = useCallback(async () => {
     try {
-      // 统计与列表同刷：扫描/写回/刮削/自动关联/补歌词后都会走到这里
+      // 统计与列表同刷：扫描/写回/刮削/补歌词后都会走到这里
       const [list, st] = await Promise.all([
         api.getTracks({
           missing_only: missingOnly,
@@ -108,6 +108,22 @@ export function ManagePage() {
     );
   }, [tracks, query]);
 
+  /** 边栏底部操作对象：优先多选，否则当前激活行 */
+  const actionTracks = useMemo(() => {
+    if (selected.size > 0) return filtered.filter((t) => selected.has(t.id));
+    if (compareId != null) {
+      const row = filtered.find((t) => t.id === compareId);
+      return row ? [row] : [];
+    }
+    return [];
+  }, [filtered, selected, compareId]);
+
+  /** 当前激活的单曲（边栏刮削按钮） */
+  const activeTrack = useMemo(
+    () => (compareId != null ? (filtered.find((t) => t.id === compareId) ?? null) : null),
+    [filtered, compareId],
+  );
+
   async function onInit(mode: "new" | "existing") {
     setError(null);
     try {
@@ -158,21 +174,15 @@ export function ManagePage() {
     }
   }
 
-  async function playSelected() {
-    const items = filtered.filter((t) => selected.has(t.id));
-    if (items.length === 0) return;
-    await playQueue(items.map(trackRowToQueueItem), 0);
+  async function onPlayAction() {
+    if (actionTracks.length === 0) return;
+    const items = actionTracks.map(trackRowToQueueItem);
+    await playQueue(items, 0);
   }
 
-  async function onAutoMatch() {
-    setError(null);
-    try {
-      const n = await api.catalogMatchAll();
-      setToast(`自动关联完成：${n} 首匹配到本地 catalog`);
-      await reloadTracks();
-    } catch (e) {
-      setError(String(e));
-    }
+  function onPlaylistAction() {
+    if (actionTracks.length === 0) return;
+    setPickerItems(actionTracks.map(trackRowToAddItem));
   }
 
   // ── wizard ─────────────────────────────────────────────────────
@@ -217,10 +227,11 @@ export function ManagePage() {
     <>
       <TopBar
         title="管理"
-        searchValue={query}
-        onSearch={setQuery}
         actions={
           <>
+            <div className="manage-root mono tertiary" title={root.path}>
+              库根：{root.path}
+            </div>
             <button className="btn" onClick={() => void onChangeRoot()}>
               更换库根
             </button>
@@ -232,141 +243,139 @@ export function ManagePage() {
         }
       />
 
-      <div className="manage-toolbar">
-        <div className="manage-root mono tertiary" title={root.path}>
-          库根：{root.path}
-        </div>
-        <div className="manage-chips">
-          <button
-            className={`chip${missingOnly ? " active" : ""}`}
-            onClick={() => setMissingOnly((v) => !v)}
-          >
-            仅缺字段
-          </button>
-          <button
-            className={`chip${unlinkedOnly ? " active" : ""}`}
-            onClick={() => setUnlinkedOnly((v) => !v)}
-            title="只看未关联 catalog 的曲目（待刮削）"
-          >
-            未关联
-          </button>
-          <button className="chip" onClick={() => void onAutoMatch()} title="按字段批量关联本地 catalog">
-            <Link2 size={13} /> 自动关联
-          </button>
-          <span className="tertiary">
-            共 {filtered.length} 首
-            {progress && scanning ? ` · ${progress.scanned}/${progress.totalFiles}` : ""}
-            {lastScan
-              ? ` · 新增 ${lastScan.added} 更新 ${lastScan.updated} 失败 ${lastScan.errors}`
-              : ""}
-          </span>
-        </div>
-      </div>
-
-      {(scanning || progress) && (
-        <div className="scan-bar">
-          <div
-            className="scan-fill"
-            style={{
-              width: `${progress ? (progress.scanned / Math.max(progress.totalFiles, 1)) * 100 : 8}%`,
-            }}
-          />
-        </div>
-      )}
-
-      {error && <div className="error-line">{error}</div>}
-      {toast && (
-        <div className="toast-line" onClick={() => setToast(null)}>
-          {toast}
-        </div>
-      )}
-
       <div className="manage-body">
-        <div
-          className="page-scroll manage-table-pane"
-          style={{ paddingTop: 12 }}
-          onClick={(e) => {
-            // 点空白处取消选中（行内点击的 target 会落在 tr.row 内）
-            if ((e.target as HTMLElement).closest("tr.row") == null) setCompareId(null);
-          }}
-        >
-          {filtered.length === 0 ? (
-            <div className="empty-state">
-              <p className="muted">
-                库中还没有曲目。把 FLAC/MP3 手动放入库根，再点「刷新扫描」。
-              </p>
-              <button className="btn btn-primary" disabled={scanning} onClick={() => void onRefresh()}>
-                刷新扫描
-              </button>
+        <div className="manage-main">
+          <div className="manage-toolbar">
+            <div className="manage-search">
+              <Search size={14} className="tertiary" />
+              <input
+                placeholder="搜索曲目、歌手、专辑"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
             </div>
-          ) : (
-            <TrackTable
-              rows={filtered}
-              selected={selected}
-              activeId={compareId}
-              onSelectedChange={setSelected}
-              onPlay={(_row, idxInView) => void playQueue(filtered.map(trackRowToQueueItem), idxInView)}
-              onActivate={(row) =>
-                // 再点已激活行 → 退出对比，右栏回到库统计
-                setCompareId((cur) => (cur === row.id ? null : row.id))
-              }
-              onScrape={(row) => {
-                setSelected(new Set([row.id]));
-                setScrapeOpen(true);
-              }}
-              onAddToPlaylist={(row) => setPickerItems([trackRowToAddItem(row)])}
-            />
-          )}
-        </div>
-        {compareId != null ? (
-          <ComparePanel
-            key={`${compareId}-${compareVersion}`}
-            trackId={compareId}
-            onWritten={() => {
-              setCompareVersion((v) => v + 1);
-              void reloadTracks();
-            }}
-            onSearchLyrics={() => setLyricsTrackId(compareId)}
-          />
-        ) : (
-          <StatsPanel stats={stats} />
-        )}
-      </div>
+            <div className="manage-chips">
+              <button
+                className={`chip${missingOnly ? " active" : ""}`}
+                onClick={() => setMissingOnly((v) => !v)}
+              >
+                仅缺字段
+              </button>
+              <button
+                className={`chip${unlinkedOnly ? " active" : ""}`}
+                onClick={() => setUnlinkedOnly((v) => !v)}
+                title="只看未关联 catalog 的曲目（待刮削）"
+              >
+                未关联
+              </button>
+              <span className="tertiary">
+                共 {filtered.length} 首
+                {progress && scanning ? ` · ${progress.scanned}/${progress.totalFiles}` : ""}
+                {lastScan
+                  ? ` · 新增 ${lastScan.added} 更新 ${lastScan.updated} 失败 ${lastScan.errors}`
+                  : ""}
+              </span>
+            </div>
+          </div>
 
-      {selected.size > 0 && (
-        <div className="batch-bar">
-          <span className="muted">已选 {selected.size} 项</span>
-          <div className="batch-actions">
-            <button className="btn btn-primary" onClick={() => void playSelected()}>
-              <Play size={15} /> 播放所选
-            </button>
+          {(scanning || progress) && (
+            <div className="scan-bar">
+              <div
+                className="scan-fill"
+                style={{
+                  width: `${progress ? (progress.scanned / Math.max(progress.totalFiles, 1)) * 100 : 8}%`,
+                }}
+              />
+            </div>
+          )}
+
+          {error && <div className="error-line manage-error">{error}</div>}
+          {toast && (
+            <div className="toast-line" onClick={() => setToast(null)}>
+              {toast}
+            </div>
+          )}
+
+          <div
+            className="page-scroll manage-table-pane"
+            style={{ paddingTop: 12 }}
+            onClick={(e) => {
+              // 点空白处取消选中（行内点击的 target 会落在 tr.row 内）
+              if ((e.target as HTMLElement).closest("tr.row") == null) setCompareId(null);
+            }}
+          >
+            {filtered.length === 0 ? (
+              <div className="empty-state">
+                <p className="muted">
+                  库中还没有曲目。把 FLAC/MP3 手动放入库根，再点「刷新扫描」。
+                </p>
+                <button className="btn btn-primary" disabled={scanning} onClick={() => void onRefresh()}>
+                  刷新扫描
+                </button>
+              </div>
+            ) : (
+              <TrackTable
+                rows={filtered}
+                selected={selected}
+                activeId={compareId}
+                onSelectedChange={setSelected}
+                onPlay={(_row, idxInView) => void playQueue(filtered.map(trackRowToQueueItem), idxInView)}
+                onActivate={(row) =>
+                  // 再点已激活行 → 退出对比，右栏回到库统计
+                  setCompareId((cur) => (cur === row.id ? null : row.id))
+                }
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="manage-side">
+          <div className="manage-side-scroll">
+            {compareId != null ? (
+              <ComparePanel
+                key={`${compareId}-${compareVersion}`}
+                trackId={compareId}
+                onWritten={() => {
+                  setCompareVersion((v) => v + 1);
+                  void reloadTracks();
+                }}
+                onSearchLyrics={() => setLyricsTrackId(compareId)}
+                onScrape={() => {
+                  if (activeTrack) setScrapeTrack(activeTrack);
+                }}
+              />
+            ) : (
+              <StatsPanel stats={stats} />
+            )}
+          </div>
+          <div className="side-actions">
             <button
               className="btn btn-primary"
-              title="MusicBrainz 刮削（标签/封面）"
-              onClick={() => setScrapeOpen(true)}
+              disabled={actionTracks.length === 0}
+              title={actionTracks.length > 1 ? `播放所选 ${actionTracks.length} 首` : "播放"}
+              onClick={() => void onPlayAction()}
             >
-              刮削
+              <Play size={15} /> 播放
             </button>
             <button
               className="btn"
+              disabled={actionTracks.length === 0}
               title="加入歌单"
-              onClick={() =>
-                setPickerItems(filtered.filter((t) => selected.has(t.id)).map(trackRowToAddItem))
-              }
+              onClick={() => onPlaylistAction()}
             >
-              <ListPlus size={15} /> 加入歌单
+              <ListPlus size={15} /> 歌单
             </button>
           </div>
         </div>
-      )}
+      </div>
 
-      {scrapeOpen && (
+      {scrapeTrack && (
         <ScrapeWizard
-          tracks={filtered.filter((t) => selected.has(t.id))}
-          onClose={() => setScrapeOpen(false)}
+          track={scrapeTrack}
+          onClose={() => setScrapeTrack(null)}
           onApplied={() => {
             void reloadTracks();
-            setSelected(new Set());
+            setCompareVersion((v) => v + 1);
           }}
         />
       )}

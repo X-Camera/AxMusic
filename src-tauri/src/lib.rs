@@ -83,6 +83,7 @@ pub fn run() {
             commands::catalog_match_one,
             commands::catalog_match_all,
             commands::catalog_apply_to_track,
+            commands::track_write_tags,
             commands::lyrics_search,
             commands::lyrics_fetch,
             commands::lyrics_save,

@@ -76,18 +76,14 @@ export function TrackTable({
   onSelectedChange,
   onPlay,
   onActivate,
-  onScrape,
-  onAddToPlaylist,
 }: {
   rows: TrackRow[];
   selected: Set<number>;
   activeId: number | null;
   onSelectedChange: (s: Set<number>) => void;
   onPlay: (row: TrackRow, indexInView: number) => void;
-  /** 单击行 → 右侧显示 文件 vs catalog 对比（再次单击已激活行 → 回到统计） */
+  /** 单击行 → 右侧显示 catalog 字段（再次单击已激活行 → 回到统计） */
   onActivate: (row: TrackRow) => void;
-  onScrape: (row: TrackRow) => void;
-  onAddToPlaylist: (row: TrackRow) => void;
 }) {
   function toggle(id: number) {
     const next = new Set(selected);
@@ -113,21 +109,20 @@ export function TrackTable({
               onChange={toggleAll}
             />
           </th>
-          <th style={{ width: 48 }} title="封面（文件内嵌）">
-            封
+          <th style={{ width: 56 }} title="封面（文件内嵌）">
+            封面
           </th>
           <th>曲名</th>
           <th>歌手</th>
           <th>专辑</th>
-          <th style={{ width: 56 }}>年</th>
-          <th style={{ width: 44 }}>#</th>
-          <th style={{ width: 44 }} title="内嵌歌词（标签内）">
-            内嵌
+          <th style={{ width: 56 }}>年份</th>
+          <th style={{ width: 48 }}>轨号</th>
+          <th style={{ width: 72 }} title="内嵌歌词（标签内）">
+            内嵌歌词
           </th>
-          <th style={{ width: 44 }} title="外挂歌词（同目录同名 .lrc）">
-            外挂
+          <th style={{ width: 72 }} title="外挂歌词（同目录同名 .lrc）">
+            外挂歌词
           </th>
-          <th style={{ width: 72 }} />
         </tr>
       </thead>
       <tbody>
@@ -188,17 +183,6 @@ export function TrackTable({
               </td>
               <td className={t.has_lrc ? "cell-ok" : "cell-empty"}>
                 {t.has_lrc ? "✓" : "—"}
-              </td>
-              <td className="row-actions" onClick={(e) => e.stopPropagation()}>
-                <button className="link-btn" onClick={() => onPlay(t, idx)} title="播放">
-                  播放
-                </button>
-                <button className="link-btn" onClick={() => onScrape(t)} title="刮削此曲到 catalog">
-                  刮削
-                </button>
-                <button className="link-btn" onClick={() => onAddToPlaylist(t)} title="加入歌单">
-                  歌单
-                </button>
               </td>
             </tr>
           );

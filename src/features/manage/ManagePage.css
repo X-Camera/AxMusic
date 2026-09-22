@@ -19,6 +19,11 @@
   max-width: 720px;
 }
 
+.manage-error {
+  margin: var(--space-3) var(--space-6) 0;
+  max-width: none;
+}
+
 .toast-line {
   margin: 8px var(--space-6) 0;
   padding: 8px 12px;
@@ -29,27 +34,69 @@
   cursor: pointer;
 }
 
+.manage-root {
+  min-width: 0;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manage-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.manage-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .manage-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   padding: 10px var(--space-6) 0;
+  flex-shrink: 0;
   flex-wrap: wrap;
 }
 
-.manage-root {
-  min-width: 0;
-  max-width: 55%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.manage-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 320px;
+  min-width: 180px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.manage-search input {
+  border: none;
+  background: transparent;
+  padding: 0;
+  width: 100%;
+  box-shadow: none;
+}
+
+.manage-search input:focus {
+  box-shadow: none;
 }
 
 .manage-chips {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .scan-bar {
@@ -58,6 +105,7 @@
   background: var(--bg-hover);
   border-radius: 999px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .scan-fill {
@@ -66,41 +114,57 @@
   transition: width 160ms var(--ease-out);
 }
 
-.batch-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  height: 52px;
-  padding: 0 var(--space-6);
-  border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-}
-
-.batch-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-/* 表格 + 右侧对比面板 */
-.manage-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
 .manage-table-pane {
   flex: 1;
   min-width: 0;
 }
 
-.manage-body .cmp-panel,
-.manage-body .stats-panel {
+/* 右栏：上顶到工具栏同一行，底部固定操作排 */
+.manage-side {
   width: 380px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+}
+
+.manage-side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.manage-side-scroll .cmp-panel,
+.manage-side-scroll .stats-panel {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  border-left: none;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.side-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.side-actions .btn {
+  flex: 1;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
 }
 
 @keyframes spin {

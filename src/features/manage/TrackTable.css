@@ -9,7 +9,7 @@
 }
 
 .track-table th {
-  text-align: left;
+  text-align: center;
   font-weight: 600;
   color: var(--text-secondary);
   font-size: 12px;
@@ -20,6 +20,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
+  white-space: nowrap;
 }
 
 .track-table td {
@@ -27,6 +28,7 @@
   padding: 0 10px;
   border-bottom: 1px solid rgba(42, 47, 58, 0.55);
   white-space: nowrap;
+  text-align: center;
 }
 
 .track-table tr.row:hover {
@@ -79,16 +81,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 180px;
-}
-
-.row-actions {
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-}
-
-.track-table tr:hover .row-actions {
-  opacity: 1;
 }
 
 .link-btn {

@@ -38,6 +38,15 @@
   font-size: 12px;
 }
 
+.scrape-track-line {
+  margin-top: 8px !important;
+  font-size: 13px !important;
+}
+
+.scrape-body.two-col {
+  grid-template-columns: 1fr 1.4fr;
+}
+
 .scrape-head-actions {
   display: flex;
   align-items: center;

@@ -1399,6 +1399,65 @@ pub fn catalog_match_all(state: State<'_, AppState>) -> Result<usize, String> {
     db.auto_match_unlinked().map_err(|e| e.to_string())
 }
 
+/// Write user-edited tag fields into the audio file, refresh the tracks row,
+/// then try field-match against local catalog (fixing title/artist may unlock a link).
+/// Empty values never overwrite tags.
+#[tauri::command]
+pub fn track_write_tags(
+    state: State<'_, AppState>,
+    track_id: i64,
+    changes: Vec<FieldChange>,
+) -> Result<i64, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        let track = db
+            .get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?;
+        track.path.clone()
+    };
+
+    let writable: Vec<FieldChange> = changes
+        .into_iter()
+        .filter(|ch| !ch.new.trim().is_empty())
+        .collect();
+    if writable.is_empty() {
+        return Ok(track_id);
+    }
+
+    let path_buf = PathBuf::from(&path);
+    crate::tagger::write_track(&path_buf, &writable, None, "", "").map_err(|e| e.to_string())?;
+
+    {
+        let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+        let Some(db) = guard.as_mut() else {
+            return Err("尚未初始化库目录".into());
+        };
+        if let Ok(mut row) = scanner::read_track(Path::new(&path)) {
+            let meta = std::fs::metadata(&path).ok();
+            let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let mtime = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            row.path = path.clone();
+            let _ = db.upsert_track(&row, file_size, mtime);
+        }
+        // 修正字段后立刻尝试关联 catalog
+        if let Ok(Some(row)) = db.get_track_by_id(track_id) {
+            if row.catalog_id.is_none() || row.catalog_id == Some(0) {
+                if let Ok(Some(c)) = db.find_catalog_fuzzy(&row) {
+                    let _ = db.link_track_catalog(track_id, c.id);
+                }
+            }
+        }
+    }
+    Ok(track_id)
+}
+
 /// Write selected catalog fields into the audio file (tags + optional cover from covers/).
 /// Only fields listed in `fields` are written; empty catalog values never overwrite tags.
 #[tauri::command]

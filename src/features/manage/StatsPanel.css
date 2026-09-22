@@ -1,14 +1,9 @@
 /* 右栏常驻统计面板（与 .cmp-panel 同槽位同宽） */
 .stats-panel {
-  width: 380px;
-  flex-shrink: 0;
-  overflow: auto;
-  background: var(--bg-elevated);
-  border-left: 1px solid var(--border);
-  padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  min-height: 0;
 }
 
 .stats-head h2 {

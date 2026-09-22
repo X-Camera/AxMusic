@@ -84,6 +84,9 @@ export const api = {
     invoke<string>("cover_apply", { trackId, url }),
   catalogApplyToTrack: (trackId: number, fields: string[], writeCover: boolean) =>
     invoke<number>("catalog_apply_to_track", { trackId, fields, writeCover }),
+  /** 用户编辑文件标签写回（空值不覆盖）；写后会再试一次 catalog 字段关联 */
+  trackWriteTags: (trackId: number, changes: { field: string; old: string; new: string }[]) =>
+    invoke<number>("track_write_tags", { trackId, changes }),
   catalogMatchOne: (trackId: number) =>
     invoke<number | null>("catalog_match_one", { trackId }),
   catalogMatchAll: () => invoke<number>("catalog_match_all"),
