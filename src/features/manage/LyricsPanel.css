@@ -64,6 +64,16 @@
   gap: 4px;
 }
 
+.lyr-search-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 8px;
+}
+
+.lyr-search-row input {
+  min-width: 0;
+}
+
 .lyr-body {
   display: grid;
   grid-template-columns: 1fr 1.4fr;

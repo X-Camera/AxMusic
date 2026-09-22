@@ -151,6 +151,20 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
+    let (mtime, file_size) = std::fs::metadata(path)
+        .ok()
+        .map(|m| {
+            (
+                m.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+                m.len() as i64,
+            )
+        })
+        .unwrap_or((0, 0));
+
     let mut row = TrackRow {
         id: 0,
         path: path.to_string_lossy().to_string(),
@@ -179,6 +193,13 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         mb_recording_mbid: String::new(),
         mb_release_mbid: String::new(),
         catalog_id: None,
+        mtime,
+        file_size,
+        catalog_title: None,
+        catalog_artist: None,
+        catalog_album: None,
+        catalog_year: None,
+        catalog_track_no: None,
     };
 
     if let Some(tag) = tag {

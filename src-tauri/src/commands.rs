@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::library::{AlbumCard, LibraryDb, LibraryRoot, TrackFilter, TrackRow};
+use crate::library::{AlbumCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
 use crate::settings::AppSettings;
 use crate::{scanner, settings};
@@ -190,6 +190,84 @@ pub fn get_track_count(state: State<'_, AppState>) -> Result<i64, String> {
     let guard = require_db(&state)?;
     let db = db_ref(&guard)?;
     db.track_count().map_err(|e| e.to_string())
+}
+
+/// 库统计（管理页右栏未选中曲目时展示）。
+#[tauri::command]
+pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
+    let guard = require_db(&state)?;
+    let db = db_ref(&guard)?;
+    db.library_stats().map_err(|e| e.to_string())
+}
+
+/// 提取文件内嵌封面 → 96px JPEG data URL（按 path+mtime+size 磁盘缓存）。
+/// 无封面或解析失败返回 Ok(None)，前端显示占位图。
+#[tauri::command]
+pub async fn track_cover_thumb(path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || cover_thumb_blocking(Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn cover_thumb_blocking(path: &Path) -> Result<Option<String>, String> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    use lofty::file::TaggedFileExt as _;
+    use lofty::picture::PictureType;
+    use lofty::probe::Probe;
+
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let key = {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        format!("{}|{}|{}", path.to_string_lossy(), mtime, meta.len()).hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+
+    let dir = crate::paths::data_root().join("cache").join("covers");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let cache_path = dir.join(format!("{key}.jpg"));
+
+    let bytes = match std::fs::read(&cache_path) {
+        Ok(b) => b,
+        Err(_) => {
+            let tagged = Probe::open(path)
+                .and_then(|p| p.read())
+                .map_err(|e| e.to_string())?;
+            let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+                return Ok(None);
+            };
+            let pic = tag
+                .pictures()
+                .iter()
+                .find(|p| p.pic_type() == PictureType::CoverFront)
+                .or_else(|| tag.pictures().first());
+            let Some(pic) = pic else { return Ok(None) };
+
+            // webp/gif 等未启用格式解码失败 → 占位图（已知限制）
+            let img = match image::load_from_memory(pic.data()) {
+                Ok(i) => i,
+                Err(_) => return Ok(None),
+            };
+            let thumb = img.thumbnail(96, 96);
+            let mut buf = std::io::Cursor::new(Vec::new());
+            thumb
+                .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+                    &mut buf, 80,
+                ))
+                .map_err(|e| e.to_string())?;
+            let b = buf.into_inner();
+            std::fs::write(&cache_path, &b).ok();
+            b
+        }
+    };
+
+    Ok(Some(format!("data:image/jpeg;base64,{}", B64.encode(bytes))))
 }
 
 /// Incremental scan. Progress events: `scan://progress`, `scan://done`.
@@ -582,6 +660,8 @@ pub async fn lyrics_search(
     app: AppHandle,
     state: State<'_, AppState>,
     track_id: i64,
+    artist: Option<String>,
+    title: Option<String>,
 ) -> Result<(), String> {
     let track = {
         let guard = require_db(&state)?;
@@ -590,8 +670,15 @@ pub async fn lyrics_search(
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?
     };
-    let title = track.title.clone();
-    let artist = track.artist.clone();
+    // 前端搜索面板允许用户改歌手/歌名；传入非空值时覆盖文件标签值
+    let title = title
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| track.title.clone());
+    let artist = artist
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| track.artist.clone());
     let album = track.album.clone();
 
     std::thread::spawn(move || {

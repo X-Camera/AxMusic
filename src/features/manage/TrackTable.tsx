@@ -1,13 +1,70 @@
+import { Music } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+
 import type { TrackRow } from "../../lib/types";
+import { loadCover, observeCover, peekCover, unobserveCover } from "./coverCache";
 import "./TrackTable.css";
 
-function StatusDot({ ok, label }: { ok: boolean; label: string }) {
+/* ── 与 catalog 的匹配判定：trim + 忽略大小写；年取前 4 位数字特化；轨号按数值 ── */
+const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+
+function matchStr(file: string, catalog: string | null): boolean {
+  const c = norm(catalog);
+  return c !== "" && norm(file) === c;
+}
+
+function matchYear(file: string, catalog: string | null): boolean {
+  const f = norm(file);
+  const c = norm(catalog);
+  if (f === "" || c === "") return false;
+  const fy = f.match(/\d{4}/);
+  const cy = c.match(/\d{4}/);
+  if (fy && cy) return fy[0] === cy[0];
+  return f === c;
+}
+
+function matchNo(file: number | null, catalog: number | null): boolean {
+  return file != null && catalog != null && file === catalog;
+}
+
+/** 内嵌封面缩略图：进入视口才提取（懒加载），无封面显示占位图标且不发起加载。 */
+function CoverThumb({
+  path,
+  mtime,
+  hasCover,
+}: {
+  path: string;
+  mtime: number;
+  hasCover: boolean;
+}) {
+  const key = `${path}:${mtime}`;
+  const [src, setSrc] = useState<string | null>(() => peekCover(key) ?? null);
+  const boxRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!hasCover) return;
+    const cached = peekCover(key);
+    if (cached !== undefined) {
+      setSrc(cached);
+      return;
+    }
+    const el = boxRef.current;
+    if (!el) return;
+    let alive = true;
+    observeCover(el, () => {
+      void loadCover(key, path).then((url) => {
+        if (alive) setSrc(url);
+      });
+    });
+    return () => {
+      alive = false;
+      unobserveCover(el);
+    };
+  }, [key, path, hasCover]);
+
   return (
-    <span
-      className={`status-dot${ok ? " ok" : " miss"}`}
-      title={ok ? `${label} ✓` : `${label} 缺`}
-    >
-      {ok ? "✓" : "缺"}
+    <span ref={boxRef} className="cover-cell">
+      {src ? <img src={src} alt="" /> : <Music size={14} />}
     </span>
   );
 }
@@ -26,7 +83,7 @@ export function TrackTable({
   activeId: number | null;
   onSelectedChange: (s: Set<number>) => void;
   onPlay: (row: TrackRow, indexInView: number) => void;
-  /** 单击行 → 右侧显示 文件 vs catalog 对比 */
+  /** 单击行 → 右侧显示 文件 vs catalog 对比（再次单击已激活行 → 回到统计） */
   onActivate: (row: TrackRow) => void;
   onScrape: (row: TrackRow) => void;
 }) {
@@ -54,32 +111,34 @@ export function TrackTable({
               onChange={toggleAll}
             />
           </th>
-          <th style={{ width: 28 }} />
+          <th style={{ width: 48 }} title="封面（文件内嵌）">
+            封
+          </th>
           <th>曲名</th>
           <th>歌手</th>
           <th>专辑</th>
           <th style={{ width: 56 }}>年</th>
           <th style={{ width: 44 }}>#</th>
-          <th style={{ width: 40 }}>封</th>
-          <th style={{ width: 40 }}>嵌</th>
-          <th style={{ width: 40 }}>挂</th>
-          <th style={{ width: 40 }}>年</th>
-          <th style={{ width: 40 }}>型</th>
-          <th style={{ width: 40 }}>MB</th>
-          <th style={{ width: 40 }}>联</th>
+          <th style={{ width: 44 }} title="内嵌歌词（标签内）">
+            内嵌
+          </th>
+          <th style={{ width: 44 }} title="外挂歌词（同目录同名 .lrc）">
+            外挂
+          </th>
           <th style={{ width: 72 }} />
         </tr>
       </thead>
       <tbody>
         {rows.map((t, idx) => {
-          const status = t.tag_status;
-          const bar =
-            status === "complete" ? "ok" : status === "partial" ? "warn" : "bad";
-          const linked = t.catalog_id != null && t.catalog_id > 0;
+          const mTitle = matchStr(t.title, t.catalog_title);
+          const mArtist = matchStr(t.artist, t.catalog_artist);
+          const mAlbum = matchStr(t.album, t.catalog_album);
+          const mYear = matchYear(t.year, t.catalog_year);
+          const mNo = matchNo(t.track_no, t.catalog_track_no);
           return (
             <tr
               key={t.id}
-              className={`row bar-${bar}${activeId === t.id ? " active" : ""}${selected.has(t.id) ? " selected" : ""}`}
+              className={`row${activeId === t.id ? " active" : ""}${selected.has(t.id) ? " selected" : ""}`}
               onClick={() => onActivate(t)}
               onDoubleClick={() => onPlay(t, idx)}
             >
@@ -91,45 +150,42 @@ export function TrackTable({
                   onChange={() => toggle(t.id)}
                 />
               </td>
-              <td className="bar-cell">
-                <span className={`row-bar ${bar}`} />
+              <td>
+                <CoverThumb path={t.path} mtime={t.mtime} hasCover={t.has_cover} />
               </td>
-              <td className="ellipsis" title={t.title || t.filename}>
+              <td
+                className={`ellipsis${mTitle ? " cell-match" : ""}`}
+                title={t.title || t.filename}
+              >
                 {t.title || t.filename}
               </td>
-              <td className="ellipsis muted" title={t.artist}>
+              <td
+                className={`ellipsis${mArtist ? " cell-match" : ""}${t.artist ? "" : " cell-empty"}`}
+                title={t.artist}
+              >
                 {t.artist || "—"}
               </td>
-              <td className="ellipsis muted" title={t.album}>
+              <td
+                className={`ellipsis${mAlbum ? " cell-match" : ""}${t.album ? "" : " cell-empty"}`}
+                title={t.album}
+              >
                 {t.album || "—"}
               </td>
-              <td className="mono">{t.year || "—"}</td>
-              <td className="mono">{t.track_no ?? "—"}</td>
-              <td>
-                <StatusDot ok={t.has_cover} label="封面" />
+              <td
+                className={`mono${mYear ? " cell-match" : ""}${t.year ? "" : " cell-empty"}`}
+              >
+                {t.year || "—"}
               </td>
-              <td>
-                <StatusDot ok={t.has_lyrics} label="内嵌歌词" />
+              <td
+                className={`mono${mNo ? " cell-match" : ""}${t.track_no != null ? "" : " cell-empty"}`}
+              >
+                {t.track_no ?? "—"}
               </td>
-              <td>
-                <StatusDot ok={t.has_lrc} label="外挂歌词 .lrc" />
+              <td className={t.has_lyrics ? "cell-ok" : "cell-empty"}>
+                {t.has_lyrics ? "✓" : "—"}
               </td>
-              <td>
-                <StatusDot ok={t.has_year} label="年份" />
-              </td>
-              <td>
-                <StatusDot ok={!!t.release_type} label="专辑类型" />
-              </td>
-              <td>
-                <StatusDot ok={t.has_mb_id} label="MusicBrainz" />
-              </td>
-              <td>
-                <span
-                  className={`status-dot${linked ? " ok" : " miss"}`}
-                  title={linked ? "已关联本地 catalog ✓" : "未关联 catalog（待刮削）"}
-                >
-                  {linked ? "✓" : "—"}
-                </span>
+              <td className={t.has_lrc ? "cell-ok" : "cell-empty"}>
+                {t.has_lrc ? "✓" : "—"}
               </td>
               <td className="row-actions" onClick={(e) => e.stopPropagation()}>
                 <button className="link-btn" onClick={() => onPlay(t, idx)} title="播放">

@@ -46,6 +46,8 @@ ringbuf = "0.4"
 crossbeam-channel = "0.5"
 walkdir = "2"
 base64 = "0.22"
+# 内嵌封面缩略图（管理表）：仅 jpeg/png 解码 + 缩放，保持编译轻量
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [profile.release]
 opt-level = 1          # 默认 3,降到 1 编译快一倍+,exe 稍大几 MB 但运行无感

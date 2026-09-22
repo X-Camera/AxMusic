@@ -3,11 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderPlus, FolderSearch, Link2, ListRestart, Loader2, Play } from "lucide-react";
 
 import { api, trackRowToQueueItem } from "../../lib/api";
-import type { LibraryRoot, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
+import type { LibraryRoot, LibraryStats, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { TrackTable } from "./TrackTable";
 import { ComparePanel } from "./ComparePanel";
+import { StatsPanel } from "./StatsPanel";
 import { ScrapeWizard } from "./ScrapeWizard";
 import { LyricsPanel } from "./LyricsPanel";
 import "./ManagePage.css";
@@ -26,9 +27,10 @@ export function ManagePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [scrapeOpen, setScrapeOpen] = useState(false);
-  const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [lyricsTrackId, setLyricsTrackId] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null);
   const [compareVersion, setCompareVersion] = useState(0);
+  const [stats, setStats] = useState<LibraryStats | null>(null);
 
   const reloadRoot = useCallback(async () => {
     try {
@@ -40,12 +42,17 @@ export function ManagePage() {
 
   const reloadTracks = useCallback(async () => {
     try {
-      const list = await api.getTracks({
-        missing_only: missingOnly,
-        unlinked_only: unlinkedOnly,
-        limit: 2000,
-      });
+      // 统计与列表同刷：扫描/写回/刮削/自动关联/补歌词后都会走到这里
+      const [list, st] = await Promise.all([
+        api.getTracks({
+          missing_only: missingOnly,
+          unlinked_only: unlinkedOnly,
+          limit: 2000,
+        }),
+        api.getLibraryStats(),
+      ]);
       setTracks(list);
+      setStats(st);
     } catch {
       setTracks([]);
     }
@@ -273,7 +280,14 @@ export function ManagePage() {
       )}
 
       <div className="manage-body">
-        <div className="page-scroll manage-table-pane" style={{ paddingTop: 12 }}>
+        <div
+          className="page-scroll manage-table-pane"
+          style={{ paddingTop: 12 }}
+          onClick={(e) => {
+            // 点空白处取消选中（行内点击的 target 会落在 tr.row 内）
+            if ((e.target as HTMLElement).closest("tr.row") == null) setCompareId(null);
+          }}
+        >
           {filtered.length === 0 ? (
             <div className="empty-state">
               <p className="muted">
@@ -290,7 +304,10 @@ export function ManagePage() {
               activeId={compareId}
               onSelectedChange={setSelected}
               onPlay={(_row, idxInView) => void playQueue(filtered.map(trackRowToQueueItem), idxInView)}
-              onActivate={(row) => setCompareId(row.id)}
+              onActivate={(row) =>
+                // 再点已激活行 → 退出对比，右栏回到库统计
+                setCompareId((cur) => (cur === row.id ? null : row.id))
+              }
               onScrape={(row) => {
                 setSelected(new Set([row.id]));
                 setScrapeOpen(true);
@@ -298,16 +315,18 @@ export function ManagePage() {
             />
           )}
         </div>
-        {compareId != null && (
+        {compareId != null ? (
           <ComparePanel
             key={`${compareId}-${compareVersion}`}
             trackId={compareId}
-            onClose={() => setCompareId(null)}
             onWritten={() => {
               setCompareVersion((v) => v + 1);
               void reloadTracks();
             }}
+            onSearchLyrics={() => setLyricsTrackId(compareId)}
           />
+        ) : (
+          <StatsPanel stats={stats} />
         )}
       </div>
 
@@ -317,13 +336,6 @@ export function ManagePage() {
           <div className="batch-actions">
             <button className="btn btn-primary" onClick={() => void playSelected()}>
               <Play size={15} /> 播放所选
-            </button>
-            <button
-              className="btn"
-              title="LRCLIB 在线补歌词（默认外挂 .lrc），支持嵌/挂互转"
-              onClick={() => setLyricsOpen(true)}
-            >
-              补歌词
             </button>
             <button
               className="btn btn-primary"
@@ -347,13 +359,17 @@ export function ManagePage() {
         />
       )}
 
-      {lyricsOpen && (
-        <LyricsPanel
-          tracks={filtered.filter((t) => selected.has(t.id))}
-          onClose={() => setLyricsOpen(false)}
-          onSaved={() => void reloadTracks()}
-        />
-      )}
+      {lyricsTrackId != null &&
+        (() => {
+          const lt = tracks.find((t) => t.id === lyricsTrackId);
+          return lt ? (
+            <LyricsPanel
+              track={lt}
+              onClose={() => setLyricsTrackId(null)}
+              onSaved={() => void reloadTracks()}
+            />
+          ) : null;
+        })()}
     </>
   );
 }

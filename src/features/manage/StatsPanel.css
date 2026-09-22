@@ -1,0 +1,110 @@
+/* 右栏常驻统计面板（与 .cmp-panel 同槽位同宽） */
+.stats-panel {
+  width: 380px;
+  flex-shrink: 0;
+  overflow: auto;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.stats-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.stats-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-block:last-child {
+  border-bottom: none;
+}
+
+.stats-block-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.stats-big {
+  font-size: 13px;
+}
+
+.stats-accent {
+  font-size: 22px;
+  color: var(--accent);
+}
+
+.stats-note {
+  font-size: 11px;
+}
+
+.stats-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.stats-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width var(--dur) var(--ease-out);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-3) var(--space-1);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.stat-num {
+  font-size: 18px;
+  color: var(--text);
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.stats-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 12px;
+}
+
+.stats-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-secondary);
+}
+
+.stats-list li .mono {
+  color: var(--text);
+}

@@ -1,5 +1,6 @@
 import { MiniPlayer } from "./components/MiniPlayer";
 import { Sidebar } from "./components/Sidebar";
+import { TitleBar } from "./components/TitleBar";
 import { AlbumWallPage } from "./features/browse/AlbumWallPage";
 import { PlaceholderPage } from "./features/browse/PlaceholderPage";
 import { ManagePage } from "./features/manage/ManagePage";
@@ -10,6 +11,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <TitleBar />
       <Sidebar />
       <div className="main-col">
         {route === "albums" && <AlbumWallPage />}

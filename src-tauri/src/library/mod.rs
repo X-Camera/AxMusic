@@ -46,6 +46,22 @@ pub struct TrackRow {
     pub mb_release_mbid: String,
     /// Linked catalog row (metadata match), None = 待刮削.
     pub catalog_id: Option<i64>,
+    #[serde(default)]
+    pub mtime: i64,
+    #[serde(default)]
+    pub file_size: i64,
+    /// catalog 关联行字段（TRACK_COLS 关联子查询填充），管理表「与 catalog 匹配」高亮用；
+    /// 未关联 catalog 时为 None。
+    #[serde(default)]
+    pub catalog_title: Option<String>,
+    #[serde(default)]
+    pub catalog_artist: Option<String>,
+    #[serde(default)]
+    pub catalog_album: Option<String>,
+    #[serde(default)]
+    pub catalog_year: Option<String>,
+    #[serde(default)]
+    pub catalog_track_no: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +72,24 @@ pub struct AlbumCard {
     pub has_cover: bool,
     pub track_count: i64,
     pub cover_path: Option<String>,
+}
+
+/// 管理页右栏「库统计」面板的聚合数据。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryStats {
+    pub total_tracks: i64,
+    /// 已关联 catalog 的曲目数（已刮削）
+    pub linked_tracks: i64,
+    pub with_cover: i64,
+    /// 内嵌歌词
+    pub with_lyrics: i64,
+    /// 外挂 .lrc
+    pub with_lrc: i64,
+    pub catalog_tracks: i64,
+    /// catalog 中按 release MBID 去重的专辑数
+    pub catalog_albums: i64,
+    /// catalog 中按专辑艺人（空则艺人）去重的歌手数
+    pub catalog_artists: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -79,10 +113,17 @@ pub fn now_iso() -> String {
 }
 
 /// Shared column list for SELECTs mapped by [`map_track`].
+/// 列顺序即 map_track 的读取下标顺序。catalog_* 为关联子查询列（tracks.catalog_id 命中时
+/// 非 NULL），不改 FROM 即可被全部查询复用。
 const TRACK_COLS: &str = "id, path, filename, title, artist, album, album_artist, year, track_no,
         duration_ms, format, sample_rate, bit_rate,
         has_cover, has_lyrics, has_lrc, has_year, has_mb_id, tag_status, missing,
-        release_type, mb_recording_mbid, mb_release_mbid, catalog_id";
+        release_type, mb_recording_mbid, mb_release_mbid, catalog_id, mtime, file_size,
+        (SELECT c.title FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_title,
+        (SELECT c.artist FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_artist,
+        (SELECT c.album FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_album,
+        (SELECT c.year FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_year,
+        (SELECT c.track_no FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_track_no";
 
 impl LibraryDb {
     /// Open the working DB at an explicit path (usually `<library>/axmusic.db`).
@@ -354,6 +395,39 @@ impl LibraryDb {
             |r| r.get(0),
         )?;
         Ok(n)
+    }
+
+    /// 库统计：tracks 侧一次聚合 + catalog 侧一次聚合。
+    pub fn library_stats(&self) -> Result<LibraryStats> {
+        let (total_tracks, linked_tracks, with_cover, with_lyrics, with_lrc) =
+            self.conn.query_row(
+                "SELECT COUNT(*),
+                        COALESCE(SUM(CASE WHEN catalog_id IS NOT NULL AND catalog_id > 0 THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(has_cover), 0),
+                        COALESCE(SUM(has_lyrics), 0),
+                        COALESCE(SUM(has_lrc), 0)
+                 FROM tracks WHERE is_deleted = 0",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )?;
+        let (catalog_tracks, catalog_albums, catalog_artists) = self.conn.query_row(
+            "SELECT COUNT(*),
+                    COUNT(DISTINCT NULLIF(release_mbid, '')),
+                    COUNT(DISTINCT COALESCE(NULLIF(album_artist, ''), NULLIF(artist, '')))
+             FROM catalog",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        Ok(LibraryStats {
+            total_tracks,
+            linked_tracks,
+            with_cover,
+            with_lyrics,
+            with_lrc,
+            catalog_tracks,
+            catalog_albums,
+            catalog_artists,
+        })
     }
 
     pub fn list_albums(&self) -> Result<Vec<AlbumCard>> {
@@ -692,6 +766,13 @@ fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
         mb_recording_mbid: r.get(21)?,
         mb_release_mbid: r.get(22)?,
         catalog_id: r.get(23)?,
+        mtime: r.get(24)?,
+        file_size: r.get(25)?,
+        catalog_title: r.get(26)?,
+        catalog_artist: r.get(27)?,
+        catalog_album: r.get(28)?,
+        catalog_year: r.get(29)?,
+        catalog_track_no: r.get(30)?,
     })
 }
 

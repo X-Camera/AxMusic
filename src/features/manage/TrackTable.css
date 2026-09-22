@@ -42,47 +42,37 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.bar-cell {
-  width: 28px;
-  padding: 0 !important;
-}
-
-.row-bar {
-  display: block;
-  width: 3px;
-  height: var(--table-row-height);
-  border-radius: 0 2px 2px 0;
-}
-
-.row-bar.ok {
-  background: var(--success);
-}
-.row-bar.warn {
-  background: var(--warning);
-}
-.row-bar.bad {
-  background: var(--danger);
-}
-
-.status-dot {
+.cover-cell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 18px;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-size: 11px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--bg-card);
+  color: var(--text-tertiary);
 }
 
-.status-dot.ok {
+.cover-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 与 catalog 匹配上的字段值 → 绿字 */
+.track-table td.cell-match {
   color: var(--success);
-  background: rgba(61, 220, 151, 0.12);
 }
 
-.status-dot.miss {
-  color: var(--warning);
-  background: rgba(245, 197, 66, 0.12);
+/* 布尔列打勾（内嵌/外挂歌词） */
+.track-table td.cell-ok {
+  color: var(--success);
+}
+
+/* 空值占位 — 用弱化色 */
+.track-table td.cell-empty {
+  color: var(--text-tertiary);
 }
 
 .ellipsis {

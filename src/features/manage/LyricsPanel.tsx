@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { Download, FileInput, FileOutput, Loader2, X } from "lucide-react";
+import { Download, FileInput, FileOutput, Loader2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
@@ -15,21 +15,23 @@ const SOURCE_LABEL: Record<string, string> = {
 const ALL_SOURCES = ["lrclib", "netease", "qq"] as const;
 
 /**
- * 补歌词 + 嵌/挂互转。
+ * 搜索歌词（右栏「搜索歌词」打开，单首曲目）。
+ * 打开后不自动搜索：歌手/歌名可改，点「搜索」手动触发。
  * 搜索是流式的：LRCLIB / 网易云 / QQ音乐 并发跑，哪个先回就先追加进列表。
- * 默认保存为外挂 .lrc，可选内嵌。
+ * 默认保存为外挂 .lrc，可选内嵌；支持嵌/挂互转。
  */
 export function LyricsPanel({
-  tracks,
+  track,
   onClose,
   onSaved,
 }: {
-  tracks: TrackRow[];
+  track: TrackRow;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [idx, setIdx] = useState(0);
-  const track = tracks[idx];
+  const [artistInput, setArtistInput] = useState(track.artist);
+  const [titleInput, setTitleInput] = useState(track.title || track.filename);
+  const [searched, setSearched] = useState(false);
 
   const [current, setCurrent] = useState<LyricsCurrent | null>(null);
   const [candidates, setCandidates] = useState<LyricsCandidate[]>([]);
@@ -50,16 +52,9 @@ export function LyricsPanel({
     }
   }, []);
 
-  // 流式搜索：订阅事件 + 触发；track 切换时重置
+  // 只订阅事件，不触发搜索（搜索由「搜索」按钮手动发起；先订阅好避免竞态丢批）
   useEffect(() => {
-    if (!track) return;
     aliveRef.current = true;
-    setMessage(null);
-    setError(null);
-    setCandidates([]);
-    setCandId(null);
-    setPreview(null);
-    setSourceDone(Object.fromEntries(ALL_SOURCES.map((s) => [s, "run"])));
     void refreshCurrent(track);
 
     let unBatch: (() => void) | undefined;
@@ -86,10 +81,6 @@ export function LyricsPanel({
           return next;
         });
       });
-      // 触发搜索（事件先订阅好，避免竞态丢批）
-      api.lyricsSearch(track.id).catch((e) => {
-        if (!cancelled) setError(String(e));
-      });
     })();
 
     return () => {
@@ -99,6 +90,31 @@ export function LyricsPanel({
       unDone?.();
     };
   }, [track, refreshCurrent]);
+
+  const searching = ALL_SOURCES.some((s) => sourceDone[s] === "run");
+  const allDone = searched && !searching;
+
+  async function runSearch() {
+    const artist = artistInput.trim();
+    const title = titleInput.trim();
+    if (!artist && !title) {
+      setError("歌手和歌名至少填一个");
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    setSearched(true);
+    setCandidates([]);
+    setCandId(null);
+    setPreview(null);
+    setSourceDone(Object.fromEntries(ALL_SOURCES.map((s) => [s, "run"])));
+    try {
+      await api.lyricsSearch(track.id, artist, title);
+    } catch (e) {
+      setError(String(e));
+      setSourceDone({});
+    }
+  }
 
   async function pickCandidate(c: LyricsCandidate) {
     setCandId(c.id);
@@ -116,7 +132,7 @@ export function LyricsPanel({
   }
 
   async function save(mode: "sidecar" | "embed") {
-    if (!track || candId == null) return;
+    if (candId == null) return;
     setSaving(true);
     setError(null);
     try {
@@ -132,7 +148,6 @@ export function LyricsPanel({
   }
 
   async function convert(dir: "export" | "embed") {
-    if (!track) return;
     setSaving(true);
     setError(null);
     try {
@@ -150,21 +165,18 @@ export function LyricsPanel({
     }
   }
 
-  if (!track) return null;
-
   const previewText = preview?.synced ?? preview?.plain ?? "";
   const hasEmbedded = !!current?.embedded?.trim();
   const hasSidecar = !!current?.sidecar?.trim();
-  const allDone = ALL_SOURCES.every((s) => sourceDone[s] !== "run");
 
   return (
-    <div className="lyr-overlay" role="dialog" aria-label="补歌词">
+    <div className="lyr-overlay" role="dialog" aria-label="搜索歌词">
       <div className="lyr-panel">
         <header className="lyr-head">
           <div>
-            <h2>补歌词</h2>
+            <h2>搜索歌词</h2>
             <p className="tertiary">
-              {idx + 1}/{tracks.length} · {track.title || track.filename}
+              {track.title || track.filename}
               {track.artist ? ` — ${track.artist}` : ""}
             </p>
           </div>
@@ -200,6 +212,31 @@ export function LyricsPanel({
           </span>
         </div>
 
+        <div className="lyr-search-row">
+          <input
+            value={artistInput}
+            onChange={(e) => setArtistInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !searching && void runSearch()}
+            placeholder="歌手"
+            aria-label="歌手"
+          />
+          <input
+            value={titleInput}
+            onChange={(e) => setTitleInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !searching && void runSearch()}
+            placeholder="歌名"
+            aria-label="歌名"
+          />
+          <button
+            className="btn btn-primary"
+            disabled={searching}
+            onClick={() => void runSearch()}
+          >
+            {searching ? <Loader2 size={14} className="spin" /> : <Search size={14} />}
+            {searching ? "搜索中…" : "搜索"}
+          </button>
+        </div>
+
         {error && <div className="error-line">{error}</div>}
         {message && <div className="toast-line" onClick={() => setMessage(null)}>{message}</div>}
 
@@ -211,13 +248,15 @@ export function LyricsPanel({
                 {ALL_SOURCES.map((s) => (
                   <span
                     key={s}
-                    className={`lyr-src ${sourceDone[s] ?? "run"}`}
+                    className={`lyr-src ${sourceDone[s] ?? "idle"}`}
                     title={
                       sourceDone[s] === "run"
                         ? "搜索中"
                         : sourceDone[s] === "err"
                           ? "该源失败"
-                          : "已返回"
+                          : sourceDone[s] === "ok"
+                            ? "已返回"
+                            : "未搜索"
                     }
                   >
                     {SOURCE_LABEL[s]}
@@ -227,13 +266,18 @@ export function LyricsPanel({
               </div>
             </div>
             <div className="lyr-list">
-              {candidates.length === 0 && !allDone && (
+              {!searched && (
+                <div className="tertiary lyr-empty">填好歌手、歌名后点「搜索」</div>
+              )}
+              {searched && candidates.length === 0 && !allDone && (
                 <div className="tertiary lyr-empty">
                   <Loader2 size={14} className="spin" /> 等待各源返回…
                 </div>
               )}
-              {candidates.length === 0 && allDone && (
-                <div className="tertiary lyr-empty">所有源都没有找到歌词</div>
+              {searched && candidates.length === 0 && allDone && (
+                <div className="tertiary lyr-empty">
+                  所有源都没有找到歌词，可改歌手/歌名后再试
+                </div>
               )}
               {candidates.map((c) => (
                 <button
@@ -301,16 +345,6 @@ export function LyricsPanel({
         </div>
 
         <footer className="lyr-foot">
-          <button className="btn" disabled={idx === 0} onClick={() => setIdx((i) => i - 1)}>
-            上一首
-          </button>
-          <button
-            className="btn"
-            disabled={idx >= tracks.length - 1}
-            onClick={() => setIdx((i) => i + 1)}
-          >
-            下一首
-          </button>
           <button className="btn" onClick={onClose}>
             完成
           </button>

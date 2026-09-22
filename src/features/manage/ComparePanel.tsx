@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { api } from "../../lib/api";
 import type { CatalogRow, FieldChange, TrackRow } from "../../lib/types";
 import "./ComparePanel.css";
@@ -23,12 +24,13 @@ export interface CompareData {
 
 export function ComparePanel({
   trackId,
-  onClose,
   onWritten,
+  onSearchLyrics,
 }: {
   trackId: number;
-  onClose: () => void;
   onWritten: () => void;
+  /** 打开当前曲目的搜索歌词面板 */
+  onSearchLyrics: () => void;
 }) {
   const [data, setData] = useState<CompareData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,8 +97,12 @@ export function ComparePanel({
     <aside className="cmp-panel" role="complementary" aria-label="文件与 catalog 对比">
       <header className="cmp-head">
         <h2>文件 vs 本地 catalog</h2>
-        <button className="btn" onClick={onClose} title="关闭对比面板">
-          关闭
+        <button
+          className="btn"
+          onClick={onSearchLyrics}
+          title="在线搜索歌词（LRCLIB / 网易云 / QQ音乐）"
+        >
+          <Search size={14} /> 搜索歌词
         </button>
       </header>
       {error && <div className="error-line cmp-error">{error}</div>}
@@ -180,9 +186,6 @@ export function ComparePanel({
               同时写入封面（若 catalog 有缓存）
             </label>
             <div>
-              <button className="btn" onClick={onClose}>
-                取消
-              </button>
               <button
                 className="btn btn-primary"
                 disabled={writing || picked.size === 0}

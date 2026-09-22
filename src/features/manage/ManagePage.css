@@ -98,7 +98,8 @@
   min-width: 0;
 }
 
-.manage-body .cmp-panel {
+.manage-body .cmp-panel,
+.manage-body .stats-panel {
   width: 380px;
 }
 

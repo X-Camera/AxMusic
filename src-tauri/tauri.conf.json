@@ -14,11 +14,12 @@
       {
         "label": "main",
         "title": "AxMusic",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 960,
-        "minHeight": 640,
-        "center": true
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 700,
+        "center": true,
+        "decorations": false
       }
     ],
     "security": {

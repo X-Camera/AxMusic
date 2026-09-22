@@ -58,6 +58,14 @@ export interface TrackRow {
   mb_release_mbid: string;
   /** Linked local catalog row id; null = 待刮削 */
   catalog_id: number | null;
+  mtime: number;
+  file_size: number;
+  /** catalog 关联行字段（未关联为 null），管理表匹配高亮用 */
+  catalog_title: string | null;
+  catalog_artist: string | null;
+  catalog_album: string | null;
+  catalog_year: string | null;
+  catalog_track_no: number | null;
 }
 
 export interface AlbumCard {
@@ -67,6 +75,21 @@ export interface AlbumCard {
   has_cover: boolean;
   track_count: number;
   cover_path: string | null;
+}
+
+/** 管理页右栏「库统计」聚合数据 */
+export interface LibraryStats {
+  total_tracks: number;
+  /** 已关联 catalog（已刮削） */
+  linked_tracks: number;
+  with_cover: number;
+  /** 内嵌歌词 */
+  with_lyrics: number;
+  /** 外挂 .lrc */
+  with_lrc: number;
+  catalog_tracks: number;
+  catalog_albums: number;
+  catalog_artists: number;
 }
 
 export interface TrackFilter {

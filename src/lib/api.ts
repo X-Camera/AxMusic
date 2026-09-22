@@ -3,6 +3,7 @@ import type {
   AlbumCard,
   ApplyPlan,
   LibraryRoot,
+  LibraryStats,
   PathsInfo,
   PlayerSnapshot,
   QueueItem,
@@ -31,6 +32,10 @@ export const api = {
   getAlbumTracks: (album: string, albumArtist: string) =>
     invoke<TrackRow[]>("get_album_tracks", { album, albumArtist }),
   getTrackCount: () => invoke<number>("get_track_count"),
+  getLibraryStats: () => invoke<LibraryStats>("library_stats"),
+  /** 提取文件内嵌封面缩略图（磁盘缓存），无封面/解析失败返回 null */
+  trackCoverThumb: (path: string) =>
+    invoke<string | null>("track_cover_thumb", { path }),
   refreshScan: () => invoke<ScanResult>("refresh_scan"),
   includeInLibrary: (path: string) =>
     invoke<{ copied_to: string; track: TrackRow }>("include_in_library", { path }),
@@ -77,9 +82,9 @@ export const api = {
   catalogMatchAll: () => invoke<number>("catalog_match_all"),
   isInLibrary: (path: string) => invoke<boolean>("is_in_library", { path }),
 
-  /** 多源并发搜索；结果通过 lyrics://batch 事件流式推送，lyrics://done 收尾 */
-  lyricsSearch: (trackId: number) =>
-    invoke<void>("lyrics_search", { trackId }),
+  /** 多源并发搜索（歌手/歌名可改，非空才生效）；结果经 lyrics://batch 流式推送，lyrics://done 收尾 */
+  lyricsSearch: (trackId: number, artist?: string, title?: string) =>
+    invoke<void>("lyrics_search", { trackId, artist: artist ?? null, title: title ?? null }),
   lyricsFetch: (id: string) =>
     invoke<import("./types").LyricsContent>("lyrics_fetch", { id }),
   lyricsSave: (trackId: number, lrcId: string, mode: "sidecar" | "embed") =>
