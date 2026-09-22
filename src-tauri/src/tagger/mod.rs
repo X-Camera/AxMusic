@@ -1,4 +1,4 @@
-//! Write tags / cover back to audio files (lofty). Backup before write.
+//! Write tags / cover back to audio files (lofty).
 
 use std::path::Path;
 
@@ -10,26 +10,6 @@ use lofty::prelude::{Accessor, ItemKey};
 use lofty::probe::Probe;
 
 use crate::scraper::FieldChange;
-
-/// Copy original file to backup dir before mutating tags.
-pub fn backup_file(path: &Path, backup_root: &Path) -> Result<std::path::PathBuf> {
-    let name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "track".into());
-    let dest_dir = backup_root.join("tag_backups");
-    std::fs::create_dir_all(&dest_dir)?;
-    let dest = dest_dir.join(format!(
-        "{}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-        name
-    ));
-    std::fs::copy(path, &dest).with_context(|| format!("备份失败 {}", path.display()))?;
-    Ok(dest)
-}
 
 fn apply_change(tag: &mut lofty::tag::Tag, field: &str, new: &str) {
     // Never write empty values — an empty catalog field must not wipe file tags.

@@ -204,7 +204,7 @@ export function LyricsPanel({
             <button
               className="link-btn"
               disabled={!hasSidecar || saving}
-              title="把外挂 .lrc 内嵌进文件标签（写前备份）"
+              title="把外挂 .lrc 内嵌进文件标签"
               onClick={() => void convert("embed")}
             >
               <FileInput size={13} /> 外挂 → 内嵌
@@ -335,7 +335,7 @@ export function LyricsPanel({
               <button
                 className="btn"
                 disabled={candId == null || saving || !previewText}
-                title="写入文件标签（LYRICS/USLT，写前备份）"
+                title="写入文件标签（LYRICS/USLT）"
                 onClick={() => void save("embed")}
               >
                 内嵌到文件

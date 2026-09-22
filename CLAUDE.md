@@ -35,9 +35,9 @@ build-release.bat        # 绿色版发布构建 → out/AxMusic-v*.exe
 
 铁律：
 
-1. **刮削不改音频文件**。采纳候选 = 只写 catalog（整张落库）+ 封面到 `<库>/covers/`；改文件只在管理表选中行 → 右侧对比面板 → 用户勾选字段 →「写入文件」（写前备份到 `data/tag_backups/`，**空值永不覆盖**已有标签）
+1. **刮削不改音频文件**。采纳候选 = 只写 catalog（整张落库）+ 封面到 `<库>/covers/`；改文件只在管理表选中行 → 右侧对比面板 → 用户勾选字段 →「写入文件」（**空值永不覆盖**已有标签）
 2. **入库（纳入库管理）只对库外文件**——入口在播放侧（迷你播放条），管理表里全是库内文件，不放此按钮
-3. **歌词默认外挂 `.lrc`**（同目录同名，兼容性优先）；内嵌 LYRICS/USLT 是选项；嵌↔挂互转走 `lyrics` 模块，内嵌写回走 tagger（写前备份）
+3. **歌词默认外挂 `.lrc`**（同目录同名，兼容性优先）；内嵌 LYRICS/USLT 是选项；嵌↔挂互转走 `lyrics` 模块，内嵌写回走 tagger
 4. **歌词多源聚合**：LRCLIB / 网易云 / QQ音乐 并发搜索，结果经 `lyrics://batch` 事件流式推前端（先回先显示），候选 id 带来源前缀 `lrclib:xx`/`netease:xx`/`qq:xx`；新增源实现 `lyrics/<source>.rs` 的 `search`/`fetch` 并在 `lyrics::fetch` 和 `lyrics_search` 命令注册
 3. 播放**不依赖** SQLite；DB 只是管理工作区。应用数据在 `exe_dir/data/`，代码统一走 `paths::data_root()`，禁止写死路径
 

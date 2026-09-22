@@ -789,8 +789,6 @@ pub async fn lyrics_save(
         .to_string();
 
     let desc = if mode == "embed" {
-        let backup_root = crate::paths::data_root().to_path_buf();
-        crate::tagger::backup_file(&path_buf, &backup_root).map_err(|e| e.to_string())?;
         crate::tagger::write_track(
             &path_buf,
             &[crate::scraper::FieldChange {
@@ -858,8 +856,6 @@ pub fn lyrics_embed_sidecar(
     let path_buf = PathBuf::from(&path);
     let text = lyrics::read_sidecar(&path_buf).map_err(|e| e.to_string())?;
 
-    let backup_root = crate::paths::data_root().to_path_buf();
-    crate::tagger::backup_file(&path_buf, &backup_root).map_err(|e| e.to_string())?;
     crate::tagger::write_track(
         &path_buf,
         &[crate::scraper::FieldChange {
@@ -1369,9 +1365,7 @@ pub fn catalog_apply_to_track(
         return Ok(track_id);
     }
 
-    let backup_root = crate::paths::data_root().to_path_buf();
     let path = PathBuf::from(&path);
-    crate::tagger::backup_file(&path, &backup_root).map_err(|e| e.to_string())?;
 
     let cover: Option<Vec<u8>> = if write_cover {
         catalog
