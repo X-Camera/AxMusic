@@ -1,0 +1,57 @@
+/* AxMusic dark tokens — docs/界面设计.md §2. Do not hardcode colors outside this file. */
+:root {
+  /* surfaces */
+  --bg: #0b0c0f;
+  --bg-elevated: #12141a;
+  --bg-card: #181b23;
+  --bg-hover: #222632;
+  --border: #2a2f3a;
+
+  /* text */
+  --text: #f2f4f8;
+  --text-secondary: #a8b0be;
+  --text-tertiary: #6b7385;
+
+  /* accent / status */
+  --accent: #7c6af2;
+  --accent-soft: rgba(124, 106, 242, 0.22);
+  --accent-strong: #6a58e8;
+  --success: #3ddc97;
+  --warning: #f5c542;
+  --danger: #ff6b7a;
+
+  /* geometry */
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-cover: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --sidebar-width: 220px;
+  --sidebar-width-collapsed: 56px;
+  --miniplayer-height: 72px;
+  --table-row-height: 40px;
+
+  /* type */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
+    sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 160ms;
+  --dur-slow: 180ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+  }
+}

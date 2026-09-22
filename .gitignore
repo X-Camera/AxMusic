@@ -1,0 +1,31 @@
+# 设计线框/草稿（本地参考，不入库）
+docs/ui-wireframe-table.svg
+docs/**/*.wireframe.svg
+docs/**/*-draft.md
+
+# 依赖与构建
+node_modules/
+dist/
+dist-portable/
+out/
+src-tauri/target/
+src-tauri/gen/
+*.tsbuildinfo
+*.log
+
+# 便携数据（若开发时在仓库旁生成）
+data/
+AxMusic-portable.ini
+
+# 应用图标（本地产物/母图，不入库）
+assets/icon-source.png
+assets/icon-master.png
+src-tauri/icons/
+generated-*.png
+
+# 系统 / IDE
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/

@@ -1,0 +1,114 @@
+.track-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.track-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 0 10px;
+  height: 34px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.track-table td {
+  height: var(--table-row-height);
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(42, 47, 58, 0.55);
+  white-space: nowrap;
+}
+
+.track-table tr.row:hover {
+  background: var(--bg-hover);
+}
+
+.track-table tr.row.selected {
+  background: var(--accent-soft);
+}
+
+.bar-cell {
+  width: 28px;
+  padding: 0 !important;
+}
+
+.row-bar {
+  display: block;
+  width: 3px;
+  height: var(--table-row-height);
+  border-radius: 0 2px 2px 0;
+}
+
+.row-bar.ok {
+  background: var(--success);
+}
+.row-bar.warn {
+  background: var(--warning);
+}
+.row-bar.bad {
+  background: var(--danger);
+}
+
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.status-dot.ok {
+  color: var(--success);
+  background: rgba(61, 220, 151, 0.12);
+}
+
+.status-dot.miss {
+  color: var(--warning);
+  background: rgba(245, 197, 66, 0.12);
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+}
+
+.track-table tr:hover .row-actions {
+  opacity: 1;
+}
+
+.link-btn {
+  color: var(--accent);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.link-btn:hover {
+  background: var(--accent-soft);
+}
+
+.track-table input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+}

@@ -1,0 +1,120 @@
+.album-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-4) var(--space-4);
+  align-items: start;
+}
+
+.album-cell.open {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.album-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.album-card:hover {
+  transform: translateY(-2px);
+}
+
+.album-cover {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: var(--radius-cover);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.album-cover.placeholder {
+  background: linear-gradient(145deg, #1a1d26 0%, #222632 100%);
+}
+
+.album-initial {
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  opacity: 0.85;
+}
+
+.album-play {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+.album-card:hover .album-play {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.album-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.album-sub {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: -4px;
+}
+
+.album-tracks {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.album-track-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 48px;
+  gap: 8px;
+  align-items: center;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+}
+
+.album-track-row:hover {
+  background: var(--bg-hover);
+}
+
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

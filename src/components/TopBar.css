@@ -1,0 +1,54 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 52px;
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--border);
+  background: rgba(11, 12, 15, 0.85);
+  flex-shrink: 0;
+}
+
+.topbar-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  min-width: 88px;
+}
+
+.topbar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 360px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.topbar-search input {
+  border: none;
+  background: transparent;
+  padding: 0;
+  width: 100%;
+  box-shadow: none;
+}
+
+.topbar-search input:focus {
+  box-shadow: none;
+}
+
+.topbar-search input:disabled {
+  color: var(--text-tertiary);
+}
+
+.topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
