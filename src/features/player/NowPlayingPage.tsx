@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, formatTime } from "../../lib/api";
+import { WindowControls } from "../../components/WindowControls";
 import { useApp } from "../../state/useApp";
 import { findLrcIndex, pickLyrics, type LrcLine } from "./lrc";
 import "./NowPlayingPage.css";
@@ -194,13 +195,16 @@ export function NowPlayingPage() {
       />
       <div className="np-bg-veil" aria-hidden />
 
-      <header className="np-top">
+      <header className="np-top" data-tauri-drag-region="deep">
         <button
           className="np-grabber"
           title="缩回主界面"
           aria-label="缩回主界面"
           onClick={requestClose}
         />
+        <div className="np-window-controls">
+          <WindowControls />
+        </div>
       </header>
 
       <div className="np-stage">

@@ -71,27 +71,22 @@ select:focus {
   background: transparent;
 }
 
-/* layout shell */
+/* layout shell：无独立标题栏，窗口按钮在顶栏右侧 */
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
-  grid-template-rows: var(--titlebar-height) 1fr var(--miniplayer-height);
+  grid-template-rows: 1fr var(--miniplayer-height);
   height: 100%;
   background: var(--bg);
 }
 
-.app-shell .title-bar {
-  grid-row: 1;
-  grid-column: 1 / -1;
-}
-
 .app-shell .sidebar {
-  grid-row: 2;
+  grid-row: 1;
   grid-column: 1;
 }
 
 .app-shell .main-col {
-  grid-row: 2;
+  grid-row: 1;
   grid-column: 2;
   display: flex;
   flex-direction: column;
@@ -101,7 +96,7 @@ select:focus {
 
 .app-shell .mini-player {
   grid-column: 1 / -1;
-  grid-row: 3;
+  grid-row: 2;
 }
 
 /* shared */

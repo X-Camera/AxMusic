@@ -26,7 +26,7 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="brand">
+      <div className="brand" data-tauri-drag-region="deep">
         <div className="brand-mark">
           <ListVideo size={18} strokeWidth={2.2} />
         </div>

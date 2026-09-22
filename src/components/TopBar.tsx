@@ -1,6 +1,7 @@
 import { ArrowLeft, Search } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { WindowControls } from "./WindowControls";
 import "./TopBar.css";
 
 export function TopBar({
@@ -19,7 +20,7 @@ export function TopBar({
   onBack?: () => void;
 }) {
   return (
-    <header className="topbar">
+    <header className="topbar" data-tauri-drag-region="deep">
       {onBack && (
         <button className="btn topbar-back" onClick={onBack} title="返回">
           <ArrowLeft size={15} /> 返回
@@ -37,6 +38,7 @@ export function TopBar({
         </div>
       )}
       <div className="topbar-actions">{actions}</div>
+      <WindowControls />
     </header>
   );
 }

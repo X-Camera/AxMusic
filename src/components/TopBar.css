@@ -3,10 +3,11 @@
   align-items: center;
   gap: var(--space-4);
   height: 52px;
-  padding: 0 var(--space-6);
+  padding: 0 0 0 var(--space-6);
   border-bottom: 1px solid var(--border);
   background: rgba(11, 12, 15, 0.85);
   flex-shrink: 0;
+  user-select: none;
 }
 
 .topbar-back {
@@ -34,6 +35,7 @@
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
+  user-select: text;
 }
 
 .topbar-search input {
@@ -54,7 +56,36 @@
 
 .topbar-actions {
   margin-left: auto;
+  margin-right: var(--space-3);
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 窗口控制（紧贴右缘，原独立标题栏并入） */
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.wc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.wc-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.wc-btn.wc-close:hover {
+  background: var(--danger);
+  color: var(--text);
 }

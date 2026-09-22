@@ -51,7 +51,7 @@ src-tauri/src/   commands.rs(IPC 全部在此) · scanner · tagger · scraper(m
 src/features/    manage/(ManagePage 表格 · TrackTable · ComparePanel/StatsPanel 常驻右栏 · coverCache
                  封面懒加载 · ScrapeWizard 三栏 · LyricsPanel 搜索歌词) · playlists/(PlaylistsPage · PlaylistPicker) · browse/
                  (SongsPage 歌曲列表 · AlbumWallPage 专辑墙+详情 · AlbumCover · PlaceholderPage)
-                 components/(TitleBar 自绘标题栏/Sidebar/MiniPlayer/TopBar) · state/useApp.ts
+                 components/(TopBar·WindowControls/Sidebar/MiniPlayer) · state/useApp.ts
 src/lib/         api.ts（invoke 封装）· types.ts（与 Rust serde 结构对齐）
 ```
 
