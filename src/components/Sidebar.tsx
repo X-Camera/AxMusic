@@ -5,7 +5,6 @@ import {
   ListVideo,
   Settings,
   UserRound,
-  Waves,
 } from "lucide-react";
 
 import type { RouteId } from "../lib/types";
@@ -13,7 +12,6 @@ import { useApp } from "../state/useApp";
 import "./Sidebar.css";
 
 const PLAY_ITEMS: { id: RouteId; label: string; icon: typeof Disc3 }[] = [
-  { id: "now-playing", label: "正在播放", icon: Waves },
   { id: "albums", label: "专辑墙", icon: Disc3 },
   { id: "artists", label: "歌手", icon: UserRound },
   { id: "folders", label: "文件夹", icon: FolderOpen },

@@ -59,6 +59,7 @@ pub fn run() {
             commands::get_track_count,
             commands::library_stats,
             commands::track_cover_thumb,
+            commands::track_media_info,
             commands::refresh_scan,
             commands::is_in_library,
             commands::include_in_library,

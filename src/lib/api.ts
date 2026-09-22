@@ -39,6 +39,21 @@ export const api = {
   /** 提取文件内嵌封面缩略图（磁盘缓存），无封面/解析失败返回 null */
   trackCoverThumb: (path: string) =>
     invoke<string | null>("track_cover_thumb", { path }),
+  /** 正在播放页：标签 + 640px 封面 + 内嵌/外挂歌词 */
+  trackMediaInfo: (path: string) =>
+    invoke<{
+      path: string;
+      filename: string;
+      title: string;
+      artist: string;
+      album: string;
+      album_artist: string;
+      year: string;
+      has_lyrics: boolean;
+      cover_data: string | null;
+      embedded: string | null;
+      sidecar: string | null;
+    }>("track_media_info", { path }),
   refreshScan: () => invoke<ScanResult>("refresh_scan"),
   includeInLibrary: (path: string) =>
     invoke<{ copied_to: string; track: TrackRow }>("include_in_library", { path }),

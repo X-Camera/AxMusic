@@ -224,6 +224,15 @@ pub async fn track_cover_thumb(
 }
 
 fn cover_thumb_blocking(path: &Path, thumbs_dir: Option<&Path>) -> Result<Option<String>, String> {
+    cover_image_blocking(path, thumbs_dir, 96)
+}
+
+/// Larger cover for the now-playing page (cached beside thumbs at 640px).
+fn cover_image_blocking(
+    path: &Path,
+    thumbs_dir: Option<&Path>,
+    max_edge: u32,
+) -> Result<Option<String>, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     use lofty::file::TaggedFileExt as _;
     use lofty::picture::PictureType;
@@ -239,7 +248,8 @@ fn cover_thumb_blocking(path: &Path, thumbs_dir: Option<&Path>) -> Result<Option
     let key = {
         use std::hash::{Hash as _, Hasher as _};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        format!("{}|{}|{}", path.to_string_lossy(), mtime, meta.len()).hash(&mut h);
+        format!("{}|{}|{}|{}", path.to_string_lossy(), mtime, meta.len(), max_edge)
+            .hash(&mut h);
         format!("{:016x}", h.finish())
     };
 
@@ -270,11 +280,11 @@ fn cover_thumb_blocking(path: &Path, thumbs_dir: Option<&Path>) -> Result<Option
                 Ok(i) => i,
                 Err(_) => return Ok(None),
             };
-            let thumb = img.thumbnail(96, 96);
+            let thumb = img.thumbnail(max_edge, max_edge);
             let mut buf = std::io::Cursor::new(Vec::new());
             thumb
                 .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
-                    &mut buf, 80,
+                    &mut buf, 85,
                 ))
                 .map_err(|e| e.to_string())?;
             let b = buf.into_inner();
@@ -286,6 +296,72 @@ fn cover_thumb_blocking(path: &Path, thumbs_dir: Option<&Path>) -> Result<Option
     };
 
     Ok(Some(format!("data:image/jpeg;base64,{}", B64.encode(bytes))))
+}
+
+/// 正在播放页元数据：标签 + 大图封面 + 内嵌/外挂歌词。
+#[tauri::command]
+pub async fn track_media_info(path: String) -> Result<serde_json::Value, String> {
+    let thumbs_dir = state_thumbs_dir_hint();
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = Path::new(&path);
+        let (title, artist, album, album_artist, year) = {
+            use lofty::file::TaggedFileExt as _;
+            use lofty::prelude::{Accessor, ItemKey};
+            use lofty::probe::Probe;
+            let tagged = Probe::open(p).and_then(|x| x.read()).map_err(|e| e.to_string())?;
+            let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+            match tag {
+                Some(tag) => {
+                    let get = |k: ItemKey| {
+                        tag.get_string(&k).map(|s| s.to_string()).unwrap_or_default()
+                    };
+                    (
+                        tag.title().map(|s| s.to_string()).unwrap_or_default(),
+                        tag.artist().map(|s| s.to_string()).unwrap_or_default(),
+                        tag.album().map(|s| s.to_string()).unwrap_or_default(),
+                        get(ItemKey::AlbumArtist),
+                        tag.year().map(|y| y.to_string()).unwrap_or_default(),
+                    )
+                }
+                None => (
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                ),
+            }
+        };
+        let filename = p
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let cover = cover_image_blocking(p, thumbs_dir.as_deref(), 640)?;
+        let embedded = crate::lyrics::read_embedded(p).ok().flatten();
+        let sidecar = crate::lyrics::read_sidecar(p)
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        Ok(serde_json::json!({
+            "path": path,
+            "filename": filename,
+            "title": title,
+            "artist": artist,
+            "album": album,
+            "album_artist": album_artist,
+            "year": year,
+            "has_lyrics": embedded.is_some(),
+            "cover_data": cover,
+            "embedded": embedded,
+            "sidecar": sidecar,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn state_thumbs_dir_hint() -> Option<PathBuf> {
+    // 正在播放可能播库外文件：不依赖 AppState，缓存到临时目录即可。
+    Some(std::env::temp_dir().join("axmusic").join("covers"))
 }
 
 /// Incremental scan. Progress events: `scan://progress`, `scan://done`.

@@ -13,6 +13,7 @@ export function MiniPlayer() {
   const prev = useApp((s) => s.prev);
   const seek = useApp((s) => s.seek);
   const setVolume = useApp((s) => s.setVolume);
+  const setFullPlayer = useApp((s) => s.setFullPlayer);
 
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
@@ -20,6 +21,7 @@ export function MiniPlayer() {
   const [including, setIncluding] = useState(false);
   const [includedAt, setIncludedAt] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [cover, setCover] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -33,6 +35,22 @@ export function MiniPlayer() {
   }, [refreshPlayer]);
 
   const track = player?.track ?? null;
+
+  // 封面小图（懒取，切歌刷新）
+  useEffect(() => {
+    let cancelled = false;
+    setCover(null);
+    if (!track?.path) return;
+    void api
+      .trackCoverThumb(track.path)
+      .then((url) => {
+        if (!cancelled) setCover(url);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [track?.path]);
 
   // 「纳入库管理」只对库外文件有意义
   useEffect(() => {
@@ -102,9 +120,20 @@ export function MiniPlayer() {
   return (
     <footer className="mini-player" aria-label="迷你播放条">
       <div className="mp-track">
-        <div className="mp-cover" aria-hidden>
-          {track ? (track.title || "?").slice(0, 1) : "♪"}
-        </div>
+        <button
+          className="mp-cover-btn"
+          title={track ? "打开满窗播放" : "未在播放"}
+          disabled={!track}
+          onClick={() => setFullPlayer(true)}
+        >
+          {cover ? (
+            <img className="mp-cover-img" src={cover} alt="" />
+          ) : (
+            <span className="mp-cover" aria-hidden>
+              {track ? (track.title || "?").slice(0, 1) : "♪"}
+            </span>
+          )}
+        </button>
         <div className="mp-meta">
           <div className="mp-title">{track?.title ?? "未在播放"}</div>
           <div className="mp-sub tertiary">

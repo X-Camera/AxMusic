@@ -123,7 +123,6 @@ export interface PathsInfo {
 }
 
 export type RouteId =
-  | "now-playing"
   | "albums"
   | "artists"
   | "folders"

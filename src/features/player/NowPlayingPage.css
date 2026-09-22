@@ -1,0 +1,481 @@
+/* 满窗播放：参考 Apple Music — 左封面+控制 / 右双语歌词 / 玻璃缩回 / 底部滑入滑出 */
+.np-page {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  animation: np-slide-in 280ms var(--ease-out);
+  will-change: transform;
+}
+
+.np-page.closing {
+  animation: np-slide-out 280ms cubic-bezier(0.4, 0, 0.7, 0.2) forwards;
+}
+
+@keyframes np-slide-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes np-slide-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+.np-bg {
+  position: absolute;
+  inset: -48px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(56px) saturate(1.35) brightness(0.72);
+  transform: scale(1.12);
+  transition: background-image 220ms var(--ease-out);
+  pointer-events: none;
+}
+
+.np-bg-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(11, 12, 15, 0.18),
+    rgba(11, 12, 15, 0.28) 50%,
+    rgba(11, 12, 15, 0.45)
+  );
+  pointer-events: none;
+}
+
+.np-top {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3) var(--space-4);
+  flex-shrink: 0;
+  min-height: 52px;
+}
+
+/* 顶部白色横条 = 缩回主界面（视觉细小，热区加高方便点） */
+.np-grabber {
+  position: relative;
+  width: 64px;
+  height: 28px;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.np-grabber::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  transition: width var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
+    height var(--dur-fast) var(--ease-out);
+}
+
+.np-grabber:hover::before {
+  width: 54px;
+  height: 5px;
+  background: #fff;
+}
+
+.np-grabber:active::before {
+  width: 36px;
+  height: 4px;
+}
+
+.np-stage {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  width: min(1680px, 100%);
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(300px, 1.15fr);
+  gap: clamp(28px, 4.5vw, 96px);
+  padding: var(--space-2) clamp(24px, 4vw, 72px) var(--space-5);
+  align-items: center;
+}
+
+/* ── 左：封面 + 曲目 + 控制（随视口放大，高分屏不再一小块） ── */
+.np-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  max-width: min(560px, 52vh);
+  margin: 0 auto;
+  gap: clamp(12px, 1.4vh, 20px);
+}
+
+.np-cover-wrap {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: clamp(12px, 1.2vw, 18px);
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+}
+
+.np-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: clamp(12px, 1.2vw, 18px);
+  transition: transform 400ms var(--ease-out);
+}
+
+.np-cover-empty {
+  display: grid;
+  place-items: center;
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  font-size: clamp(40px, 6vh, 64px);
+}
+
+.np-page.playing .np-cover {
+  animation: np-float 5.5s ease-in-out infinite;
+}
+
+@keyframes np-float {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.012);
+  }
+}
+
+.np-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: clamp(4px, 0.8vh, 10px);
+}
+
+.np-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(18px, 1.7vw, 28px);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.np-sub {
+  margin: 4px 0 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: clamp(13px, 1.15vw, 18px);
+  font-weight: 500;
+}
+
+.np-seek {
+  cursor: pointer;
+  padding: 4px 0 0;
+}
+
+.np-seek-track {
+  position: relative;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+
+.np-seek-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  transition: width 80ms linear;
+}
+
+.np-seek-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: clamp(11px, 0.9vw, 13px);
+  font-variant-numeric: tabular-nums;
+}
+
+.np-btns {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: clamp(4px, 1vh, 12px);
+  padding: 0 2px;
+}
+
+.np-icon {
+  width: clamp(36px, 3.2vw, 52px);
+  height: clamp(36px, 3.2vw, 52px);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.92);
+  background: transparent;
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+.np-icon:hover:not(:disabled) {
+  transform: scale(1.08);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.np-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.np-icon.np-play {
+  width: clamp(48px, 4.2vw, 68px);
+  height: clamp(48px, 4.2vw, 68px);
+}
+
+.np-vol {
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 0.8vw, 14px);
+  margin-top: clamp(4px, 1vh, 12px);
+  padding: 0 2px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.np-vol-btn {
+  width: clamp(26px, 2vw, 34px);
+  height: clamp(26px, 2vw, 34px);
+  color: inherit;
+}
+
+.np-vol input[type="range"] {
+  flex: 1;
+  height: 5px;
+  border: none;
+  padding: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.9) 0%,
+    rgba(255, 255, 255, 0.9) var(--pct, 50%),
+    rgba(255, 255, 255, 0.22) var(--pct, 50%)
+  );
+  border-radius: 999px;
+  appearance: none;
+  outline: none;
+}
+
+.np-vol input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+/* ── 右：双语歌词 ── */
+.np-right {
+  min-width: 0;
+  min-height: 0;
+  height: min(74vh, 820px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.np-lyrics {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent);
+}
+
+.np-lyrics::-webkit-scrollbar {
+  display: none;
+}
+
+.np-lyrics-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: var(--space-5);
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.np-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(18px, 2vh, 28px);
+  padding: 0 12px;
+}
+
+.np-line-spacer {
+  height: 42%;
+  min-height: clamp(120px, 22vh, 220px);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.np-line {
+  cursor: pointer;
+  text-align: center;
+  transition: opacity 200ms var(--ease-out), filter 200ms var(--ease-out);
+}
+
+.np-lyrics.dragging {
+  cursor: grabbing;
+}
+
+.np-lyrics.dragging .np-line {
+  cursor: grabbing;
+}
+
+.np-main {
+  font-family: var(--font-display);
+  font-size: clamp(24px, 2.8vw, 44px);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.28);
+  transition: color 200ms var(--ease-out), filter 200ms var(--ease-out), text-shadow 200ms var(--ease-out);
+}
+
+.np-trans {
+  margin-top: 6px;
+  font-size: clamp(14px, 1.4vw, 22px);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.22);
+  transition: color 200ms var(--ease-out), filter 200ms var(--ease-out);
+}
+
+.np-line.past {
+  opacity: 0.55;
+}
+
+.np-line.next {
+  opacity: 0.85;
+}
+
+/* 非当前句轻微模糊，当前句保持清晰 */
+.np-line.past .np-main,
+.np-line.next .np-main {
+  color: rgba(255, 255, 255, 0.34);
+  filter: blur(0.6px);
+}
+
+.np-line.past .np-trans,
+.np-line.next .np-trans {
+  color: rgba(255, 255, 255, 0.24);
+  filter: blur(0.7px);
+}
+
+.np-line.on {
+  filter: none;
+}
+
+.np-line.on .np-main {
+  background: linear-gradient(92deg, #ffffff 0%, #ffc6d8 55%, #ff8fb8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: none;
+  -webkit-text-fill-color: transparent;
+}
+
+.np-line.on .np-trans {
+  color: rgba(255, 255, 255, 0.78);
+  filter: none;
+}
+
+.np-line.plain .np-main {
+  font-size: clamp(16px, 1.6vw, 24px);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.np-line:hover .np-main {
+  color: rgba(255, 255, 255, 0.75);
+  filter: none;
+}
+
+.np-line.on:hover .np-main {
+  color: transparent;
+}
+
+@media (max-width: 980px) {
+  .np-stage {
+    grid-template-columns: 1fr;
+    align-content: start;
+    overflow: auto;
+    gap: var(--space-5);
+  }
+
+  .np-left {
+    max-width: min(360px, 70vw);
+  }
+
+  .np-right {
+    height: min(46vh, 420px);
+  }
+}
+
+@media (min-width: 1800px) {
+  /* 超宽/高分：再抬一档字号与封面，避免中间大片空白 */
+  .np-left {
+    max-width: min(560px, 56vh);
+  }
+
+  .np-main {
+    font-size: clamp(32px, 2.6vw, 52px);
+  }
+
+  .np-trans {
+    font-size: clamp(18px, 1.3vw, 26px);
+  }
+
+  .np-title {
+    font-size: clamp(24px, 1.5vw, 32px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .np-page,
+  .np-page.closing {
+    animation: none;
+  }
+
+  .np-page.playing .np-cover {
+    animation: none;
+  }
+}

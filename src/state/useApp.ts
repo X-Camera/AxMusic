@@ -6,6 +6,9 @@ import type { PlayerSnapshot, QueueItem, RouteId } from "../lib/types";
 interface AppState {
   route: RouteId;
   setRoute: (r: RouteId) => void;
+  /** 满窗播放模式（封面点开 / 缩回关闭） */
+  fullPlayer: boolean;
+  setFullPlayer: (v: boolean) => void;
   player: PlayerSnapshot | null;
   refreshing: boolean;
   setPlayer: (p: PlayerSnapshot | null) => void;
@@ -32,6 +35,8 @@ const emptyPlayer = (): PlayerSnapshot => ({
 export const useApp = create<AppState>((set, get) => ({
   route: "albums",
   setRoute: (route) => set({ route }),
+  fullPlayer: false,
+  setFullPlayer: (fullPlayer) => set({ fullPlayer }),
   player: null,
   refreshing: false,
   setPlayer: (p) => set({ player: p }),

@@ -3,10 +3,6 @@ import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 
 const COPY: Partial<Record<RouteId, { title: string; body: string }>> = {
-  "now-playing": {
-    title: "正在播放",
-    body: "播放页（大封面 + LRC）在后续里程碑。现在请用底部迷你播放条。",
-  },
   artists: {
     title: "歌手",
     body: "歌手浏览占位页。本轮先用专辑墙 + 管理表。",
