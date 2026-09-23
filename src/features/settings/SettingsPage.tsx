@@ -1,4 +1,4 @@
-import { FolderOpen, ListVideo } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
@@ -13,6 +13,7 @@ import type {
 } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
+import { BrandMark } from "../../components/BrandMark";
 import "./SettingsPage.css";
 
 const PLAY_MODES: { id: PlayMode; label: string }[] = [
@@ -147,7 +148,7 @@ function AboutPanel({
     <aside className="set-about" aria-label="关于 AxMusic">
       <div className="set-about-hero">
         <div className="set-about-mark">
-          <ListVideo size={36} strokeWidth={2} />
+          <BrandMark size={88} />
         </div>
         <h2 className="set-about-name">AxMusic</h2>
         <p className="set-about-ver mono">

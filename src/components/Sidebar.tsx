@@ -12,6 +12,7 @@ import {
 import { api } from "../lib/api";
 import type { RouteId } from "../lib/types";
 import { useApp } from "../state/useApp";
+import { BrandMark } from "./BrandMark";
 import "./Sidebar.css";
 
 const PLAY_ITEMS: { id: RouteId; label: string; icon: typeof Disc3 }[] = [
@@ -44,7 +45,7 @@ export function Sidebar() {
     <aside className="sidebar">
       <div className="brand" data-tauri-drag-region="deep">
         <div className="brand-mark">
-          <ListVideo size={18} strokeWidth={2.2} />
+          <BrandMark size={32} />
         </div>
         <div className="brand-text">
           <div className="brand-name">

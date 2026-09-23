@@ -112,8 +112,6 @@
   width: 88px;
   height: 88px;
   border-radius: 22px;
-  background: var(--accent);
-  color: var(--text);
   display: grid;
   place-items: center;
   margin-bottom: 8px;

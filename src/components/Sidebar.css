@@ -21,8 +21,6 @@
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  background: var(--accent);
-  color: var(--text);
   display: grid;
   place-items: center;
   flex-shrink: 0;
