@@ -327,8 +327,29 @@
   min-height: 0;
   overflow: auto;
   scrollbar-width: none;
-  mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent);
-  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent);
+  /* 边界溶进背景：上下更长的软渐隐 */
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.25) 8%,
+    rgba(0, 0, 0, 0.85) 18%,
+    #000 28%,
+    #000 72%,
+    rgba(0, 0, 0, 0.85) 82%,
+    rgba(0, 0, 0, 0.25) 92%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.25) 8%,
+    rgba(0, 0, 0, 0.85) 18%,
+    #000 28%,
+    #000 72%,
+    rgba(0, 0, 0, 0.85) 82%,
+    rgba(0, 0, 0, 0.25) 92%,
+    transparent 100%
+  );
 }
 
 .np-lyrics::-webkit-scrollbar {
@@ -363,7 +384,10 @@
 .np-line {
   cursor: pointer;
   text-align: center;
-  transition: opacity 200ms var(--ease-out), filter 200ms var(--ease-out);
+  transform-origin: center center;
+  will-change: transform, opacity, filter;
+  transition: transform 320ms var(--ease-out), opacity 320ms var(--ease-out),
+    filter 320ms var(--ease-out);
 }
 
 .np-lyrics.dragging {
@@ -374,14 +398,74 @@
   cursor: grabbing;
 }
 
+/* 邻行衰减：按距当前句距离缩放 / 降透明 / 轻模糊 */
+.np-line.d0 {
+  transform: scale(1);
+  opacity: 1;
+  filter: none;
+}
+
+.np-line.d1 {
+  transform: scale(0.94);
+  opacity: 0.58;
+  filter: blur(0.45px);
+}
+
+.np-line.d2 {
+  transform: scale(0.9);
+  opacity: 0.4;
+  filter: blur(0.9px);
+}
+
+.np-line.d3 {
+  transform: scale(0.87);
+  opacity: 0.28;
+  filter: blur(1.25px);
+}
+
+.np-line.d4 {
+  transform: scale(0.85);
+  opacity: 0.2;
+  filter: blur(1.55px);
+}
+
+.np-lyrics.dragging .np-line {
+  transition: none;
+}
+
 .np-main {
+  position: relative;
   font-family: var(--font-display);
   font-size: clamp(24px, 2.8vw, 44px);
   font-weight: 700;
   line-height: 1.25;
   letter-spacing: 0.01em;
   color: rgba(255, 255, 255, 0.28);
-  transition: color 200ms var(--ease-out), filter 200ms var(--ease-out), text-shadow 200ms var(--ease-out);
+  transition: color 200ms var(--ease-out), filter 200ms var(--ease-out);
+}
+
+.np-main-base {
+  display: inline;
+}
+
+/* 行内粗进度：底层淡色 + 上层渐变按 --line-p 横向揭示 */
+.np-line.on .np-main {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.np-main-fill {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  text-align: center;
+  pointer-events: none;
+  background: linear-gradient(92deg, #ffffff 0%, #ffc6d8 55%, #ff8fb8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  clip-path: inset(0 calc(100% - var(--line-p, 0%)) 0 0);
 }
 
 .np-trans {
@@ -392,39 +476,14 @@
   transition: color 200ms var(--ease-out), filter 200ms var(--ease-out);
 }
 
-.np-line.past {
-  opacity: 0.55;
-}
-
-.np-line.next {
-  opacity: 0.85;
-}
-
-/* 非当前句轻微模糊，当前句保持清晰 */
 .np-line.past .np-main,
 .np-line.next .np-main {
   color: rgba(255, 255, 255, 0.34);
-  filter: blur(0.6px);
 }
 
 .np-line.past .np-trans,
 .np-line.next .np-trans {
   color: rgba(255, 255, 255, 0.24);
-  filter: blur(0.7px);
-}
-
-.np-line.on {
-  filter: none;
-}
-
-.np-line.on .np-main {
-  background: linear-gradient(92deg, #ffffff 0%, #ffc6d8 55%, #ff8fb8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: none;
-  filter: none;
-  -webkit-text-fill-color: transparent;
 }
 
 .np-line.on .np-trans {
@@ -443,8 +502,18 @@
   filter: none;
 }
 
-.np-line.on:hover .np-main {
-  color: transparent;
+/* 点句跳转：短促发光反馈 */
+.np-line.flash .np-main {
+  animation: np-line-flash 400ms var(--ease-out);
+}
+
+@keyframes np-line-flash {
+  0% {
+    filter: brightness(1.55) drop-shadow(0 0 14px rgba(255, 255, 255, 0.35));
+  }
+  100% {
+    filter: none;
+  }
 }
 
 @media (max-width: 980px) {
@@ -490,6 +559,14 @@
   }
 
   .np-page.playing .np-cover {
+    animation: none;
+  }
+
+  .np-line {
+    transition: none;
+  }
+
+  .np-line.flash .np-main {
     animation: none;
   }
 }

@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatTime } from "../../lib/api";
 import { WindowControls } from "../../components/WindowControls";
 import { useApp } from "../../state/useApp";
-import { findLrcIndex, pickLyrics, type LrcLine } from "./lrc";
+import { findLrcIndex, lineProgress, pickLyrics, type LrcLine } from "./lrc";
 import "./NowPlayingPage.css";
 
 interface MediaInfo {
@@ -29,6 +29,24 @@ interface MediaInfo {
   cover_data: string | null;
   embedded: string | null;
   sidecar: string | null;
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** 缓出带回一点弹性，用于歌词跟随 / 松手回弹（自研，非第三方） */
+function easeOutBack(t: number): number {
+  const c1 = 1.15;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function scrollTopToCenter(box: HTMLElement, el: HTMLElement): number {
+  const boxRect = box.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const delta = elRect.top + elRect.height / 2 - (boxRect.top + boxRect.height / 2);
+  return Math.max(0, box.scrollTop + delta);
 }
 
 /** 顶部白色横条 = 缩回主界面（替代左上角按钮） */
@@ -52,9 +70,10 @@ export function NowPlayingPage() {
   const [seekMs, setSeekMs] = useState(0);
   const [closing, setClosing] = useState(false);
   const [draggingLrc, setDraggingLrc] = useState(false);
+  /** rAF 推得的当前句：只在换行时 setState，避免每帧重渲染 */
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const [flashIdx, setFlashIdx] = useState(-1);
   const listRef = useRef<HTMLDivElement>(null);
-  /** 松手后对齐歌词用瞬时滚动，避免 smooth 造成回弹感 */
-  const snapAlignRef = useRef(false);
   const dragRef = useRef<{
     y: number;
     startMs: number;
@@ -63,6 +82,20 @@ export function NowPlayingPage() {
     lastMs: number;
   } | null>(null);
   const skipClickRef = useRef(false);
+  const springRafRef = useRef(0);
+  const flashTimerRef = useRef(0);
+  const activeIdxRef = useRef(-1);
+  /** 播放中用基准时间外推，填补 500ms 轮询间隙（行内进度 / 跟手） */
+  const clockRef = useRef({ baseMs: 0, baseAt: 0 });
+  const lastPosRef = useRef(0);
+  const liveRef = useRef({
+    lines: [] as LrcLine[],
+    seeking: false,
+    seekMs: 0,
+    pos: 0,
+    playing: false,
+    synced: false,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -81,34 +114,130 @@ export function NowPlayingPage() {
     [info],
   );
 
-  // 拖动中 / 跳转未落盘时用预览进度，避免 active 行回跳
-  const displayMs = seeking ? seekMs : pos;
-  const activeIdx = useMemo(
-    () => (synced ? findLrcIndex(lines, displayMs) : -1),
-    [synced, lines, displayMs],
-  );
+  function reanchorClock(ms: number) {
+    const c = clockRef.current;
+    c.baseMs = ms;
+    c.baseAt = performance.now();
+    lastPosRef.current = ms;
+  }
 
-  // 播放器位置跟上预览后，再退出 seeking
   useEffect(() => {
-    if (!seeking || draggingLrc) return;
-    if (Math.abs(pos - seekMs) < 400) setSeeking(false);
-  }, [pos, seekMs, seeking, draggingLrc]);
+    liveRef.current = { lines, seeking, seekMs, pos, playing, synced };
+    // 拖动/seek 中：歌词跟预览进度；否则跟播放时钟（轮询对齐 + 间隙外推）
+    if (seeking) {
+      reanchorClock(seekMs);
+      return;
+    }
+    if (!playing) {
+      reanchorClock(pos);
+      return;
+    }
+    if (pos !== lastPosRef.current) {
+      reanchorClock(pos);
+    }
+  }, [lines, seeking, seekMs, pos, playing, synced]);
 
-  // 自动跟随（拖动中暂停；松手对齐用瞬时，之后恢复 smooth）
+  /** 兜底：seeking 不得长期卡住，否则歌词时间会冻在预览值上不再滚动 */
   useEffect(() => {
-    if (!synced || activeIdx < 0 || draggingLrc) return;
+    if (!seeking) return;
+    const t = window.setTimeout(() => setSeeking(false), 800);
+    return () => window.clearTimeout(t);
+  }, [seeking, seekMs]);
+
+  function currentTimeMs(): number {
+    const live = liveRef.current;
+    // 仅 scrub 预览时用 seekMs；松手后立刻回到播放时钟
+    if (live.seeking) return live.seekMs;
+    const c = clockRef.current;
+    if (live.playing) return c.baseMs + (performance.now() - c.baseAt);
+    return c.baseMs;
+  }
+
+  function cancelSpring() {
+    if (springRafRef.current) {
+      cancelAnimationFrame(springRafRef.current);
+      springRafRef.current = 0;
+    }
+  }
+
+  /** 弹簧滚到目标 offset（松手回弹 / 换行跟随） */
+  function springScrollTo(target: number) {
     const box = listRef.current;
     if (!box) return;
-    const el = box.querySelector<HTMLElement>(`[data-i="${activeIdx}"]`);
+    cancelSpring();
+    const start = box.scrollTop;
+    const dist = target - start;
+    if (prefersReducedMotion() || Math.abs(dist) < 0.5) {
+      box.scrollTop = target;
+      return;
+    }
+    const duration = 480;
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / duration);
+      box.scrollTop = start + dist * easeOutBack(t);
+      springRafRef.current = t < 1 ? requestAnimationFrame(step) : 0;
+    };
+    springRafRef.current = requestAnimationFrame(step);
+  }
+
+  function alignActiveLine(instant = false) {
+    const box = listRef.current;
+    const idx = activeIdxRef.current;
+    if (!box || idx < 0) return;
+    const el = box.querySelector<HTMLElement>(`[data-i="${idx}"]`);
     if (!el) return;
-    const boxRect = box.getBoundingClientRect();
-    const elRect = el.getBoundingClientRect();
-    const delta = elRect.top + elRect.height / 2 - (boxRect.top + boxRect.height / 2);
-    const top = Math.max(0, box.scrollTop + delta);
-    const snap = snapAlignRef.current;
-    snapAlignRef.current = false;
-    box.scrollTo({ top, behavior: snap ? "auto" : "smooth" });
-  }, [activeIdx, synced, lines.length, draggingLrc]);
+    const top = scrollTopToCenter(box, el);
+    if (instant || prefersReducedMotion()) {
+      cancelSpring();
+      box.scrollTop = top;
+    } else {
+      springScrollTo(top);
+    }
+  }
+
+  // 换行居中跟随（拖动中不抢滚动；seek 结束后也要重新对齐）
+  useEffect(() => {
+    if (!synced || activeIdx < 0 || draggingLrc || seeking) return;
+    alignActiveLine(false);
+  }, [activeIdx, synced, draggingLrc, seeking, lines.length]);
+
+  // 行内粗进度 + 当前句识别（rAF；只在换行时 setState）
+  useEffect(() => {
+    if (!synced || lines.length === 0) return;
+    let raf = 0;
+    const tick = () => {
+      const ms = currentTimeMs();
+      const idx = findLrcIndex(lines, ms);
+      if (idx !== activeIdxRef.current) {
+        activeIdxRef.current = idx;
+        setActiveIdx(idx);
+      }
+      const box = listRef.current;
+      if (box && idx >= 0) {
+        const el = box.querySelector<HTMLElement>(`[data-i="${idx}"]`);
+        if (el) {
+          const p = lineProgress(lines[idx], ms);
+          el.style.setProperty("--line-p", `${(p * 100).toFixed(2)}%`);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [synced, lines]);
+
+  // 切歌清空行状态
+  useEffect(() => {
+    activeIdxRef.current = -1;
+    setActiveIdx(-1);
+    setFlashIdx(-1);
+  }, [path]);
+
+  useEffect(() => () => {
+    cancelSpring();
+    window.clearTimeout(flashTimerRef.current);
+  }, []);
 
   function requestClose() {
     if (closing) return;
@@ -120,6 +249,7 @@ export function NowPlayingPage() {
   function onLrcPointerDown(e: React.MouseEvent) {
     const box = listRef.current;
     if (!box) return;
+    cancelSpring();
     const start = seeking ? seekMs : pos;
     dragRef.current = {
       y: e.clientY,
@@ -148,17 +278,26 @@ export function NowPlayingPage() {
     setSeekMs(nextMs);
   }
 
+  /** 提交进度：seek 结束后退出 scrub 并对齐时钟，避免歌词冻住 */
+  async function commitSeek(ms: number) {
+    const target = Math.round(ms);
+    setSeekMs(target);
+    setSeeking(true);
+    reanchorClock(target);
+    try {
+      await seek(target);
+    } finally {
+      reanchorClock(target);
+      setSeeking(false);
+    }
+  }
+
   function onLrcPointerUp() {
     const d = dragRef.current;
     dragRef.current = null;
     setDraggingLrc(false);
     if (d?.moved) {
-      const ms = Math.round(d.lastMs);
-      setSeekMs(ms);
-      setSeeking(true);
-      snapAlignRef.current = true;
-      void seek(ms);
-      // 不立刻 setSeeking(false)：等播放器位置跟上，避免进度/歌词回跳
+      void commitSeek(d.lastMs);
     } else {
       setSeeking(false);
     }
@@ -167,9 +306,16 @@ export function NowPlayingPage() {
     }, 0);
   }
 
-  function seekToLine(ms: number) {
+  function flashLine(i: number) {
+    setFlashIdx(i);
+    window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlashIdx(-1), 400);
+  }
+
+  function seekToLine(i: number, ms: number) {
     if (skipClickRef.current) return;
-    void seek(ms);
+    flashLine(i);
+    void commitSeek(ms);
   }
 
   const title = info?.title || track?.title || info?.filename || "未在播放";
@@ -226,17 +372,21 @@ export function NowPlayingPage() {
 
           <div
             className="np-seek"
-            onClick={(e) => {
-              void seek(seekFromEvent(e));
-              setSeeking(false);
+            onMouseDown={(e) => {
+              setSeeking(true);
+              setSeekMs(seekFromEvent(e));
             }}
-            onMouseDown={() => setSeeking(true)}
             onMouseMove={(e) => {
               if (!seeking) return;
               setSeekMs(seekFromEvent(e));
             }}
-            onMouseUp={() => setSeeking(false)}
-            onMouseLeave={() => setSeeking(false)}
+            onMouseUp={(e) => {
+              if (seeking) void commitSeek(seekFromEvent(e));
+            }}
+            onMouseLeave={() => {
+              // 拖出进度条：按当前预览提交，避免 seeking 卡住
+              if (seeking) void commitSeek(seekMs);
+            }}
           >
             <div className="np-seek-track">
               <div className="np-seek-fill" style={{ width: `${pct}%` }} />
@@ -324,7 +474,7 @@ export function NowPlayingPage() {
               <div className="np-lines">
                 <div className="np-line-spacer" aria-hidden />
                 {plain.map((t, i) => (
-                  <div key={i} className="np-line plain">
+                  <div key={i} className="np-line plain d2">
                     <div className="np-main">{t}</div>
                   </div>
                 ))}
@@ -335,15 +485,32 @@ export function NowPlayingPage() {
               <div className="np-lines">
                 <div className="np-line-spacer" aria-hidden />
                 {lines.map((l: LrcLine, i) => {
-                  const state = i === activeIdx ? "on" : i < activeIdx ? "past" : "next";
+                  const on = i === activeIdx;
+                  const state = on ? "on" : i < activeIdx ? "past" : "next";
+                  const dist = Math.min(4, Math.abs(i - activeIdx));
+                  const text = l.text || "⋯";
                   return (
                     <div
                       key={`${l.timeMs}-${i}`}
                       data-i={i}
-                      className={`np-line ${state}`}
-                      onClick={() => seekToLine(l.timeMs)}
+                      className={[
+                        "np-line",
+                        state,
+                        `d${dist}`,
+                        flashIdx === i ? "flash" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => seekToLine(i, l.timeMs)}
                     >
-                      <div className="np-main">{l.text || "⋯"}</div>
+                      <div className="np-main">
+                        <span className="np-main-base">{text}</span>
+                        {on ? (
+                          <span className="np-main-fill" aria-hidden>
+                            {text}
+                          </span>
+                        ) : null}
+                      </div>
                       {l.trans ? <div className="np-trans">{l.trans}</div> : null}
                     </div>
                   );
