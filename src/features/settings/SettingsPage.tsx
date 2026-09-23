@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -244,6 +245,17 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // 顶栏主题开关等外部改设置时，保持本页 Segmented 同步
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<AppSettings>("settings://changed", (e) => setSettings(e.payload)).then(
+      (f) => {
+        unlisten = f;
+      },
+    );
+    return () => unlisten?.();
   }, []);
 
   const patch = useCallback(async (p: Parameters<typeof api.updateSettings>[0]) => {

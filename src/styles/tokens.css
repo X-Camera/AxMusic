@@ -24,6 +24,12 @@
   --danger-rgb: 255, 107, 122;
   --danger: #ff6b7a;
 
+  /* 封面叠层控件（叠在封面上，不跟主题明暗） */
+  --cover-chip: rgba(0, 0, 0, 0.55);
+  --cover-chip-border: rgba(255, 255, 255, 0.18);
+  --cover-on-chip: rgba(255, 255, 255, 0.92);
+  --cover-icon: rgba(255, 255, 255, 0.88);
+
   /* geometry */
   --radius-control: 8px;
   --radius-card: 12px;

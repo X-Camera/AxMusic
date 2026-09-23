@@ -417,8 +417,8 @@
   width: var(--thumb-w);
   height: var(--thumb-w);
   border-radius: 50%;
-  background: var(--text);
-  border: 2px solid var(--accent);
+  background: var(--accent-solid);
+  border: 2px solid var(--accent-solid);
   margin-top: calc((var(--track-h) - var(--thumb-w)) / 2);
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
@@ -457,8 +457,8 @@
   width: var(--thumb-w);
   height: var(--thumb-w);
   border-radius: 50%;
-  background: var(--text);
-  border: 2px solid var(--accent);
+  background: var(--accent-solid);
+  border: 2px solid var(--accent-solid);
   opacity: 0;
 }
 .mp-seek-wrap .mp-slider::-moz-range-thumb {

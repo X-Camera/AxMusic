@@ -1,6 +1,7 @@
 import { ArrowLeft, Search } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { ThemeToggle } from "./ThemeToggle";
 import { WindowControls } from "./WindowControls";
 import "./TopBar.css";
 
@@ -37,7 +38,10 @@ export function TopBar({
           />
         </div>
       )}
-      <div className="topbar-actions">{actions}</div>
+      <div className="topbar-actions">
+        {actions}
+        <ThemeToggle />
+      </div>
       <WindowControls />
     </header>
   );

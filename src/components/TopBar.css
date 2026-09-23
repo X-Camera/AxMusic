@@ -62,6 +62,27 @@
   gap: 8px;
 }
 
+/* 深浅色快捷切换：无文字圆角方钮，紧挨窗口按钮
+   必须写成 .btn.theme-toggle：压过 .btn 的 padding:0 14px，
+   否则 30px 宽被左右 padding 挤成 0，图标被 flex 压没只剩空框 */
+.btn.theme-toggle {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.btn.theme-toggle:hover {
+  color: var(--text);
+}
+
+.btn.theme-toggle svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
 /* 窗口控制（紧贴右缘，原独立标题栏并入） */
 .window-controls {
   display: flex;
