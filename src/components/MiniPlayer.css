@@ -1,5 +1,7 @@
 .mini-player {
   position: relative;
+  /* 圆点要骑在上下分界上、盖住上方内容，必须高于 main-col/sidebar */
+  z-index: 3;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -7,10 +9,10 @@
   height: var(--miniplayer-height);
   padding: 14px var(--space-4) 8px;
   background: var(--bg-elevated);
-  border-top: 1px solid var(--border);
+  /* 分界线由进度轨道本身充当，不再单独 border-top */
 }
 
-/* 顶部细进度条（可拖拽），主行留给曲目 / 控制 / 工具 */
+/* 顶部细进度条（可拖拽）= 上下分界；轨道/圆点中心对齐迷你条顶边，圆点横跨分界 */
 .mp-seek-wrap {
   position: absolute;
   top: 0;
@@ -19,21 +21,34 @@
   height: 16px;
   display: flex;
   align-items: center;
+  /* 向上偏移半个触控区：中心正好落在 y=0 分界线上 */
+  transform: translateY(-50%);
   z-index: 2;
 }
 
 .mp-seek-wrap .mp-slider {
-  --track-h: 4px;
-  --thumb-w: 16px;
+  --track-h: 3px;
+  --thumb-w: 14px;
   height: 16px;
   border-radius: 0;
   margin: 0;
 }
 
+/* 分界用通铺直角轨道，不要胶囊圆角；未播段用 border 色，读作上下分界线 */
+.mp-seek-wrap .mp-slider::-webkit-slider-runnable-track {
+  border-radius: 0;
+  background-color: var(--border);
+}
+
+.mp-seek-wrap .mp-slider::-moz-range-track,
+.mp-seek-wrap .mp-slider::-moz-range-progress {
+  border-radius: 0;
+}
+
 .mp-seek-wrap:hover .mp-slider,
 .mp-seek-wrap:focus-within .mp-slider,
 .mp-seek-wrap:active .mp-slider {
-  --track-h: 5px;
+  --track-h: 4px;
 }
 
 .mp-track {
@@ -424,10 +439,10 @@
   transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 
-/* 进度圆点常显（当前播放位置）；音量悬停再出现 */
+/* 进度圆点常显（当前播放位置）；骑在分界线上，用投影而不是播放条底色描边 */
 .mp-seek-wrap .mp-slider::-webkit-slider-thumb {
   opacity: 1;
-  box-shadow: 0 0 0 1px var(--bg-elevated);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
 }
 
 .mp-seek-wrap:hover .mp-slider::-webkit-slider-thumb,
@@ -463,7 +478,7 @@
 }
 .mp-seek-wrap .mp-slider::-moz-range-thumb {
   opacity: 1;
-  box-shadow: 0 0 0 1px var(--bg-elevated);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
 }
 .mp-slider:hover::-moz-range-thumb,
 .mp-slider:focus::-moz-range-thumb {

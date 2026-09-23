@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import type { QueueItem } from "../lib/types";
 
 import { api, formatTime } from "../lib/api";
+import {
+  clockNow,
+  clockReanchor,
+  clockSyncFromSnapshot,
+  createPlayClock,
+} from "../lib/playClock";
 import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
 import "./MiniPlayer.css";
@@ -30,6 +36,11 @@ export function MiniPlayer() {
   const [cover, setCover] = useState<string | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const pollRef = useRef<number | null>(null);
+  /** 进度圆点：轮询 500ms 太粗，用时钟外推 + rAF 直接写 DOM，避免一顿一顿 */
+  const seekInputRef = useRef<HTMLInputElement>(null);
+  const timeLabelRef = useRef<HTMLSpanElement>(null);
+  const clockRef = useRef(createPlayClock());
+  const lastPathRef = useRef("");
 
   useEffect(() => {
     void refreshPlayer();
@@ -118,14 +129,53 @@ export function MiniPlayer() {
   }
 
   const duration = player?.duration_ms ?? 0;
-  const position = seeking ? seekMs : (player?.position_ms ?? 0);
   const volume = player?.volume ?? 0.8;
   const playMode = player?.play_mode ?? "sequential";
   const setPlayMode = useApp((s) => s.setPlayMode);
   const playing = player?.status === "Playing";
   const queueLen = player?.queue?.length ?? 0;
+  const trackPath = track?.path ?? "";
 
-  const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+  // 轮询快照只作锚点；拖动中跟 seekMs；播放中由 rAF 外推
+  useEffect(() => {
+    const force = trackPath !== lastPathRef.current;
+    lastPathRef.current = trackPath;
+    if (seeking) {
+      clockReanchor(clockRef.current, seekMs, false);
+      return;
+    }
+    clockSyncFromSnapshot(clockRef.current, player?.position_ms ?? 0, playing, { force });
+  }, [player?.position_ms, playing, seeking, seekMs, trackPath]);
+
+  // rAF 平滑绘制圆点与时间（绕开 React 受控 value 的 500ms 阶跃）
+  useEffect(() => {
+    let raf = 0;
+    let lastMs = -1;
+    const paint = () => {
+      raf = requestAnimationFrame(paint);
+      const input = seekInputRef.current;
+      if (!input) return;
+      const max = Math.max(Number(input.max) || duration || 1, 1);
+      let ms: number;
+      if (seekingRef.current) {
+        ms = seekMsRef.current;
+      } else {
+        ms = clockNow(clockRef.current);
+        const rounded = Math.round(ms);
+        if (rounded !== lastMs) {
+          lastMs = rounded;
+          input.value = String(Math.min(rounded, max));
+        }
+      }
+      const clamped = Math.min(Math.max(ms, 0), max);
+      input.style.setProperty("--pct", String((clamped / max) * 100));
+      if (timeLabelRef.current) {
+        timeLabelRef.current.textContent = `${formatTime(Math.round(clamped))} / ${formatTime(max)}`;
+      }
+    };
+    raf = requestAnimationFrame(paint);
+    return () => cancelAnimationFrame(raf);
+  }, [duration]);
 
   /** 拖动中只改本地位置；松手后 await seek，避免旧 position_ms 把圆点打回去 */
   function onSeekInput(ms: number) {
@@ -184,11 +234,12 @@ export function MiniPlayer() {
     <footer className="mini-player" aria-label="迷你播放条">
       <div className="mp-seek-wrap">
         <input
+          ref={seekInputRef}
           className="mp-slider mp-seek"
           type="range"
           min={0}
           max={Math.max(duration, 1)}
-          value={position}
+          defaultValue={0}
           aria-label="播放进度"
           disabled={!track && duration <= 0}
           onChange={(e) => onSeekInput(Number(e.target.value))}
@@ -198,8 +249,7 @@ export function MiniPlayer() {
             }
           }}
           style={{
-            ["--pct" as string]: String(pct),
-            ["--thumb-w" as string]: "16px",
+            ["--thumb-w" as string]: "14px",
           }}
         />
       </div>
@@ -284,9 +334,7 @@ export function MiniPlayer() {
       </div>
 
       <div className="mp-right">
-        <span className="mp-time mono tertiary">
-          {formatTime(position)} / {formatTime(duration)}
-        </span>
+        <span ref={timeLabelRef} className="mp-time mono tertiary" />
         <button
           className={`mp-icon mode${playMode === "shuffle" ? " active" : ""}`}
           title={playMode === "shuffle" ? "随机播放（开）" : "随机播放"}

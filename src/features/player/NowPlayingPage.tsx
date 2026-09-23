@@ -17,6 +17,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, formatTime } from "../../lib/api";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
+import {
+  clockNow,
+  clockReanchor,
+  clockSyncFromSnapshot,
+  createPlayClock,
+  type PlayClock,
+} from "../../lib/playClock";
 import { WindowControls } from "../../components/WindowControls";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { useApp } from "../../state/useApp";
@@ -66,7 +73,10 @@ export function NowPlayingPage() {
   const [flashIdx, setFlashIdx] = useState(-1);
   const flashTimerRef = useRef(0);
   /** 播放中用基准时间外推，填补 500ms 轮询间隙 */
-  const clockRef = useRef({ baseMs: 0, baseAt: 0 });
+  const clockRef = useRef<PlayClock>(createPlayClock());
+  const seekFillRef = useRef<HTMLDivElement>(null);
+  const seekCurRef = useRef<HTMLSpanElement>(null);
+  const seekRemainRef = useRef<HTMLSpanElement>(null);
   const lastPosRef = useRef(0);
   const liveRef = useRef({
     seeking: false,
@@ -137,9 +147,7 @@ export function NowPlayingPage() {
   );
 
   function reanchorClock(ms: number) {
-    const c = clockRef.current;
-    c.baseMs = ms;
-    c.baseAt = performance.now();
+    clockReanchor(clockRef.current, ms, clockRef.current.playing);
     lastPosRef.current = ms;
   }
 
@@ -147,17 +155,32 @@ export function NowPlayingPage() {
     liveRef.current = { seeking, seekMs, pos, playing };
     // 拖动/seek 中：歌词跟预览进度；否则跟播放时钟（轮询对齐 + 间隙外推）
     if (seeking) {
-      reanchorClock(seekMs);
+      clockReanchor(clockRef.current, seekMs, false);
+      lastPosRef.current = seekMs;
       return;
     }
-    if (!playing) {
-      reanchorClock(pos);
-      return;
-    }
-    if (pos !== lastPosRef.current) {
-      reanchorClock(pos);
-    }
+    // 播放中小漂移不重锚，避免进度每 500ms 微跳
+    clockSyncFromSnapshot(clockRef.current, pos, playing);
+    lastPosRef.current = pos;
   }, [seeking, seekMs, pos, playing]);
+
+  // 进度填充与时间标签：rAF 外推平滑（与歌词同一时钟）
+  useEffect(() => {
+    let raf = 0;
+    const paint = () => {
+      raf = requestAnimationFrame(paint);
+      const d = Math.max(dur, 1);
+      const ms = Math.min(Math.max(currentTimeMs(), 0), d);
+      const p = (ms / d) * 100;
+      if (seekFillRef.current) seekFillRef.current.style.width = `${p}%`;
+      if (seekCurRef.current) seekCurRef.current.textContent = formatTime(Math.round(ms));
+      if (seekRemainRef.current) {
+        seekRemainRef.current.textContent = `-${formatTime(Math.max(d - Math.round(ms), 0))}`;
+      }
+    };
+    raf = requestAnimationFrame(paint);
+    return () => cancelAnimationFrame(raf);
+  }, [dur]);
 
   /** 兜底：seeking 不得长期卡住，否则歌词时间会冻在预览值上不再滚动 */
   useEffect(() => {
@@ -170,9 +193,7 @@ export function NowPlayingPage() {
     const live = liveRef.current;
     // 仅 scrub 预览时用 seekMs；松手后立刻回到播放时钟
     if (live.seeking) return live.seekMs;
-    const c = clockRef.current;
-    if (live.playing) return c.baseMs + (performance.now() - c.baseAt);
-    return c.baseMs;
+    return clockNow(clockRef.current);
   }
 
   /** 提交进度：seek 结束后退出 scrub 并对齐时钟与歌词滚动，避免冻住 */
@@ -266,9 +287,6 @@ export function NowPlayingPage() {
   const title = info?.title || track?.title || info?.filename || "未在播放";
   const artist = info?.artist || info?.album_artist || "";
   const cover = info?.cover_data ?? null;
-  const showMs = seeking ? seekMs : pos;
-  const remain = Math.max(dur - showMs, 0);
-  const pct = Math.min(100, Math.max(0, (showMs / dur) * 100));
   const vol = player?.volume ?? 0.8;
 
   function seekFromEvent(e: React.MouseEvent<HTMLElement>) {
@@ -353,11 +371,11 @@ export function NowPlayingPage() {
             }}
           >
             <div className="np-seek-track">
-              <div className="np-seek-fill" style={{ width: `${pct}%` }} />
+              <div ref={seekFillRef} className="np-seek-fill" />
             </div>
             <div className="np-seek-times">
-              <span>{formatTime(showMs)}</span>
-              <span>-{formatTime(remain)}</span>
+              <span ref={seekCurRef} />
+              <span ref={seekRemainRef} />
             </div>
           </div>
 
