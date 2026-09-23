@@ -8,6 +8,7 @@ import type {
   LyricsCandidate,
   LyricsContent,
   LyricsCurrent,
+  LyricsSources,
   LyricsTarget,
 } from "../../lib/types";
 import { emitLyricsSaved } from "../../lib/lyricsWindow";
@@ -44,6 +45,12 @@ export function LyricsPanel({
   const [artistInput, setArtistInput] = useState(track.artist);
   const [titleInput, setTitleInput] = useState(track.title || track.filename);
   const [searched, setSearched] = useState(false);
+  const [defaultSave, setDefaultSave] = useState<"sidecar" | "embed">("sidecar");
+  const [enabledSources, setEnabledSources] = useState<LyricsSources>({
+    lrclib: true,
+    netease: true,
+    qq: true,
+  });
 
   const [current, setCurrent] = useState<LyricsCurrent | null>(null);
   const [candidates, setCandidates] = useState<LyricsCandidate[]>([]);
@@ -68,6 +75,11 @@ export function LyricsPanel({
   // 只订阅事件，不触发搜索（搜索由「搜索」按钮手动发起；先订阅好避免竞态丢批）
   useEffect(() => {
     aliveRef.current = true;
+    void api.getSettings().then((s) => {
+      if (!aliveRef.current) return;
+      setDefaultSave(s.lyrics_save_mode);
+      setEnabledSources(s.lyrics_sources);
+    });
     void refreshCurrent(track);
 
     let unBatch: (() => void) | undefined;
@@ -254,7 +266,7 @@ export function LyricsPanel({
           <div className="lyr-col-head">
             <h3>在线候选</h3>
             <div className="lyr-sources">
-              {ALL_SOURCES.map((s) => (
+              {ALL_SOURCES.filter((s) => enabledSources[s] !== false).map((s) => (
                 <span
                   key={s}
                   className={`lyr-src ${sourceDone[s] ?? "idle"}`}
@@ -330,7 +342,7 @@ export function LyricsPanel({
           <div className="lyr-save">
             <span className="tertiary">保存为：</span>
             <button
-              className="btn btn-primary"
+              className={defaultSave === "sidecar" ? "btn btn-primary" : "btn"}
               disabled={candId == null || saving || !previewText}
               title={
                 hasSidecar
@@ -340,10 +352,10 @@ export function LyricsPanel({
               onClick={() => void save("sidecar")}
             >
               {saving ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
-              外挂 .lrc（默认）
+              外挂 .lrc{defaultSave === "sidecar" ? "（默认）" : ""}
             </button>
             <button
-              className="btn"
+              className={defaultSave === "embed" ? "btn btn-primary" : "btn"}
               disabled={candId == null || saving || !previewText}
               title={
                 hasEmbedded
@@ -352,7 +364,7 @@ export function LyricsPanel({
               }
               onClick={() => void save("embed")}
             >
-              内嵌到文件
+              内嵌到文件{defaultSave === "embed" ? "（默认）" : ""}
             </button>
           </div>
         </section>

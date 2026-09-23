@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AlbumCard,
+  AppSettings,
   ApplyPlan,
   ArtistCard,
   LibraryRoot,
@@ -13,6 +14,7 @@ import type {
   QueueItem,
   ScanResult,
   ScrapeCandidate,
+  SettingsPatch,
   TrackFilter,
   TrackInfo,
   TrackRow,
@@ -21,6 +23,10 @@ import type {
 export const api = {
   getPaths: () => invoke<PathsInfo>("get_paths"),
   getAppInfo: () => invoke<{ name: string; version: string }>("get_app_info"),
+  getSettings: () => invoke<AppSettings>("get_settings"),
+  updateSettings: (patch: SettingsPatch) =>
+    invoke<AppSettings>("update_settings", { patch }),
+  openPath: (path: string) => invoke<void>("open_path", { path }),
 
   getLibraryRoot: () => invoke<LibraryRoot | null>("get_library_root"),
   initLibrary: (req: {

@@ -11,25 +11,25 @@ import "./Songs.css";
 
 type ViewMode = "list" | "grid";
 
-const VIEW_KEY = "axmusic.songs.view";
-
-function loadViewMode(): ViewMode {
-  try {
-    return window.localStorage.getItem(VIEW_KEY) === "grid" ? "grid" : "list";
-  } catch {
-    return "list";
-  }
-}
-
 export function SongsPage() {
   const playQueue = useApp((s) => s.playQueue);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode);
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getSettings().then((s) => {
+      if (!cancelled) setViewMode(s.songs_view);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -68,11 +68,7 @@ export function SongsPage() {
 
   function switchView(mode: ViewMode) {
     setViewMode(mode);
-    try {
-      window.localStorage.setItem(VIEW_KEY, mode);
-    } catch {
-      /* ignore */
-    }
+    void api.updateSettings({ songs_view: mode }).catch(() => {});
   }
 
   function showToast(msg: string) {

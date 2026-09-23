@@ -117,9 +117,19 @@ export function NowPlayingPage() {
     };
   }, [ctxMenu]);
 
+  const [lyricsPrefer, setLyricsPrefer] = useState<"sidecar" | "embed">("sidecar");
+  useEffect(() => {
+    let cancelled = false;
+    void api.getSettings().then((s) => {
+      if (!cancelled) setLyricsPrefer(s.lyrics_prefer);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const { lines, plain, synced } = useMemo(
-    () => pickLyrics(info?.embedded ?? null, info?.sidecar ?? null),
-    [info],
+    () => pickLyrics(info?.embedded ?? null, info?.sidecar ?? null, lyricsPrefer),
+    [info, lyricsPrefer],
   );
 
   function reanchorClock(ms: number) {

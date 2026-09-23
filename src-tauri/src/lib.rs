@@ -35,9 +35,12 @@ pub fn run() {
             };
 
             let mut player = player::Player::new()?;
-            player
-                .engine
-                .set_volume_f32(app_settings.volume.clamp(0.0, 1.0));
+            let boot_vol = if app_settings.restore_volume {
+                app_settings.volume.clamp(0.0, 1.0)
+            } else {
+                0.8
+            };
+            player.engine.set_volume_f32(boot_vol);
 
             let state = commands::AppState {
                 db: Mutex::new(db),
@@ -51,6 +54,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_paths,
             commands::get_app_info,
+            commands::get_settings,
+            commands::update_settings,
+            commands::open_path,
             commands::get_library_root,
             commands::init_library,
             commands::get_tracks,

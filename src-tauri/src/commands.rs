@@ -102,6 +102,82 @@ pub fn get_app_info() -> AppInfo {
     }
 }
 
+// ── settings ──────────────────────────────────────────────────────
+
+/// 设置页部分更新：只覆盖非 null 字段。
+#[derive(Debug, Default, Deserialize)]
+pub struct SettingsPatch {
+    pub volume: Option<f32>,
+    pub play_mode: Option<crate::settings::PlayMode>,
+    pub restore_volume: Option<bool>,
+    pub lyrics_save_mode: Option<crate::settings::LyricsSaveMode>,
+    pub lyrics_prefer: Option<crate::settings::LyricsPrefer>,
+    pub lyrics_sources: Option<crate::settings::LyricsSources>,
+    pub songs_view: Option<crate::settings::SongsView>,
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<crate::settings::AppSettings, String> {
+    let guard = state.settings.lock().map_err(|e| e.to_string())?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+pub fn update_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    patch: SettingsPatch,
+) -> Result<crate::settings::AppSettings, String> {
+    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    if let Some(v) = patch.volume {
+        guard.volume = v.clamp(0.0, 1.0);
+    }
+    if let Some(m) = patch.play_mode {
+        guard.play_mode = m;
+    }
+    if let Some(v) = patch.restore_volume {
+        guard.restore_volume = v;
+    }
+    if let Some(m) = patch.lyrics_save_mode {
+        guard.lyrics_save_mode = m;
+    }
+    if let Some(p) = patch.lyrics_prefer {
+        guard.lyrics_prefer = p;
+    }
+    if let Some(s) = patch.lyrics_sources {
+        // 至少保留一个源，避免搜索永远空跑
+        if s.lrclib || s.netease || s.qq {
+            guard.lyrics_sources = s;
+        }
+    }
+    if let Some(v) = patch.songs_view {
+        guard.songs_view = v;
+    }
+    settings::save(&guard).map_err(|e| e.to_string())?;
+    let snapshot = guard.clone();
+    drop(guard);
+    let _ = app.emit("settings://changed", &snapshot);
+    Ok(snapshot)
+}
+
+/// 在资源管理器中打开目录（设置页「打开数据目录」）。
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Err("暂不支持打开目录".into())
+    }
+}
+
 // ── library ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -851,6 +927,10 @@ pub async fn lyrics_search(
         return Err("歌手和歌名至少填一个".into());
     }
     let track_id = event_id;
+    let enabled = {
+        let guard = state.settings.lock().map_err(|e| e.to_string())?;
+        guard.lyrics_sources.clone()
+    };
 
     std::thread::spawn(move || {
         use std::sync::mpsc;
@@ -869,9 +949,15 @@ pub async fn lyrics_search(
             }};
         }
 
-        spawn_source!(lyrics::SOURCE_LRCLIB, lyrics::lrclib::search);
-        spawn_source!(lyrics::SOURCE_NETEASE, lyrics::netease::search);
-        spawn_source!(lyrics::SOURCE_QQ, lyrics::qqmusic::search);
+        if enabled.lrclib {
+            spawn_source!(lyrics::SOURCE_LRCLIB, lyrics::lrclib::search);
+        }
+        if enabled.netease {
+            spawn_source!(lyrics::SOURCE_NETEASE, lyrics::netease::search);
+        }
+        if enabled.qq {
+            spawn_source!(lyrics::SOURCE_QQ, lyrics::qqmusic::search);
+        }
         drop(tx);
 
         for _ in 0..in_flight {

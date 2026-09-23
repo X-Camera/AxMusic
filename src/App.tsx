@@ -8,6 +8,7 @@ import { ManagePage } from "./features/manage/ManagePage";
 import { LyricsWindow } from "./features/manage/LyricsWindow";
 import { NowPlayingPage } from "./features/player/NowPlayingPage";
 import { PlaylistsPage } from "./features/playlists/PlaylistsPage";
+import { SettingsPage } from "./features/settings/SettingsPage";
 import { useApp } from "./state/useApp";
 
 function isLyricsWindow(): boolean {
@@ -33,7 +34,7 @@ export default function App() {
         {route === "artists" && <ArtistsPage />}
         {route === "folders" && <PlaceholderPage route="folders" />}
         {route === "playlists" && <PlaylistsPage />}
-        {route === "settings" && <PlaceholderPage route="settings" />}
+        {route === "settings" && <SettingsPage />}
       </div>
       <MiniPlayer />
       {fullPlayer && <NowPlayingPage />}

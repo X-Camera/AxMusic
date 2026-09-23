@@ -82,19 +82,23 @@ export function findLrcIndex(lines: LrcLine[], ms: number): number {
   return ans;
 }
 
-/** 优先带时间戳的外挂/内嵌；否则纯文本按行展示（无同步）。 */
-export function pickLyrics(embedded: string | null, sidecar: string | null): {
+/** 优先带时间戳的外挂/内嵌（可配优先级）；否则纯文本按行展示（无同步）。 */
+export function pickLyrics(
+  embedded: string | null,
+  sidecar: string | null,
+  prefer: "sidecar" | "embed" = "sidecar",
+): {
   lines: LrcLine[];
   plain: string[];
   synced: boolean;
 } {
-  const candidates = [sidecar, embedded];
+  const candidates = prefer === "embed" ? [embedded, sidecar] : [sidecar, embedded];
   for (const c of candidates) {
     if (!c) continue;
     const lines = parseLrc(c);
     if (lines.length > 0) return { lines, plain: [], synced: true };
   }
-  const text = embedded || sidecar || "";
+  const text = (prefer === "embed" ? embedded || sidecar : sidecar || embedded) || "";
   const plain = text
     .split(/\r?\n/)
     .map((s) => s.replace(/\[[\d:.]+\]/g, "").trim())

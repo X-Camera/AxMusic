@@ -6,22 +6,107 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// 播放模式（顺序 / 随机 / 单曲）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayMode {
+    #[default]
+    Sequential,
+    Shuffle,
+    RepeatOne,
+}
+
+/// 歌词默认保存方式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricsSaveMode {
+    #[default]
+    Sidecar,
+    Embed,
+}
+
+/// 满窗/播放页读取歌词时的优先来源
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricsPrefer {
+    #[default]
+    Sidecar,
+    Embed,
+}
+
+/// 歌曲页默认视图
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SongsView {
+    #[default]
+    List,
+    Grid,
+}
+
+/// 歌词在线源开关
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LyricsSources {
+    pub lrclib: bool,
+    pub netease: bool,
+    pub qq: bool,
+}
+
+impl Default for LyricsSources {
+    fn default() -> Self {
+        Self {
+            lrclib: true,
+            netease: true,
+            qq: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     /// Absolute path of the library root (music + axmusic.db live here).
     pub library_root: Option<String>,
     /// 0.0 ..= 1.0
+    #[serde(default = "default_volume")]
     pub volume: f32,
-    /// Scrape wizard default: embed cover on apply
-    pub scrape_write_cover: bool,
+    /// 播放模式（P0 先落盘，P1 接引擎）
+    #[serde(default)]
+    pub play_mode: PlayMode,
+    /// 启动时恢复上次音量
+    #[serde(default = "default_true")]
+    pub restore_volume: bool,
+    /// 歌词默认保存：外挂 .lrc / 内嵌
+    #[serde(default)]
+    pub lyrics_save_mode: LyricsSaveMode,
+    /// 播放页读取优先：外挂 / 内嵌
+    #[serde(default)]
+    pub lyrics_prefer: LyricsPrefer,
+    /// 在线歌词源开关
+    #[serde(default)]
+    pub lyrics_sources: LyricsSources,
+    /// 歌曲页默认视图
+    #[serde(default)]
+    pub songs_view: SongsView,
+}
+
+fn default_volume() -> f32 {
+    0.8
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             library_root: None,
-            volume: 0.8,
-            scrape_write_cover: true,
+            volume: default_volume(),
+            play_mode: PlayMode::default(),
+            restore_volume: true,
+            lyrics_save_mode: LyricsSaveMode::default(),
+            lyrics_prefer: LyricsPrefer::default(),
+            lyrics_sources: LyricsSources::default(),
+            songs_view: SongsView::default(),
         }
     }
 }

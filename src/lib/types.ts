@@ -137,6 +137,32 @@ export interface PathsInfo {
   settings_path: string;
 }
 
+export type PlayMode = "sequential" | "shuffle" | "repeat_one";
+export type LyricsSaveMode = "sidecar" | "embed";
+export type LyricsPrefer = "sidecar" | "embed";
+export type SongsView = "list" | "grid";
+
+export interface LyricsSources {
+  lrclib: boolean;
+  netease: boolean;
+  qq: boolean;
+}
+
+export interface AppSettings {
+  library_root: string | null;
+  volume: number;
+  play_mode: PlayMode;
+  restore_volume: boolean;
+  lyrics_save_mode: LyricsSaveMode;
+  lyrics_prefer: LyricsPrefer;
+  lyrics_sources: LyricsSources;
+  songs_view: SongsView;
+}
+
+export type SettingsPatch = Partial<
+  Omit<AppSettings, "library_root">
+>;
+
 export type RouteId =
   | "songs"
   | "albums"
