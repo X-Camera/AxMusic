@@ -320,7 +320,7 @@ export function ManagePage() {
                 selected={selected}
                 activeId={compareId}
                 onSelectedChange={setSelected}
-                onPlay={(_row, idxInView) => void playQueue(filtered.map(trackRowToQueueItem), idxInView)}
+                onPlay={(row) => void playQueue([trackRowToQueueItem(row)], 0)}
                 onActivate={(row) =>
                   // 再点已激活行 → 退出对比，右栏回到库统计
                   setCompareId((cur) => (cur === row.id ? null : row.id))

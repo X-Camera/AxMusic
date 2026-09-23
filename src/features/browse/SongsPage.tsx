@@ -61,9 +61,15 @@ export function SongsPage() {
     );
   }, [tracks, query]);
 
-  function playFrom(idx: number) {
+  /** 点单曲：只播这一首，并替换当前播放队列 */
+  function playOne(t: TrackRow) {
+    void playQueue([trackRowToQueueItem(t)], 0);
+  }
+
+  /** 播放全部：整页入队 */
+  function playAll() {
     if (filtered.length === 0) return;
-    void playQueue(filtered.map(trackRowToQueueItem), idx);
+    void playQueue(filtered.map(trackRowToQueueItem), 0);
   }
 
   function switchView(mode: ViewMode) {
@@ -116,7 +122,7 @@ export function SongsPage() {
                 >
                   <ListPlus size={15} /> 加入歌单
                 </button>
-                <button className="btn btn-primary" title="播放全部" onClick={() => playFrom(0)}>
+                <button className="btn btn-primary" title="播放全部" onClick={() => playAll()}>
                   <Play size={15} /> 播放全部
                 </button>
               </>
@@ -157,7 +163,7 @@ export function SongsPage() {
                 key={t.id}
                 className="song-row"
                 title="播放"
-                onClick={() => playFrom(idx)}
+                onClick={() => playOne(t)}
               >
                 <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
                 <span className="ellipsis">{t.title || t.filename}</span>
@@ -181,12 +187,12 @@ export function SongsPage() {
           </div>
         ) : (
           <div className="songs-grid" key="grid">
-            {filtered.map((t, idx) => (
+            {filtered.map((t) => (
               <button
                 key={t.id}
                 className="song-card"
                 title="播放"
-                onClick={() => playFrom(idx)}
+                onClick={() => playOne(t)}
               >
                 <div className="song-card-cover">
                   <AlbumCover
@@ -200,7 +206,7 @@ export function SongsPage() {
                     title="播放"
                     onClick={(e) => {
                       e.stopPropagation();
-                      playFrom(idx);
+                      playOne(t);
                     }}
                   >
                     <Play size={16} fill="currentColor" />

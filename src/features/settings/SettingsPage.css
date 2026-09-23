@@ -86,17 +86,17 @@
 
 /* ── 右侧：软件介绍（定宽，不随左栏滚） ── */
 .set-about {
-  width: 320px;
+  width: 380px;
   flex-shrink: 0;
   align-self: stretch;
   overflow: hidden;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  padding: 28px 24px 22px;
+  padding: 22px 18px 18px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .set-about-hero {
@@ -104,8 +104,8 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 6px;
-  padding-bottom: 4px;
+  gap: 4px;
+  padding-bottom: 2px;
 }
 
 .set-about-mark {
@@ -116,7 +116,7 @@
   color: var(--text);
   display: grid;
   place-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   box-shadow: 0 10px 32px rgba(124, 106, 242, 0.28);
 }
 
@@ -143,9 +143,9 @@
 .set-about-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   font-size: 12px;
-  line-height: 1.65;
+  line-height: 1.55;
   color: var(--text-secondary);
 }
 
@@ -166,14 +166,14 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .set-about-list li {
   position: relative;
   padding-left: 14px;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
@@ -192,7 +192,7 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .set-about-meta > div {
@@ -211,6 +211,7 @@
   font-size: 12px;
   color: var(--text-secondary);
   word-break: break-all;
+  line-height: 1.4;
 }
 
 .set-about-path {
@@ -231,8 +232,8 @@
 }
 
 .set-about-copy {
-  margin: 4px 0 0;
-  padding-top: 12px;
+  margin: 2px 0 0;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
   font-size: 11px;
   text-align: center;

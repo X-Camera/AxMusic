@@ -87,12 +87,18 @@ export function PlaylistsPage() {
     }
   }
 
-  /** 播放全部（跳过失效条目）；startIdx = 点击行在存活序列中的位置 */
-  function playFrom(startIdx: number) {
+  /** 播放全部（跳过失效条目） */
+  function playAll() {
     if (!detail) return;
     const alive = detail.entries.filter((e) => e.exists);
     if (alive.length === 0) return;
-    void playQueue(alive.map(entryToQueueItem), Math.min(startIdx, alive.length - 1));
+    void playQueue(alive.map(entryToQueueItem), 0);
+  }
+
+  /** 点单曲：只播这一首，并替换当前播放队列 */
+  function playOne(e: PlaylistDetail["entries"][number]) {
+    if (!e.exists) return;
+    void playQueue([entryToQueueItem(e)], 0);
   }
 
   async function onMove(index: number, delta: -1 | 1) {
@@ -133,7 +139,7 @@ export function PlaylistsPage() {
   return (
     <>
       <TopBar
-        title="播放列表"
+        title="歌单"
         actions={
           <button className="btn btn-primary" disabled={noRoot} onClick={() => void onCreate()}>
             <Plus size={15} /> 新建歌单
@@ -144,7 +150,7 @@ export function PlaylistsPage() {
         {noRoot ? (
           <div className="empty-state">
             <div className="display" style={{ fontSize: 20 }}>
-              播放列表
+              歌单
             </div>
             <p className="muted">
               先到侧栏「管理」初始化库目录，歌单将存放在 <span className="mono">&lt;库&gt;/playlists/</span>{" "}
@@ -211,7 +217,7 @@ export function PlaylistsPage() {
               <div>
                 {!detail ? (
                   <div className="empty-state">
-                    <p className="muted">左侧选一个歌单查看曲目；或从管理表/专辑墙「加入歌单」。</p>
+                    <p className="muted">左侧选一个歌单查看曲目；或从管理表/专辑「加入歌单」。</p>
                   </div>
                 ) : (
                   <>
@@ -238,7 +244,7 @@ export function PlaylistsPage() {
                         <button
                           className="btn btn-primary"
                           disabled={!detail.entries.some((e) => e.exists)}
-                          onClick={() => playFrom(0)}
+                          onClick={() => playAll()}
                         >
                           <Play size={15} /> 播放全部
                         </button>
@@ -246,14 +252,13 @@ export function PlaylistsPage() {
                     </div>
                     {detail.entries.length === 0 ? (
                       <div className="empty-state">
-                        <p className="muted">歌单为空，去管理表或专辑墙「加入歌单」。</p>
+                        <p className="muted">歌单为空，去管理表或专辑「加入歌单」。</p>
                       </div>
                     ) : (
                       <div className="pl-tracks">
                         {detail.entries.map((e, i) => {
                           const title = e.track?.title || e.title;
                           const artist = e.track?.artist || e.artist;
-                          const aliveBefore = detail.entries.slice(0, i).filter((x) => x.exists).length;
                           return (
                             <div key={`${e.rel_path}-${i}`} className={`pl-track-row${e.exists ? "" : " missing"}`}>
                               <span className="tertiary mono">{String(i + 1).padStart(2, "0")}</span>
@@ -270,7 +275,7 @@ export function PlaylistsPage() {
                                   className="link-btn"
                                   title="播放"
                                   disabled={!e.exists}
-                                  onClick={() => playFrom(aliveBefore)}
+                                  onClick={() => playOne(e)}
                                 >
                                   播放
                                 </button>

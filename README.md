@@ -42,4 +42,4 @@ npm run tauri build        # 构建
 
 ## 许可
 
-待定。
+[MIT](LICENSE)

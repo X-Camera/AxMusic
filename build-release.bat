@@ -15,9 +15,14 @@ echo [%date% %time%] start > "%LOG%"
 :: ISO start time via PowerShell (avoid %time% parse crashes)
 powershell -NoProfile -Command "(Get-Date).ToString('o')" > "%START_FILE%" 2>nul
 
+:: ---- 0. Kill running AxMusic (green build is AxMusic-vX.Y.Z.exe) ----
+echo [0/4] Stopping running AxMusic (if any)...
+powershell -NoProfile -Command "Get-Process -Name 'AxMusic*','axmusic*' -ErrorAction SilentlyContinue | Stop-Process -Force"
+echo [0/4] Stop done. >> "%LOG%"
+
 :: ---- 1. tauri release build ----
-echo [1/3] Building release (this can take several minutes)...
-echo [1/3] tauri build --no-bundle >> "%LOG%"
+echo [1/4] Building release (this can take several minutes)...
+echo [1/4] tauri build --no-bundle >> "%LOG%"
 :: --no-bundle: only compile axmusic.exe; skip NSIS installer (copy step uses the raw exe)
 call npm run tauri build -- --no-bundle
 set "BUILD_RC=%ERRORLEVEL%"
@@ -30,20 +35,20 @@ if not "%BUILD_RC%"=="0" (
     pause
     exit /b 1
 )
-echo [1/3] Build done.
+echo [1/4] Build done.
 echo.
 
 :: ---- 2. Clean old versioned exes ----
-echo [2/3] Cleaning old out/ artifacts...
+echo [2/4] Cleaning old out/ artifacts...
 if exist out\AxMusic*.exe (
     del /q out\AxMusic*.exe 2>nul
 )
-echo [2/3] Clean done.
+echo [2/4] Clean done.
 echo.
 
 :: ---- 3. Versioned copy (prompts y/n if target exe is locked) ----
-echo [3/3] Copying artifacts to out\ ...
-echo [3/3] dist:copy >> "%LOG%"
+echo [3/4] Copying artifacts to out\ ...
+echo [3/4] dist:copy >> "%LOG%"
 call npm run dist:copy
 set "COPY_RC=%ERRORLEVEL%"
 echo dist:copy exit=%COPY_RC% >> "%LOG%"

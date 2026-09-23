@@ -114,6 +114,7 @@ pub struct SettingsPatch {
     pub lyrics_prefer: Option<crate::settings::LyricsPrefer>,
     pub lyrics_sources: Option<crate::settings::LyricsSources>,
     pub songs_view: Option<crate::settings::SongsView>,
+    pub close_behavior: Option<crate::settings::CloseBehavior>,
 }
 
 #[tauri::command]
@@ -161,6 +162,9 @@ pub fn update_settings(
     if let Some(v) = patch.songs_view {
         guard.songs_view = v;
     }
+    if let Some(c) = patch.close_behavior {
+        guard.close_behavior = c;
+    }
     settings::save(&guard).map_err(|e| e.to_string())?;
     let snapshot = guard.clone();
     drop(guard);
@@ -183,6 +187,43 @@ pub fn open_path(path: String) -> Result<(), String> {
     {
         let _ = path;
         Err("暂不支持打开目录".into())
+    }
+}
+
+/// 关闭询问弹窗：缩到托盘 / 退出；remember=true 时记住为默认关闭行为。
+#[tauri::command]
+pub fn resolve_window_close(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    action: String,
+    remember: bool,
+) -> Result<(), String> {
+    let behavior = match action.as_str() {
+        "tray" => crate::settings::CloseBehavior::Tray,
+        "exit" => crate::settings::CloseBehavior::Exit,
+        _ => return Err("未知关闭操作".into()),
+    };
+    if remember {
+        let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+        guard.close_behavior = behavior;
+        settings::save(&guard).map_err(|e| e.to_string())?;
+        let snapshot = guard.clone();
+        drop(guard);
+        let _ = app.emit("settings://changed", &snapshot);
+    }
+    match behavior {
+        crate::settings::CloseBehavior::Tray => {
+            use tauri::Manager;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+            }
+            Ok(())
+        }
+        crate::settings::CloseBehavior::Exit => {
+            app.exit(0);
+            Ok(())
+        }
+        crate::settings::CloseBehavior::Ask => Ok(()),
     }
 }
 

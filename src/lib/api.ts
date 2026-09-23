@@ -28,6 +28,9 @@ export const api = {
   updateSettings: (patch: SettingsPatch) =>
     invoke<AppSettings>("update_settings", { patch }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
+  /** 关闭询问：action = tray|exit；remember 记住为默认关闭行为 */
+  resolveWindowClose: (action: "tray" | "exit", remember: boolean) =>
+    invoke<void>("resolve_window_close", { action, remember }),
 
   getLibraryRoot: () => invoke<LibraryRoot | null>("get_library_root"),
   initLibrary: (req: {

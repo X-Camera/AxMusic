@@ -3,10 +3,11 @@
  *   out/AxMusic-v<version>.exe   绿色版(免安装,双击即用)
  * 版本号取自 package.json。Cargo 编译产物仍是 axmusic.exe
  * (Tauri 用 Cargo 包名),版本号只在复制到 out/ 时写入文件名。
- * exe 被占用时不静默跳过:提示后等你关掉进程,输入 y 手动重试。
+ * exe 被占用时先自动强杀 AxMusic* 重试；仍占用再提示输入 y 手动重试（保底）。
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,11 +26,46 @@ function isBusy(e) {
   return code === 'EPERM' || code === 'EBUSY'
 }
 
+/** 强杀 AxMusic* / axmusic*（绿色版进程名带版本号，如 AxMusic-v0.0.1） */
+function killAxMusic() {
+  try {
+    execFileSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        "Get-Process -Name 'AxMusic*','axmusic*' -ErrorAction SilentlyContinue | Stop-Process -Force",
+      ],
+      { stdio: 'inherit' },
+    )
+  } catch {
+    /* none running or already exited */
+  }
+}
+
 /**
- * 占用时阻塞询问,直到成功 / 用户放弃。
- * doFn 抛 EPERM/EBUSY → 打印提示 → 读一行:y/Y 重试,其它放弃。
+ * 占用时：先自动强杀重试若干次；仍占用则提示输入 y 手动重试（保底），其它放弃。
  */
 async function withBusyRetry(label, doFn) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      doFn()
+      return true
+    } catch (e) {
+      if (!isBusy(e)) throw e
+      console.warn(`\n⚠ ${label} 失败:文件被占用，正在强杀 AxMusic 进程后重试…`)
+      killAxMusic()
+    }
+  }
+
+  try {
+    doFn()
+    return true
+  } catch (e) {
+    if (!isBusy(e)) throw e
+  }
+
+  // 保底：自动杀不掉（杀软/其它占用）时再问一次
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   try {
     for (;;) {
@@ -38,8 +74,8 @@ async function withBusyRetry(label, doFn) {
         return true
       } catch (e) {
         if (!isBusy(e)) throw e
-        console.warn(`\n⚠ ${label} 失败:文件被占用(可能正在运行 out 里旧的 exe)。`)
-        console.warn('  请先关闭该 exe,然后输入 y 重试;直接回车/n 放弃(不中断编译结果,但本次未写入)。')
+        console.warn(`\n⚠ ${label} 失败:文件仍被占用。`)
+        console.warn('  请手动关闭占用程序,然后输入 y 重试;直接回车/n 放弃(不中断编译结果,但本次未写入)。')
         const ans = (await rl.question('> ')).trim().toLowerCase()
         if (ans !== 'y' && ans !== 'yes') {
           console.warn(`  已放弃:${label}`)
@@ -67,7 +103,7 @@ if (copied) {
   console.log(`✓ out/${outName}(绿色版 v${version})`)
 }
 
-// 清旧版本 exe;被占用同样走 y 重试
+// 清旧版本 exe;被占用同样强杀→手动 y 保底
 for (const f of readdirSync(outDir)) {
   if (!/^AxMusic(-v[\d.]+)?\.exe$/i.test(f) || f === outName) continue
   const removed = await withBusyRetry(`删除旧产物 ${f}`, () => rmSync(join(outDir, f)))

@@ -11,17 +11,18 @@ mod scanner;
 mod scraper;
 mod settings;
 mod tagger;
+mod tray;
 
 use std::path::Path;
 use std::sync::Mutex;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|_app| {
+        .setup(|app| {
             let data_root = paths::ensure_data_root();
             eprintln!("[AxMusic] data_root = {}", data_root.display());
 
@@ -54,8 +55,34 @@ pub fn run() {
                 scanning: Mutex::new(false),
                 settings: Mutex::new(app_settings),
             };
-            _app.manage(state);
+            app.manage(state);
+            tray::init(app)?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let behavior = window
+                    .app_handle()
+                    .try_state::<commands::AppState>()
+                    .and_then(|s| s.settings.lock().ok().map(|g| g.close_behavior))
+                    .unwrap_or_default();
+                match behavior {
+                    settings::CloseBehavior::Exit => {
+                        // 允许关闭；窗口销毁后应用退出
+                    }
+                    settings::CloseBehavior::Tray => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    settings::CloseBehavior::Ask => {
+                        api.prevent_close();
+                        let _ = window.emit("app://close-requested", ());
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_paths,
@@ -63,6 +90,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::open_path,
+            commands::resolve_window_close,
             commands::get_library_root,
             commands::init_library,
             commands::get_tracks,

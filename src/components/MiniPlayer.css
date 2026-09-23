@@ -112,6 +112,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  flex: 1;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.mp-title:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.mp-title:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .mp-sub {

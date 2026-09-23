@@ -1,0 +1,52 @@
+.close-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 80;
+  padding: 24px;
+}
+
+.close-panel {
+  width: min(400px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.close-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.close-desc {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.close-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.close-remember input {
+  accent-color: var(--accent);
+}
+
+.close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -142,6 +142,7 @@ export interface PathsInfo {
 export type LyricsSaveMode = "sidecar" | "embed";
 export type LyricsPrefer = "sidecar" | "embed";
 export type SongsView = "list" | "grid";
+export type CloseBehavior = "ask" | "tray" | "exit";
 
 export interface LyricsSources {
   lrclib: boolean;
@@ -158,6 +159,7 @@ export interface AppSettings {
   lyrics_prefer: LyricsPrefer;
   lyrics_sources: LyricsSources;
   songs_view: SongsView;
+  close_behavior: CloseBehavior;
 }
 
 export type SettingsPatch = Partial<

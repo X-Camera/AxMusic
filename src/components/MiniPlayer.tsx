@@ -220,7 +220,14 @@ export function MiniPlayer() {
         </button>
         <div className="mp-meta">
           <div className="mp-title-row">
-            <span className="mp-title">{track?.title ?? "未在播放"}</span>
+            <button
+              className="mp-title"
+              title={track ? "打开满窗播放" : "未在播放"}
+              disabled={!track}
+              onClick={() => setFullPlayer(true)}
+            >
+              {track?.title ?? "未在播放"}
+            </button>
             {outsideLib && (
               <button
                 className="mp-include"
@@ -239,7 +246,7 @@ export function MiniPlayer() {
             )}
           </div>
           <div className="mp-sub tertiary">
-            {track ? track.path.split(/[\\/]/).slice(-2).join(" / ") : "双击专辑墙或管理表开始"}
+            {track ? track.path.split(/[\\/]/).slice(-2).join(" / ") : "双击专辑或管理表开始"}
           </div>
         </div>
       </div>

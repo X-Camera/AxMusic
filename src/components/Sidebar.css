@@ -33,6 +33,17 @@
   font-weight: 600;
   font-size: 15px;
   line-height: 1.1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.brand-version {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
 }
 
 .brand-sub {
@@ -78,6 +89,8 @@
   margin: var(--space-2) 6px;
 }
 
-.nav-spacer {
+/* 预留：主页歌词显示（后续填内容） */
+.nav-lyrics-slot {
   flex: 1;
+  min-height: 0;
 }

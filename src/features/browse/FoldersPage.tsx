@@ -416,9 +416,9 @@ export function FoldersPage() {
     lastClickIdx.current = null;
   }
 
-  function playFrom(idx: number) {
-    if (files.length === 0) return;
-    void playQueue(files.map(folderFileToQueueItem), idx);
+  /** 点单曲：只播这一首，并替换当前播放队列 */
+  function playOne(f: FolderFile) {
+    void playQueue([folderFileToQueueItem(f)], 0);
   }
 
   function playAction() {
@@ -478,7 +478,7 @@ export function FoldersPage() {
   return (
     <>
       <TopBar
-        title="文件夹"
+        title="目录"
         actions={
           <>
             {toast && <span className="ok-toast">{toast}</span>}
@@ -622,7 +622,7 @@ export function FoldersPage() {
                         data-path={f.path}
                         className={`folders-row${checked ? " selected" : ""}`}
                         title="点曲名播放 · 勾选多选 · Shift 连选"
-                        onDoubleClick={() => playFrom(idx)}
+                        onDoubleClick={() => playOne(f)}
                       >
                         {/* 只让 input 的 onChange 切换；span 空白区单独 onClick。
                             否则点到勾选框会 click+change 各切一次，表现为「点了没反应」 */}
@@ -646,7 +646,7 @@ export function FoldersPage() {
                           />
                         </span>
                         <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
-                        <span className="ellipsis folders-title" onClick={() => playFrom(idx)}>
+                        <span className="ellipsis folders-title" onClick={() => playOne(f)}>
                           {f.title || f.name}
                         </span>
                         <span className="tertiary ellipsis">{f.artist || "—"}</span>

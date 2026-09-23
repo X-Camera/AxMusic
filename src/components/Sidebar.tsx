@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Disc3,
   FolderOpen,
@@ -8,21 +9,36 @@ import {
   UserRound,
 } from "lucide-react";
 
+import { api } from "../lib/api";
 import type { RouteId } from "../lib/types";
 import { useApp } from "../state/useApp";
 import "./Sidebar.css";
 
 const PLAY_ITEMS: { id: RouteId; label: string; icon: typeof Disc3 }[] = [
   { id: "songs", label: "歌曲", icon: Music2 },
-  { id: "albums", label: "专辑墙", icon: Disc3 },
+  { id: "albums", label: "专辑", icon: Disc3 },
   { id: "artists", label: "歌手", icon: UserRound },
-  { id: "folders", label: "文件夹", icon: FolderOpen },
-  { id: "playlists", label: "播放列表", icon: ListMusic },
+  { id: "folders", label: "目录", icon: FolderOpen },
+  { id: "playlists", label: "歌单", icon: ListMusic },
 ];
 
 export function Sidebar() {
   const route = useApp((s) => s.route);
   const setRoute = useApp((s) => s.setRoute);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getAppInfo()
+      .then((info) => {
+        if (!cancelled) setVersion(info.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <aside className="sidebar">
@@ -31,7 +47,10 @@ export function Sidebar() {
           <ListVideo size={18} strokeWidth={2.2} />
         </div>
         <div className="brand-text">
-          <div className="brand-name">AxMusic</div>
+          <div className="brand-name">
+            AxMusic
+            {version && <span className="brand-version">v{version}</span>}
+          </div>
           <div className="brand-sub">本地音乐</div>
         </div>
       </div>
@@ -65,12 +84,6 @@ export function Sidebar() {
           <ListVideo size={16} />
           <span>管理</span>
         </button>
-      </nav>
-
-      <div className="nav-spacer" />
-
-      <div className="nav-divider" />
-      <nav className="nav" aria-label="设置">
         <button
           className={`nav-item${route === "settings" ? " active" : ""}`}
           onClick={() => setRoute("settings")}
@@ -80,6 +93,9 @@ export function Sidebar() {
           <span>设置</span>
         </button>
       </nav>
+
+      {/* 预留：主页歌词显示区 */}
+      <div className="nav-lyrics-slot" aria-hidden="true" />
     </aside>
   );
 }

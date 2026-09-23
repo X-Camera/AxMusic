@@ -82,9 +82,9 @@ export function AlbumWallPage() {
     await playQueue(list.map(trackRowToQueueItem), 0);
   }
 
-  function playTrack(idx: number) {
-    if (tracks.length === 0) return;
-    void playQueue(tracks.map(trackRowToQueueItem), idx);
+  /** 点单曲：只播这一首，并替换当前播放队列 */
+  function playTrack(t: TrackRow) {
+    void playQueue([trackRowToQueueItem(t)], 0);
   }
 
   function showToast(msg: string) {
@@ -98,7 +98,7 @@ export function AlbumWallPage() {
   return (
     <>
       <TopBar
-        title={selected ? undefined : "专辑墙"}
+        title={selected ? undefined : "专辑"}
         searchValue={selected ? undefined : query}
         onSearch={selected ? undefined : setQuery}
         onBack={selected ? closeAlbum : undefined}
@@ -173,7 +173,7 @@ export function AlbumWallPage() {
                     key={t.id}
                     className="album-track-row"
                     title="播放"
-                    onClick={() => playTrack(idx)}
+                    onClick={() => playTrack(t)}
                   >
                     <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
                     <span className="ellipsis">{t.title || t.filename}</span>

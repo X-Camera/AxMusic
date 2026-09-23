@@ -279,6 +279,7 @@ export function NowPlayingPage() {
   return (
     <div
       className={`np-page${playing ? " playing" : ""}${closing ? " closing" : ""}`}
+      data-context-menu
       onDoubleClick={onStageDoubleClick}
       onContextMenu={onLyricsContextMenu}
     >
@@ -423,7 +424,7 @@ export function NowPlayingPage() {
             ref={lyricsRef}
           >
             {!track && (
-              <div className="np-lyrics-empty tertiary">从专辑墙或管理表挑一首开始</div>
+              <div className="np-lyrics-empty tertiary">从专辑或管理表挑一首开始</div>
             )}
             {track && !synced && plain.length === 0 && (
               <div className="np-lyrics-empty">

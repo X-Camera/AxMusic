@@ -1,3 +1,4 @@
+import { CloseDialog } from "./components/CloseDialog";
 import { MiniPlayer } from "./components/MiniPlayer";
 import { Sidebar } from "./components/Sidebar";
 import { AlbumWallPage } from "./features/browse/AlbumWallPage";
@@ -38,6 +39,7 @@ export default function App() {
       </div>
       <MiniPlayer />
       {fullPlayer && <NowPlayingPage />}
+      <CloseDialog />
     </div>
   );
 }

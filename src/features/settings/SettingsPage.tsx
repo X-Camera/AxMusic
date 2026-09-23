@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type {
   AppSettings,
+  CloseBehavior,
   LyricsPrefer,
   LyricsSaveMode,
   PathsInfo,
@@ -35,8 +36,14 @@ const SONGS_VIEWS: { id: SongsView; label: string }[] = [
   { id: "grid", label: "卡片" },
 ];
 
+const CLOSE_BEHAVIORS: { id: CloseBehavior; label: string }[] = [
+  { id: "ask", label: "询问" },
+  { id: "tray", label: "缩到托盘" },
+  { id: "exit", label: "退出" },
+];
+
 const FEATURES = [
-  "任意路径本地播放，专辑墙 · 歌曲 · 歌手一站浏览",
+  "任意路径本地播放，专辑 · 歌曲 · 歌手一站浏览",
   "满窗歌词滚动，点句跳转；支持外挂 .lrc 与内嵌标签",
   "洗库工作区：标签 / 封面 / 歌词批量维护",
   "MusicBrainz 刮削入 catalog，对比确认后写回文件",
@@ -198,11 +205,15 @@ function AboutPanel({
               {paths?.db_path || "未初始化"}
             </dd>
           </div>
+          <div>
+            <dt>许可</dt>
+            <dd>MIT License</dd>
+          </div>
         </dl>
       </div>
 
       <p className="set-about-copy tertiary">
-        © {new Date().getFullYear()} AxMusic · 本地优先的听歌与洗库工具
+        © {new Date().getFullYear()} AxMusic · MIT License
       </p>
     </aside>
   );
@@ -370,6 +381,13 @@ export function SettingsPage() {
                   value={settings.songs_view}
                   options={SONGS_VIEWS}
                   onChange={(v) => void patch({ songs_view: v })}
+                />
+              </Row>
+              <Row label="关闭主窗口" hint="点 × 时询问 / 缩到托盘 / 退出；托盘可再打开">
+                <Segmented
+                  value={settings.close_behavior}
+                  options={CLOSE_BEHAVIORS}
+                  onChange={(v) => void patch({ close_behavior: v })}
                 />
               </Row>
               <Row label="主题" hint="浅色主题规划中">

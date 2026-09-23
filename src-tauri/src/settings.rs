@@ -43,6 +43,16 @@ pub enum SongsView {
     Grid,
 }
 
+/// 关闭主窗口行为：每次询问 / 缩到托盘 / 直接退出
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseBehavior {
+    #[default]
+    Ask,
+    Tray,
+    Exit,
+}
+
 /// 歌词在线源开关
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricsSources {
@@ -86,6 +96,9 @@ pub struct AppSettings {
     /// 歌曲页默认视图
     #[serde(default)]
     pub songs_view: SongsView,
+    /// 关闭主窗口：询问 / 缩到托盘 / 退出
+    #[serde(default)]
+    pub close_behavior: CloseBehavior,
 }
 
 fn default_volume() -> f32 {
@@ -107,6 +120,7 @@ impl Default for AppSettings {
             lyrics_prefer: LyricsPrefer::default(),
             lyrics_sources: LyricsSources::default(),
             songs_view: SongsView::default(),
+            close_behavior: CloseBehavior::default(),
         }
     }
 }
