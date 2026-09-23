@@ -10,12 +10,16 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, formatTime } from "../../lib/api";
 import { WindowControls } from "../../components/WindowControls";
 import { useApp } from "../../state/useApp";
-import { findLrcIndex, lineProgress, pickLyrics, type LrcLine } from "./lrc";
+import { useAmllLyrics } from "./amll/useAmllLyrics";
+import { pickLyrics, type LrcLine } from "./lrc";
 import "./NowPlayingPage.css";
+
+const appWindow = getCurrentWindow();
 
 interface MediaInfo {
   path: string;
@@ -29,24 +33,6 @@ interface MediaInfo {
   cover_data: string | null;
   embedded: string | null;
   sidecar: string | null;
-}
-
-function prefersReducedMotion() {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-/** 缓出带回一点弹性，用于歌词跟随 / 松手回弹（自研，非第三方） */
-function easeOutBack(t: number): number {
-  const c1 = 1.15;
-  const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-}
-
-function scrollTopToCenter(box: HTMLElement, el: HTMLElement): number {
-  const boxRect = box.getBoundingClientRect();
-  const elRect = el.getBoundingClientRect();
-  const delta = elRect.top + elRect.height / 2 - (boxRect.top + boxRect.height / 2);
-  return Math.max(0, box.scrollTop + delta);
 }
 
 /** 顶部白色横条 = 缩回主界面（替代左上角按钮） */
@@ -69,32 +55,16 @@ export function NowPlayingPage() {
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
   const [closing, setClosing] = useState(false);
-  const [draggingLrc, setDraggingLrc] = useState(false);
-  /** rAF 推得的当前句：只在换行时 setState，避免每帧重渲染 */
-  const [activeIdx, setActiveIdx] = useState(-1);
   const [flashIdx, setFlashIdx] = useState(-1);
-  const listRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{
-    y: number;
-    startMs: number;
-    startScroll: number;
-    moved: boolean;
-    lastMs: number;
-  } | null>(null);
-  const skipClickRef = useRef(false);
-  const springRafRef = useRef(0);
   const flashTimerRef = useRef(0);
-  const activeIdxRef = useRef(-1);
-  /** 播放中用基准时间外推，填补 500ms 轮询间隙（行内进度 / 跟手） */
+  /** 播放中用基准时间外推，填补 500ms 轮询间隙 */
   const clockRef = useRef({ baseMs: 0, baseAt: 0 });
   const lastPosRef = useRef(0);
   const liveRef = useRef({
-    lines: [] as LrcLine[],
     seeking: false,
     seekMs: 0,
     pos: 0,
     playing: false,
-    synced: false,
   });
 
   useEffect(() => {
@@ -122,7 +92,7 @@ export function NowPlayingPage() {
   }
 
   useEffect(() => {
-    liveRef.current = { lines, seeking, seekMs, pos, playing, synced };
+    liveRef.current = { seeking, seekMs, pos, playing };
     // 拖动/seek 中：歌词跟预览进度；否则跟播放时钟（轮询对齐 + 间隙外推）
     if (seeking) {
       reanchorClock(seekMs);
@@ -135,7 +105,7 @@ export function NowPlayingPage() {
     if (pos !== lastPosRef.current) {
       reanchorClock(pos);
     }
-  }, [lines, seeking, seekMs, pos, playing, synced]);
+  }, [seeking, seekMs, pos, playing]);
 
   /** 兜底：seeking 不得长期卡住，否则歌词时间会冻在预览值上不再滚动 */
   useEffect(() => {
@@ -153,137 +123,13 @@ export function NowPlayingPage() {
     return c.baseMs;
   }
 
-  function cancelSpring() {
-    if (springRafRef.current) {
-      cancelAnimationFrame(springRafRef.current);
-      springRafRef.current = 0;
-    }
-  }
-
-  /** 弹簧滚到目标 offset（松手回弹 / 换行跟随） */
-  function springScrollTo(target: number) {
-    const box = listRef.current;
-    if (!box) return;
-    cancelSpring();
-    const start = box.scrollTop;
-    const dist = target - start;
-    if (prefersReducedMotion() || Math.abs(dist) < 0.5) {
-      box.scrollTop = target;
-      return;
-    }
-    const duration = 480;
-    const t0 = performance.now();
-    const step = (now: number) => {
-      const t = Math.min(1, (now - t0) / duration);
-      box.scrollTop = start + dist * easeOutBack(t);
-      springRafRef.current = t < 1 ? requestAnimationFrame(step) : 0;
-    };
-    springRafRef.current = requestAnimationFrame(step);
-  }
-
-  function alignActiveLine(instant = false) {
-    const box = listRef.current;
-    const idx = activeIdxRef.current;
-    if (!box || idx < 0) return;
-    const el = box.querySelector<HTMLElement>(`[data-i="${idx}"]`);
-    if (!el) return;
-    const top = scrollTopToCenter(box, el);
-    if (instant || prefersReducedMotion()) {
-      cancelSpring();
-      box.scrollTop = top;
-    } else {
-      springScrollTo(top);
-    }
-  }
-
-  // 换行居中跟随（拖动中不抢滚动；seek 结束后也要重新对齐）
-  useEffect(() => {
-    if (!synced || activeIdx < 0 || draggingLrc || seeking) return;
-    alignActiveLine(false);
-  }, [activeIdx, synced, draggingLrc, seeking, lines.length]);
-
-  // 行内粗进度 + 当前句识别（rAF；只在换行时 setState）
-  useEffect(() => {
-    if (!synced || lines.length === 0) return;
-    let raf = 0;
-    const tick = () => {
-      const ms = currentTimeMs();
-      const idx = findLrcIndex(lines, ms);
-      if (idx !== activeIdxRef.current) {
-        activeIdxRef.current = idx;
-        setActiveIdx(idx);
-      }
-      const box = listRef.current;
-      if (box && idx >= 0) {
-        const el = box.querySelector<HTMLElement>(`[data-i="${idx}"]`);
-        if (el) {
-          const p = lineProgress(lines[idx], ms);
-          el.style.setProperty("--line-p", `${(p * 100).toFixed(2)}%`);
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [synced, lines]);
-
-  // 切歌清空行状态
-  useEffect(() => {
-    activeIdxRef.current = -1;
-    setActiveIdx(-1);
-    setFlashIdx(-1);
-  }, [path]);
-
-  useEffect(() => () => {
-    cancelSpring();
-    window.clearTimeout(flashTimerRef.current);
-  }, []);
-
-  function requestClose() {
-    if (closing) return;
-    setClosing(true);
-    window.setTimeout(() => setFullPlayer(false), 280);
-  }
-
-  /** 纵向拖动歌词：列表跟手滚动 + 进度偏移（上拖前进）；点击句子跳转 */
-  function onLrcPointerDown(e: React.MouseEvent) {
-    const box = listRef.current;
-    if (!box) return;
-    cancelSpring();
-    const start = seeking ? seekMs : pos;
-    dragRef.current = {
-      y: e.clientY,
-      startMs: start,
-      startScroll: box.scrollTop,
-      moved: false,
-      lastMs: start,
-    };
-    setDraggingLrc(true);
-  }
-
-  function onLrcPointerMove(e: React.MouseEvent) {
-    const d = dragRef.current;
-    const box = listRef.current;
-    if (!d || !box) return;
-    const dy = d.y - e.clientY;
-    if (!d.moved && Math.abs(dy) < 4) return;
-    d.moved = true;
-    skipClickRef.current = true;
-    box.scrollTop = d.startScroll + dy;
-    const boxH = box.clientHeight || 480;
-    const msPerPx = Math.max(dur / (boxH * 3), 20);
-    const nextMs = Math.min(dur, Math.max(0, d.startMs + dy * msPerPx));
-    d.lastMs = nextMs;
-    setSeeking(true);
-    setSeekMs(nextMs);
-  }
-
-  /** 提交进度：seek 结束后退出 scrub 并对齐时钟，避免歌词冻住 */
+  /** 提交进度：seek 结束后退出 scrub 并对齐时钟与歌词滚动，避免冻住 */
   async function commitSeek(ms: number) {
     const target = Math.round(ms);
     setSeekMs(target);
     setSeeking(true);
     reanchorClock(target);
+    resetScroll();
     try {
       await seek(target);
     } finally {
@@ -292,31 +138,70 @@ export function NowPlayingPage() {
     }
   }
 
-  function onLrcPointerUp() {
-    const d = dragRef.current;
-    dragRef.current = null;
-    setDraggingLrc(false);
-    if (d?.moved) {
-      void commitSeek(d.lastMs);
-    } else {
-      setSeeking(false);
-    }
-    window.setTimeout(() => {
-      skipClickRef.current = false;
-    }, 0);
-  }
-
   function flashLine(i: number) {
     setFlashIdx(i);
     window.clearTimeout(flashTimerRef.current);
     flashTimerRef.current = window.setTimeout(() => setFlashIdx(-1), 400);
   }
 
+  /** 点击句子：闪一下 + 跳转（AM 操作逻辑，由歌词引擎在「未拖动」时回调） */
   function seekToLine(i: number, ms: number) {
-    if (skipClickRef.current) return;
     flashLine(i);
     void commitSeek(ms);
   }
+
+  const {
+    containerRef: lyricsRef,
+    activeIdx,
+    resetScroll,
+  } = useAmllLyrics({
+    lines,
+    synced,
+    playing,
+    getTimeMs: currentTimeMs,
+    onSeekLine: (i, ms) => seekToLine(i, ms),
+  });
+
+  // 切歌清空行状态
+  useEffect(() => {
+    setFlashIdx(-1);
+  }, [path]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(flashTimerRef.current);
+    },
+    [],
+  );
+
+  function requestClose() {
+    if (closing) return;
+    setClosing(true);
+    // 真全屏是播放页专属状态，缩回主界面时一并退出（主界面没有退出入口）
+    void appWindow.isFullscreen().then((f) => {
+      if (f) void appWindow.setFullscreen(false);
+    });
+    window.setTimeout(() => setFullPlayer(false), 280);
+  }
+
+  /** 空白处双击 ↔ 真全屏（覆盖任务栏）；交互元素（歌词/按钮/进度条等）不触发 */
+  function onStageDoubleClick(e: React.MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (t.closest("button, input, .np-lyrics, .np-seek, .np-window-controls")) return;
+    void appWindow.isFullscreen().then((f) => void appWindow.setFullscreen(!f));
+  }
+
+  // Esc 退出真全屏（惯例，与浏览器/播放器一致）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      void appWindow.isFullscreen().then((f) => {
+        if (f) void appWindow.setFullscreen(false);
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const title = info?.title || track?.title || info?.filename || "未在播放";
   const artist = info?.artist || info?.album_artist || "";
@@ -333,7 +218,10 @@ export function NowPlayingPage() {
   }
 
   return (
-    <div className={`np-page${playing ? " playing" : ""}${closing ? " closing" : ""}`}>
+    <div
+      className={`np-page${playing ? " playing" : ""}${closing ? " closing" : ""}`}
+      onDoubleClick={onStageDoubleClick}
+    >
       <div
         className="np-bg"
         style={cover ? { backgroundImage: `url(${cover})` } : undefined}
@@ -452,16 +340,7 @@ export function NowPlayingPage() {
         </section>
 
         <section className="np-right">
-          <div
-            className={`np-lyrics${draggingLrc ? " dragging" : ""}`}
-            ref={listRef}
-            onMouseDown={onLrcPointerDown}
-            onMouseMove={onLrcPointerMove}
-            onMouseUp={onLrcPointerUp}
-            onMouseLeave={() => {
-              if (dragRef.current) onLrcPointerUp();
-            }}
-          >
+          <div className={`np-lyrics${synced ? " amll" : ""}`} ref={lyricsRef}>
             {!track && (
               <div className="np-lyrics-empty tertiary">从专辑墙或管理表挑一首开始</div>
             )}
@@ -474,50 +353,32 @@ export function NowPlayingPage() {
               <div className="np-lines">
                 <div className="np-line-spacer" aria-hidden />
                 {plain.map((t, i) => (
-                  <div key={i} className="np-line plain d2">
+                  <div key={i} className="np-line plain">
                     <div className="np-main">{t}</div>
                   </div>
                 ))}
                 <div className="np-line-spacer" aria-hidden />
               </div>
             )}
-            {synced && (
-              <div className="np-lines">
-                <div className="np-line-spacer" aria-hidden />
-                {lines.map((l: LrcLine, i) => {
-                  const on = i === activeIdx;
-                  const state = on ? "on" : i < activeIdx ? "past" : "next";
-                  const dist = Math.min(4, Math.abs(i - activeIdx));
-                  const text = l.text || "⋯";
-                  return (
-                    <div
-                      key={`${l.timeMs}-${i}`}
-                      data-i={i}
-                      className={[
-                        "np-line",
-                        state,
-                        `d${dist}`,
-                        flashIdx === i ? "flash" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")}
-                      onClick={() => seekToLine(i, l.timeMs)}
-                    >
-                      <div className="np-main">
-                        <span className="np-main-base">{text}</span>
-                        {on ? (
-                          <span className="np-main-fill" aria-hidden>
-                            {text}
-                          </span>
-                        ) : null}
-                      </div>
+            {synced &&
+              lines.map((l: LrcLine, i) => {
+                const on = i === activeIdx;
+                const state = on ? "on" : i < activeIdx ? "past" : "next";
+                return (
+                  <div
+                    key={`${l.timeMs}-${i}`}
+                    data-i={i}
+                    className={["np-line", state, flashIdx === i ? "flash" : ""]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <div className="np-line-inner">
+                      <div className="np-main">{l.text || "⋯"}</div>
                       {l.trans ? <div className="np-trans">{l.trans}</div> : null}
                     </div>
-                  );
-                })}
-                <div className="np-line-spacer" aria-hidden />
-              </div>
-            )}
+                  </div>
+                );
+              })}
           </div>
         </section>
       </div>

@@ -124,22 +124,22 @@
   z-index: 1;
   flex: 1;
   min-height: 0;
-  width: min(1680px, 100%);
+  width: 100%;
   margin-inline: auto;
   display: grid;
   grid-template-columns: minmax(280px, 0.95fr) minmax(300px, 1.15fr);
-  gap: clamp(28px, 4.5vw, 96px);
-  padding: var(--space-2) clamp(24px, 4vw, 72px) var(--space-5);
+  gap: clamp(28px, 4.5vw, 128px);
+  padding: var(--space-2) clamp(28px, 4vw, 120px) var(--space-5);
   align-items: center;
 }
 
-/* ── 左：封面 + 曲目 + 控制（随视口放大，高分屏不再一小块） ── */
+/* ── 左：封面 + 曲目 + 控制（随视口缩放，AMLL 同款 min(50vh, 38vw) 无像素硬顶） ── */
 .np-left {
   display: flex;
   flex-direction: column;
   min-width: 0;
   width: 100%;
-  max-width: min(560px, 52vh);
+  max-width: min(50vh, 38vw);
   margin: 0 auto;
   gap: clamp(12px, 1.4vh, 20px);
 }
@@ -194,7 +194,7 @@
 .np-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(18px, 1.7vw, 28px);
+  font-size: clamp(18px, 2.6vh, 40px);
   font-weight: 700;
   line-height: 1.3;
 }
@@ -202,7 +202,7 @@
 .np-sub {
   margin: 4px 0 0;
   color: rgba(255, 255, 255, 0.62);
-  font-size: clamp(13px, 1.15vw, 18px);
+  font-size: clamp(13px, 1.8vh, 26px);
   font-weight: 500;
 }
 
@@ -231,7 +231,7 @@
   justify-content: space-between;
   margin-top: 6px;
   color: rgba(255, 255, 255, 0.55);
-  font-size: clamp(11px, 0.9vw, 13px);
+  font-size: clamp(11px, 1.4vh, 16px);
   font-variant-numeric: tabular-nums;
 }
 
@@ -245,14 +245,20 @@
 }
 
 .np-icon {
-  width: clamp(36px, 3.2vw, 52px);
-  height: clamp(36px, 3.2vw, 52px);
+  width: clamp(38px, 4.6vh, 64px);
+  height: clamp(38px, 4.6vh, 64px);
   border-radius: 999px;
   display: grid;
   place-items: center;
   color: rgba(255, 255, 255, 0.92);
   background: transparent;
   transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+/* lucide 图标随按钮盒等比放大（CSS 覆盖 svg 的 width/height 属性） */
+.np-icon svg {
+  width: 50%;
+  height: 50%;
 }
 
 .np-icon:hover:not(:disabled) {
@@ -266,8 +272,8 @@
 }
 
 .np-icon.np-play {
-  width: clamp(48px, 4.2vw, 68px);
-  height: clamp(48px, 4.2vw, 68px);
+  width: clamp(54px, 6.4vh, 92px);
+  height: clamp(54px, 6.4vh, 92px);
 }
 
 .np-vol {
@@ -280,8 +286,8 @@
 }
 
 .np-vol-btn {
-  width: clamp(26px, 2vw, 34px);
-  height: clamp(26px, 2vw, 34px);
+  width: clamp(28px, 3vh, 40px);
+  height: clamp(28px, 3vh, 40px);
   color: inherit;
 }
 
@@ -311,11 +317,12 @@
   cursor: pointer;
 }
 
-/* ── 右：双语歌词 ── */
+/* ── 右：歌词（AM 式左对齐 + 每行弹簧排版，引擎直写 transform/filter） ── */
 .np-right {
   min-width: 0;
   min-height: 0;
-  height: min(74vh, 820px);
+  /* 吃满舞台高度：不再设 vh/px 上限，高分辨率下歌词列一样高 */
+  height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -327,6 +334,7 @@
   min-height: 0;
   overflow: auto;
   scrollbar-width: none;
+  user-select: none;
   /* 边界溶进背景：上下更长的软渐隐 */
   mask-image: linear-gradient(
     180deg,
@@ -366,6 +374,7 @@
   color: rgba(255, 255, 255, 0.55);
 }
 
+/* 纯文本回退（无时间戳）：普通滚动列表 */
 .np-lines {
   display: flex;
   flex-direction: column;
@@ -381,125 +390,94 @@
   pointer-events: none;
 }
 
-.np-line {
-  cursor: pointer;
-  text-align: center;
-  transform-origin: center center;
-  will-change: transform, opacity, filter;
-  transition: transform 320ms var(--ease-out), opacity 320ms var(--ease-out),
-    filter 320ms var(--ease-out);
-}
-
-.np-lyrics.dragging {
-  cursor: grabbing;
-}
-
-.np-lyrics.dragging .np-line {
-  cursor: grabbing;
-}
-
-/* 邻行衰减：按距当前句距离缩放 / 降透明 / 轻模糊 */
-.np-line.d0 {
-  transform: scale(1);
-  opacity: 1;
-  filter: none;
-}
-
-.np-line.d1 {
-  transform: scale(0.94);
-  opacity: 0.58;
-  filter: blur(0.45px);
-}
-
-.np-line.d2 {
-  transform: scale(0.9);
-  opacity: 0.4;
-  filter: blur(0.9px);
-}
-
-.np-line.d3 {
-  transform: scale(0.87);
-  opacity: 0.28;
-  filter: blur(1.25px);
-}
-
-.np-line.d4 {
-  transform: scale(0.85);
-  opacity: 0.2;
-  filter: blur(1.55px);
-}
-
-.np-lyrics.dragging .np-line {
-  transition: none;
-}
-
-.np-main {
-  position: relative;
-  font-family: var(--font-display);
-  font-size: clamp(24px, 2.8vw, 44px);
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: 0.01em;
-  color: rgba(255, 255, 255, 0.28);
-  transition: color 200ms var(--ease-out), filter 200ms var(--ease-out);
-}
-
-.np-main-base {
-  display: inline;
-}
-
-/* 行内粗进度：底层淡色 + 上层渐变按 --line-p 横向揭示 */
-.np-line.on .np-main {
-  color: rgba(255, 255, 255, 0.3);
-}
-
-.np-main-fill {
-  position: absolute;
-  inset: 0;
-  display: block;
-  overflow: hidden;
-  text-align: center;
-  pointer-events: none;
-  background: linear-gradient(92deg, #ffffff 0%, #ffc6d8 55%, #ff8fb8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  clip-path: inset(0 calc(100% - var(--line-p, 0%)) 0 0);
-}
-
-.np-trans {
-  margin-top: 6px;
-  font-size: clamp(14px, 1.4vw, 22px);
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.22);
-  transition: color 200ms var(--ease-out), filter 200ms var(--ease-out);
-}
-
-.np-line.past .np-main,
-.np-line.next .np-main {
-  color: rgba(255, 255, 255, 0.34);
-}
-
-.np-line.past .np-trans,
-.np-line.next .np-trans {
-  color: rgba(255, 255, 255, 0.24);
-}
-
-.np-line.on .np-trans {
-  color: rgba(255, 255, 255, 0.78);
-  filter: none;
-}
-
 .np-line.plain .np-main {
   font-size: clamp(16px, 1.6vw, 24px);
   font-weight: 500;
+  text-align: center;
   color: rgba(255, 255, 255, 0.55);
 }
 
-.np-line:hover .np-main {
-  color: rgba(255, 255, 255, 0.75);
-  filter: none;
+/* ── 同步歌词：AM 引擎排版 ── */
+.np-lyrics.amll {
+  overflow: hidden;
+  cursor: grab;
+  /* 纵向手势交给引擎（拖拽浏览歌词），横向保留 */
+  touch-action: pan-x;
+  /* 行内 em 基准：行 padding/副行字号都随主句字号缩放；
+     AMLL 同款 max(5vh, 2.5vw) 视口比例公式，不封顶——4K 下歌词一样大 */
+  font-size: max(max(5vh, 2.5vw), 20px);
+}
+
+.np-lyrics.amll.grabbing {
+  cursor: grabbing;
+}
+
+.np-lyrics.amll .np-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35em var(--space-4);
+  border-radius: 12px;
+  text-align: left;
+  cursor: pointer;
+  will-change: transform;
+  /* 模糊/透明由引擎写目标值，这里负责平滑（AMLL 同为 0.4s） */
+  transition: opacity 0.4s ease, filter 0.4s ease, background-color 0.25s ease;
+}
+
+.np-line-inner {
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/* 透明度：当前句全亮，其余白面低透明（AM 逐行歌词观感） */
+.np-line.past,
+.np-line.next {
+  opacity: 0.28;
+}
+
+.np-line.on {
+  opacity: 1;
+}
+
+/* 悬停歌词区：全部去模糊便于阅读；行 hover 圆角底色（照抄 AMLL） */
+.np-lyrics.amll:hover .np-line {
+  filter: none !important;
+}
+
+.np-lyrics.amll .np-line:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.np-lyrics.amll .np-line:active {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.np-lyrics.amll .np-main {
+  font-family: var(--font-display);
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.np-lyrics.amll .np-line.on .np-main {
+  color: #fff;
+}
+
+.np-lyrics.amll .np-trans {
+  margin-top: 0.35em;
+  font-size: 0.5em;
+  font-weight: 500;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.np-lyrics.amll .np-line.on .np-trans {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 /* 点句跳转：短促发光反馈 */
@@ -531,24 +509,18 @@
   .np-right {
     height: min(46vh, 420px);
   }
+
+  /* 窄窗歌词列矮，字号改成随宽度走，避免只剩两三行 */
+  .np-lyrics.amll {
+    font-size: clamp(20px, 5vw, 32px);
+  }
 }
 
-@media (min-width: 1800px) {
-  /* 超宽/高分：再抬一档字号与封面，避免中间大片空白 */
+@media (max-height: 800px) {
+  /* 矮窗口（如 1366×768）：封面让位收缩，防左列垂直溢出 */
   .np-left {
-    max-width: min(560px, 56vh);
-  }
-
-  .np-main {
-    font-size: clamp(32px, 2.6vw, 52px);
-  }
-
-  .np-trans {
-    font-size: clamp(18px, 1.3vw, 26px);
-  }
-
-  .np-title {
-    font-size: clamp(24px, 1.5vw, 32px);
+    max-width: min(42vh, 38vw);
+    gap: 8px;
   }
 }
 
