@@ -1,6 +1,7 @@
 import { MiniPlayer } from "./components/MiniPlayer";
 import { Sidebar } from "./components/Sidebar";
 import { AlbumWallPage } from "./features/browse/AlbumWallPage";
+import { ArtistsPage } from "./features/browse/ArtistsPage";
 import { PlaceholderPage } from "./features/browse/PlaceholderPage";
 import { SongsPage } from "./features/browse/SongsPage";
 import { ManagePage } from "./features/manage/ManagePage";
@@ -19,7 +20,7 @@ export default function App() {
         {route === "songs" && <SongsPage />}
         {route === "albums" && <AlbumWallPage />}
         {route === "manage" && <ManagePage />}
-        {route === "artists" && <PlaceholderPage route="artists" />}
+        {route === "artists" && <ArtistsPage />}
         {route === "folders" && <PlaceholderPage route="folders" />}
         {route === "playlists" && <PlaylistsPage />}
         {route === "settings" && <PlaceholderPage route="settings" />}

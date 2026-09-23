@@ -80,6 +80,16 @@ export interface AlbumCard {
   cover_track_mtime: number;
 }
 
+/** 歌手浏览卡片：album_artist 优先，空则 artist */
+export interface ArtistCard {
+  name: string;
+  track_count: number;
+  album_count: number;
+  has_cover: boolean;
+  cover_track_path: string | null;
+  cover_track_mtime: number;
+}
+
 /** 管理页右栏「库统计」聚合数据 */
 export interface LibraryStats {
   total_tracks: number;

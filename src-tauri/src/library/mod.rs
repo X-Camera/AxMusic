@@ -77,6 +77,18 @@ pub struct AlbumCard {
     pub cover_track_mtime: i64,
 }
 
+/// 歌手浏览卡片：按 album_artist（空则 artist）聚合。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtistCard {
+    pub name: String,
+    pub track_count: i64,
+    pub album_count: i64,
+    pub has_cover: bool,
+    /// 封面懒加载样例曲目（组内优先有封面的）
+    pub cover_track_path: Option<String>,
+    pub cover_track_mtime: i64,
+}
+
 /// 管理页右栏「库统计」面板的聚合数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryStats {
@@ -506,6 +518,124 @@ impl LibraryDb {
                  ORDER BY track_no, filename"
             ))?
             .query_map(params![album, album_artist], map_track)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 歌手名：album_artist 优先，空则 artist，再空则 Unknown Artist。
+    pub fn list_artists(&self) -> Result<Vec<ArtistCard>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT
+                artist_name,
+                COUNT(*) AS track_count,
+                COUNT(DISTINCT album_key) AS album_count,
+                MAX(has_cover) AS has_cover,
+                (SELECT t2.path FROM tracks t2
+                  WHERE t2.is_deleted = 0
+                    AND CASE WHEN t2.album_artist = '' THEN
+                          (CASE WHEN t2.artist = '' THEN 'Unknown Artist' ELSE t2.artist END)
+                        ELSE t2.album_artist END = artist_name
+                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
+                  LIMIT 1) AS cover_track_path,
+                (SELECT t2.mtime FROM tracks t2
+                  WHERE t2.is_deleted = 0
+                    AND CASE WHEN t2.album_artist = '' THEN
+                          (CASE WHEN t2.artist = '' THEN 'Unknown Artist' ELSE t2.artist END)
+                        ELSE t2.album_artist END = artist_name
+                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
+                  LIMIT 1) AS cover_track_mtime
+             FROM (
+               SELECT
+                 t.has_cover,
+                 CASE WHEN t.album = '' THEN 'Unknown Album' ELSE t.album END AS album_key,
+                 CASE WHEN t.album_artist = '' THEN
+                   (CASE WHEN t.artist = '' THEN 'Unknown Artist' ELSE t.artist END)
+                 ELSE t.album_artist END AS artist_name
+               FROM tracks t
+               WHERE t.is_deleted = 0
+             )
+             GROUP BY artist_name
+             ORDER BY artist_name",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ArtistCard {
+                    name: r.get(0)?,
+                    track_count: r.get(1)?,
+                    album_count: r.get(2)?,
+                    has_cover: r.get::<_, i64>(3)? != 0,
+                    cover_track_path: r.get(4)?,
+                    cover_track_mtime: r.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 歌手名匹配：与 list_artists 聚合口径一致（album_artist 优先，空则 artist）。
+    fn artist_match_sql() -> &'static str {
+        "CASE WHEN ?1 = 'Unknown Artist' THEN (album_artist = '' AND (artist = '' OR artist = ?1))
+              ELSE album_artist = ?1 OR (album_artist = '' AND artist = ?1) END"
+    }
+
+    pub fn albums_of_artist(&self, artist: &str) -> Result<Vec<AlbumCard>> {
+        let sql = format!(
+            "SELECT
+                CASE WHEN t.album = '' THEN 'Unknown Album' ELSE t.album END AS album,
+                CASE WHEN t.album_artist = '' THEN
+                    (CASE WHEN t.artist = '' THEN 'Unknown Artist' ELSE t.artist END)
+                ELSE t.album_artist END AS album_artist,
+                MAX(t.year) AS year,
+                MAX(t.has_cover) AS has_cover,
+                COUNT(*) AS track_count,
+                (SELECT t2.path FROM tracks t2
+                  WHERE t2.is_deleted = 0
+                    AND t2.album = t.album
+                    AND t2.album_artist = t.album_artist
+                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
+                  LIMIT 1) AS cover_track_path,
+                (SELECT t2.mtime FROM tracks t2
+                  WHERE t2.is_deleted = 0
+                    AND t2.album = t.album
+                    AND t2.album_artist = t.album_artist
+                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
+                  LIMIT 1) AS cover_track_mtime
+             FROM tracks t
+             WHERE t.is_deleted = 0 AND ({})
+             GROUP BY t.album, t.album_artist
+             ORDER BY album",
+            Self::artist_match_sql()
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params![artist], |r| {
+                Ok(AlbumCard {
+                    album: r.get(0)?,
+                    album_artist: r.get(1)?,
+                    year: r.get::<_, String>(2).unwrap_or_default(),
+                    has_cover: r.get::<_, i64>(3)? != 0,
+                    track_count: r.get(4)?,
+                    cover_path: None,
+                    cover_track_path: r.get(5)?,
+                    cover_track_mtime: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn tracks_of_artist(&self, artist: &str) -> Result<Vec<TrackRow>> {
+        let sql = format!(
+            "SELECT {TRACK_COLS}
+             FROM tracks
+             WHERE is_deleted = 0 AND ({})
+             ORDER BY album, track_no, filename",
+            Self::artist_match_sql()
+        );
+        let rows = self
+            .conn
+            .prepare(&sql)?
+            .query_map(params![artist], map_track)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AlbumCard,
   ApplyPlan,
+  ArtistCard,
   LibraryRoot,
   LibraryStats,
   PathsInfo,
@@ -34,6 +35,11 @@ export const api = {
   getAlbums: () => invoke<AlbumCard[]>("get_albums"),
   getAlbumTracks: (album: string, albumArtist: string) =>
     invoke<TrackRow[]>("get_album_tracks", { album, albumArtist }),
+  getArtists: () => invoke<ArtistCard[]>("get_artists"),
+  getArtistAlbums: (artist: string) =>
+    invoke<AlbumCard[]>("get_artist_albums", { artist }),
+  getArtistTracks: (artist: string) =>
+    invoke<TrackRow[]>("get_artist_tracks", { artist }),
   getTrackCount: () => invoke<number>("get_track_count"),
   getLibraryStats: () => invoke<LibraryStats>("library_stats"),
   /** 提取文件内嵌封面缩略图（磁盘缓存），无封面/解析失败返回 null */

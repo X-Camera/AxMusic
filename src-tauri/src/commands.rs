@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::library::{AlbumCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
+use crate::library::{AlbumCard, ArtistCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
 use crate::playlists::{PlaylistAddItem, PlaylistDetail, PlaylistSummary};
 use crate::settings::AppSettings;
@@ -184,6 +184,27 @@ pub fn get_album_tracks(
     let db = db_ref(&guard)?;
     db.tracks_of_album(&album, &album_artist)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_artists(state: State<'_, AppState>) -> Result<Vec<ArtistCard>, String> {
+    let guard = require_db(&state)?;
+    let db = db_ref(&guard)?;
+    db.list_artists().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_artist_albums(state: State<'_, AppState>, artist: String) -> Result<Vec<AlbumCard>, String> {
+    let guard = require_db(&state)?;
+    let db = db_ref(&guard)?;
+    db.albums_of_artist(&artist).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_artist_tracks(state: State<'_, AppState>, artist: String) -> Result<Vec<TrackRow>, String> {
+    let guard = require_db(&state)?;
+    let db = db_ref(&guard)?;
+    db.tracks_of_artist(&artist).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

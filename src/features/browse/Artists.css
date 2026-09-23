@@ -1,0 +1,93 @@
+.artist-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+  animation: browse-fade-in var(--dur-slow) var(--ease-out);
+}
+
+.artist-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.artist-card:hover {
+  transform: translateY(-2px);
+}
+
+.artist-cover-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 160px;
+}
+
+/* 歌手圆形头像 */
+.artist-cover-wrap .album-cover,
+.artist-hero .album-cover {
+  border-radius: 50%;
+}
+
+.artist-name {
+  font-weight: 600;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artist-sub {
+  font-size: 12px;
+  margin-top: -4px;
+}
+
+.artist-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  animation: browse-fade-in var(--dur-slow) var(--ease-out);
+}
+
+.artist-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.artist-hero-meta {
+  min-width: 0;
+}
+
+.artist-section-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+}
+
+.artist-albums {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-4);
+}
+
+.artist-albums .album-name {
+  font-size: 13px;
+}
+
+.artist-albums .album-sub {
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artist-wall,
+  .artist-detail {
+    animation: none;
+  }
+}
