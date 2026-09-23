@@ -65,6 +65,7 @@ pub fn run() {
             commands::track_media_info,
             commands::refresh_scan,
             commands::is_in_library,
+            commands::get_track_by_path,
             commands::include_in_library,
             commands::get_player_state,
             commands::play_file,

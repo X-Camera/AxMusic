@@ -2,6 +2,7 @@ import {
   Pause,
   Play,
   Repeat,
+  Search,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -10,9 +11,11 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, formatTime } from "../../lib/api";
+import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import { WindowControls } from "../../components/WindowControls";
 import { useApp } from "../../state/useApp";
 import { useAmllLyrics } from "./amll/useAmllLyrics";
@@ -55,6 +58,7 @@ export function NowPlayingPage() {
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
   const [closing, setClosing] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [flashIdx, setFlashIdx] = useState(-1);
   const flashTimerRef = useRef(0);
   /** 播放中用基准时间外推，填补 500ms 轮询间隙 */
@@ -78,6 +82,40 @@ export function NowPlayingPage() {
       cancelled = true;
     };
   }, [path]);
+
+  /** 打开独立「搜索歌词」子窗口（可拖出主应用） */
+  async function openLyricsSearch() {
+    if (!path) return;
+    const filename = info?.filename || path.split(/[\\/]/).pop() || path;
+    const title = info?.title || track?.title || filename;
+    const artist = info?.artist || info?.album_artist || "";
+    let id = 0;
+    try {
+      const row = await api.getTrackByPath(path);
+      if (row) id = row.id;
+    } catch {
+      /* 无库 / 查询失败：按库外文件处理 */
+    }
+    await openLyricsWindow({ id, path, title, artist, filename });
+  }
+
+  /** 播放界面全局右键：搜索歌词（有则替换，无则直接搜） */
+  function onLyricsContextMenu(e: React.MouseEvent) {
+    if (!track) return;
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  }
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [ctxMenu]);
 
   const { lines, plain, synced } = useMemo(
     () => pickLyrics(info?.embedded ?? null, info?.sidecar ?? null),
@@ -184,7 +222,7 @@ export function NowPlayingPage() {
     window.setTimeout(() => setFullPlayer(false), 280);
   }
 
-  /** 空白处双击 ↔ 真全屏（覆盖任务栏）；交互元素（歌词/按钮/进度条等）不触发 */
+  /** 空白处双击 ↔ 真全屏（覆盖任务栏）；交互元素（歌词/按钮/进度条/弹层等）不触发 */
   function onStageDoubleClick(e: React.MouseEvent) {
     const t = e.target as HTMLElement;
     if (t.closest("button, input, .np-lyrics, .np-seek, .np-window-controls")) return;
@@ -202,6 +240,14 @@ export function NowPlayingPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // 歌词子窗口保存后刷新当前曲目歌词
+  useEffect(() => {
+    if (!path) return;
+    return onLyricsSaved(() => {
+      void api.trackMediaInfo(path).then((m) => setInfo(m));
+    });
+  }, [path]);
 
   const title = info?.title || track?.title || info?.filename || "未在播放";
   const artist = info?.artist || info?.album_artist || "";
@@ -221,6 +267,7 @@ export function NowPlayingPage() {
     <div
       className={`np-page${playing ? " playing" : ""}${closing ? " closing" : ""}`}
       onDoubleClick={onStageDoubleClick}
+      onContextMenu={onLyricsContextMenu}
     >
       <div
         className="np-bg"
@@ -340,13 +387,24 @@ export function NowPlayingPage() {
         </section>
 
         <section className="np-right">
-          <div className={`np-lyrics${synced ? " amll" : ""}`} ref={lyricsRef}>
+          <div
+            className={`np-lyrics${synced ? " amll" : ""}`}
+            ref={lyricsRef}
+          >
             {!track && (
               <div className="np-lyrics-empty tertiary">从专辑墙或管理表挑一首开始</div>
             )}
             {track && !synced && plain.length === 0 && (
-              <div className="np-lyrics-empty tertiary">
-                这首歌没有歌词。可到管理页「歌词」搜索。
+              <div className="np-lyrics-empty">
+                <button
+                  className="np-lyrics-search-btn"
+                  title="搜索歌词"
+                  aria-label="搜索歌词"
+                  onClick={() => void openLyricsSearch()}
+                >
+                  <Search size={18} strokeWidth={2} />
+                  <span>歌词</span>
+                </button>
               </div>
             )}
             {track && !synced && plain.length > 0 && (
@@ -382,6 +440,30 @@ export function NowPlayingPage() {
           </div>
         </section>
       </div>
+
+      {ctxMenu &&
+        track &&
+        createPortal(
+          <div
+            className="np-ctx-menu"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            role="menu"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="np-ctx-item"
+              role="menuitem"
+              onClick={() => {
+                setCtxMenu(null);
+                void openLyricsSearch();
+              }}
+            >
+              <Search size={14} />
+              搜索歌词
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

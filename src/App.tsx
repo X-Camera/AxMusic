@@ -5,13 +5,23 @@ import { ArtistsPage } from "./features/browse/ArtistsPage";
 import { PlaceholderPage } from "./features/browse/PlaceholderPage";
 import { SongsPage } from "./features/browse/SongsPage";
 import { ManagePage } from "./features/manage/ManagePage";
+import { LyricsWindow } from "./features/manage/LyricsWindow";
 import { NowPlayingPage } from "./features/player/NowPlayingPage";
 import { PlaylistsPage } from "./features/playlists/PlaylistsPage";
 import { useApp } from "./state/useApp";
 
+function isLyricsWindow(): boolean {
+  return new URLSearchParams(window.location.search).get("win") === "lyrics";
+}
+
 export default function App() {
   const route = useApp((s) => s.route);
   const fullPlayer = useApp((s) => s.fullPlayer);
+
+  // 独立「搜索歌词」子窗口：不渲染主壳
+  if (isLyricsWindow()) {
+    return <LyricsWindow />;
+  }
 
   return (
     <div className="app-shell">

@@ -231,6 +231,16 @@ export interface CoverCandidate {
   url: string;
 }
 
+/** 歌词面板目标：库内曲目，或满窗播放的任意文件（id=0 + path） */
+export interface LyricsTarget {
+  /** 库内 tracks.id；库外文件为 0 */
+  id: number;
+  path: string;
+  title: string;
+  artist: string;
+  filename: string;
+}
+
 export interface LyricsCandidate {
   /** source-prefixed id, e.g. "lrclib:123" / "netease:456" / "qq:xxx" */
   id: string;

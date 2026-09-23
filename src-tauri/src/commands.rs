@@ -771,35 +771,86 @@ pub fn list_dir_audio(path: String) -> Result<Vec<TrackInfo>, String> {
 
 use crate::lyrics::{self, LyricsCandidate, LyricsContent};
 
+/// 歌词操作目标：库内 `track_id`（再查 path）或直接 `path`（满窗播放的库外文件）。
+/// 库外返回 `(None, path)`，不碰 DB。
+fn resolve_lyrics_target(
+    state: &State<'_, AppState>,
+    track_id: Option<i64>,
+    path: Option<String>,
+) -> Result<(Option<i64>, PathBuf), String> {
+    if let Some(id) = track_id.filter(|&id| id > 0) {
+        let guard = require_db(state)?;
+        let db = db_ref(&guard)?;
+        let row = db
+            .get_track_by_id(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?;
+        return Ok((Some(id), PathBuf::from(row.path)));
+    }
+    let p = path
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or("缺少曲目路径")?;
+    Ok((None, PathBuf::from(p)))
+}
+
+/// 按绝对路径查库内曲目；无库/未入库返回 null（满窗搜索歌词前解析 id）。
+#[tauri::command]
+pub fn get_track_by_path(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<TrackRow>, String> {
+    let Ok(guard) = state.db.lock() else {
+        return Ok(None);
+    };
+    let Some(db) = guard.as_ref() else {
+        return Ok(None);
+    };
+    db.get_track_by_path(&path).map_err(|e| e.to_string())
+}
+
 /// Fan out a lyrics search to ALL sources concurrently.
 /// Returns immediately; each source pushes its batch via `lyrics://batch`
-/// ({track_id, source, items}) and a final `lyrics://done` ({track_id})
-/// fires when all sources have reported.
+/// ({trackId, source, items}) and a final `lyrics://done` ({trackId})
+/// fires when all sources have reported. 库外文件 trackId 恒为 0。
 #[tauri::command]
 pub async fn lyrics_search(
     app: AppHandle,
     state: State<'_, AppState>,
-    track_id: i64,
+    track_id: Option<i64>,
+    path: Option<String>,
     artist: Option<String>,
     title: Option<String>,
 ) -> Result<(), String> {
-    let track = {
+    let (tid, _path) = resolve_lyrics_target(&state, track_id, path)?;
+    let event_id = tid.unwrap_or(0);
+
+    let (db_title, db_artist, db_album) = if let Some(id) = tid {
         let guard = require_db(&state)?;
         let db = db_ref(&guard)?;
-        db.get_track_by_id(track_id)
+        let track = db
+            .get_track_by_id(id)
             .map_err(|e| e.to_string())?
-            .ok_or("曲目不存在")?
+            .ok_or("曲目不存在")?;
+        (track.title, track.artist, track.album)
+    } else {
+        (String::new(), String::new(), String::new())
     };
+
     // 前端搜索面板允许用户改歌手/歌名；传入非空值时覆盖文件标签值
     let title = title
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| track.title.clone());
+        .unwrap_or(db_title);
     let artist = artist
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| track.artist.clone());
-    let album = track.album.clone();
+        .unwrap_or(db_artist);
+    let album = db_album;
+    if title.is_empty() && artist.is_empty() {
+        return Err("歌手和歌名至少填一个".into());
+    }
+    let track_id = event_id;
 
     std::thread::spawn(move || {
         use std::sync::mpsc;
@@ -885,23 +936,17 @@ fn rescan_track_row(state: &State<'_, AppState>, path: &Path) {
 }
 
 /// Save lyrics for a track. mode: "sidecar"（默认，外挂 .lrc）| "embed"（内嵌到标签）.
+/// 库外文件只写文件，不入库。
 #[tauri::command]
 pub async fn lyrics_save(
     app: AppHandle,
     state: State<'_, AppState>,
-    track_id: i64,
+    track_id: Option<i64>,
+    path: Option<String>,
     lrc_id: String,
     mode: String,
 ) -> Result<String, String> {
-    let path = {
-        let guard = require_db(&state)?;
-        let db = db_ref(&guard)?;
-        db.get_track_by_id(track_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("曲目不存在")?
-            .path
-    };
-    let path_buf = PathBuf::from(&path);
+    let (tid, path_buf) = resolve_lyrics_target(&state, track_id, path)?;
 
     let content = lyrics_fetch(lrc_id).await?;
     let text = lyrics::best_text(&content)
@@ -923,12 +968,15 @@ pub async fn lyrics_save(
         .map_err(|e| e.to_string())?;
         "已内嵌到文件标签".to_string()
     } else {
-        let dest = lyrics::write_sidecar(&path_buf, &text, false).map_err(|e| e.to_string())?;
+        // 用户显式保存候选 = 替换更好的歌词，允许覆盖已有 .lrc
+        let dest = lyrics::write_sidecar(&path_buf, &text, true).map_err(|e| e.to_string())?;
         format!("已写入外挂歌词 {}", dest.display())
     };
 
-    rescan_track_row(&state, &path_buf);
-    let _ = app.emit("library://changed", track_id);
+    if let Some(id) = tid {
+        rescan_track_row(&state, &path_buf);
+        let _ = app.emit("library://changed", id);
+    }
     Ok(desc)
 }
 
@@ -937,24 +985,19 @@ pub async fn lyrics_save(
 pub fn lyrics_export_sidecar(
     app: AppHandle,
     state: State<'_, AppState>,
-    track_id: i64,
+    track_id: Option<i64>,
+    path: Option<String>,
     overwrite: bool,
 ) -> Result<String, String> {
-    let path = {
-        let guard = require_db(&state)?;
-        let db = db_ref(&guard)?;
-        db.get_track_by_id(track_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("曲目不存在")?
-            .path
-    };
-    let path_buf = PathBuf::from(&path);
+    let (tid, path_buf) = resolve_lyrics_target(&state, track_id, path)?;
     let text = lyrics::read_embedded(&path_buf)
         .map_err(|e| e.to_string())?
         .ok_or("文件里没有内嵌歌词")?;
     let dest = lyrics::write_sidecar(&path_buf, &text, overwrite).map_err(|e| e.to_string())?;
-    rescan_track_row(&state, &path_buf);
-    let _ = app.emit("library://changed", track_id);
+    if let Some(id) = tid {
+        rescan_track_row(&state, &path_buf);
+        let _ = app.emit("library://changed", id);
+    }
     Ok(format!("已导出到 {}", dest.display()))
 }
 
@@ -963,17 +1006,10 @@ pub fn lyrics_export_sidecar(
 pub fn lyrics_embed_sidecar(
     app: AppHandle,
     state: State<'_, AppState>,
-    track_id: i64,
+    track_id: Option<i64>,
+    path: Option<String>,
 ) -> Result<String, String> {
-    let path = {
-        let guard = require_db(&state)?;
-        let db = db_ref(&guard)?;
-        db.get_track_by_id(track_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("曲目不存在")?
-            .path
-    };
-    let path_buf = PathBuf::from(&path);
+    let (tid, path_buf) = resolve_lyrics_target(&state, track_id, path)?;
     let text = lyrics::read_sidecar(&path_buf).map_err(|e| e.to_string())?;
 
     crate::tagger::write_track(
@@ -989,8 +1025,10 @@ pub fn lyrics_embed_sidecar(
     )
     .map_err(|e| e.to_string())?;
 
-    rescan_track_row(&state, &path_buf);
-    let _ = app.emit("library://changed", track_id);
+    if let Some(id) = tid {
+        rescan_track_row(&state, &path_buf);
+        let _ = app.emit("library://changed", id);
+    }
     Ok("已内嵌到文件标签（外挂 .lrc 保留未删）".into())
 }
 
@@ -998,17 +1036,10 @@ pub fn lyrics_embed_sidecar(
 #[tauri::command]
 pub fn lyrics_current(
     state: State<'_, AppState>,
-    track_id: i64,
+    track_id: Option<i64>,
+    path: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let path = {
-        let guard = require_db(&state)?;
-        let db = db_ref(&guard)?;
-        db.get_track_by_id(track_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("曲目不存在")?
-            .path
-    };
-    let path_buf = PathBuf::from(&path);
+    let (_tid, path_buf) = resolve_lyrics_target(&state, track_id, path)?;
     let embedded = lyrics::read_embedded(&path_buf).ok().flatten();
     let sidecar = lyrics::read_sidecar(&path_buf).ok();
     Ok(serde_json::json!({

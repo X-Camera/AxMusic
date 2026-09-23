@@ -1,9 +1,16 @@
 import { listen } from "@tauri-apps/api/event";
-import { Download, FileInput, FileOutput, Loader2, Search, X } from "lucide-react";
+import { Download, FileInput, FileOutput, Loader2, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "../../lib/api";
-import type { LyricsBatch, LyricsCandidate, LyricsContent, LyricsCurrent, TrackRow } from "../../lib/types";
+import { api, formatTime } from "../../lib/api";
+import type {
+  LyricsBatch,
+  LyricsCandidate,
+  LyricsContent,
+  LyricsCurrent,
+  LyricsTarget,
+} from "../../lib/types";
+import { emitLyricsSaved } from "../../lib/lyricsWindow";
 import "./LyricsPanel.css";
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -14,18 +21,23 @@ const SOURCE_LABEL: Record<string, string> = {
 
 const ALL_SOURCES = ["lrclib", "netease", "qq"] as const;
 
+/** 库内传 trackId；库外（满窗播放）只传 path */
+function lyricsRef(t: LyricsTarget): { trackId: number | null; path: string | null } {
+  return t.id > 0 ? { trackId: t.id, path: null } : { trackId: null, path: t.path };
+}
+
 /**
- * 搜索歌词（右栏「搜索歌词」打开，单首曲目）。
+ * 搜索歌词（独立子窗口内容，单首曲目）。
  * 打开后不自动搜索：歌手/歌名可改，点「搜索」手动触发。
  * 搜索是流式的：LRCLIB / 网易云 / QQ音乐 并发跑，哪个先回就先追加进列表。
- * 默认保存为外挂 .lrc，可选内嵌；支持嵌/挂互转。
+ * 默认保存为外挂 .lrc，可选内嵌；支持嵌/挂互转。保存时优先取同步歌词。
  */
 export function LyricsPanel({
   track,
   onClose,
   onSaved,
 }: {
-  track: TrackRow;
+  track: LyricsTarget;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -44,9 +56,10 @@ export function LyricsPanel({
   const [error, setError] = useState<string | null>(null);
   const aliveRef = useRef(true);
 
-  const refreshCurrent = useCallback(async (t: TrackRow) => {
+  const refreshCurrent = useCallback(async (t: LyricsTarget) => {
     try {
-      setCurrent(await api.lyricsCurrent(t.id));
+      const { trackId, path } = lyricsRef(t);
+      setCurrent(await api.lyricsCurrent(trackId, path));
     } catch {
       setCurrent(null);
     }
@@ -109,7 +122,8 @@ export function LyricsPanel({
     setPreview(null);
     setSourceDone(Object.fromEntries(ALL_SOURCES.map((s) => [s, "run"])));
     try {
-      await api.lyricsSearch(track.id, artist, title);
+      const { trackId, path } = lyricsRef(track);
+      await api.lyricsSearch(trackId, artist, title, path);
     } catch (e) {
       setError(String(e));
       setSourceDone({});
@@ -131,15 +145,21 @@ export function LyricsPanel({
     }
   }
 
+  function afterWrite(msg: string) {
+    setMessage(msg);
+    emitLyricsSaved(track);
+    void refreshCurrent(track);
+    onSaved();
+  }
+
   async function save(mode: "sidecar" | "embed") {
     if (candId == null) return;
     setSaving(true);
     setError(null);
     try {
-      const msg = await api.lyricsSave(track.id, candId, mode);
-      setMessage(msg);
-      await refreshCurrent(track);
-      onSaved();
+      const { trackId, path } = lyricsRef(track);
+      const msg = await api.lyricsSave(trackId, candId, mode, path);
+      afterWrite(msg);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -151,13 +171,12 @@ export function LyricsPanel({
     setSaving(true);
     setError(null);
     try {
+      const { trackId, path } = lyricsRef(track);
       const msg =
         dir === "export"
-          ? await api.lyricsExportSidecar(track.id, true)
-          : await api.lyricsEmbedSidecar(track.id);
-      setMessage(msg);
-      await refreshCurrent(track);
-      onSaved();
+          ? await api.lyricsExportSidecar(trackId, true, path)
+          : await api.lyricsEmbedSidecar(trackId, path);
+      afterWrite(msg);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -170,186 +189,180 @@ export function LyricsPanel({
   const hasSidecar = !!current?.sidecar?.trim();
 
   return (
-    <div className="lyr-overlay" role="dialog" aria-label="搜索歌词">
-      <div className="lyr-panel">
-        <header className="lyr-head">
-          <div>
-            <h2>搜索歌词</h2>
-            <p className="tertiary">
-              {track.title || track.filename}
-              {track.artist ? ` — ${track.artist}` : ""}
-            </p>
-          </div>
-          <button className="btn" onClick={onClose} title="关闭">
-            <X size={16} />
-          </button>
-        </header>
-
-        <div className="lyr-status">
-          <span className={`lyr-tag${hasEmbedded ? " ok" : ""}`}>
-            内嵌 {hasEmbedded ? "有" : "无"}
-          </span>
-          <span className={`lyr-tag${hasSidecar ? " ok" : ""}`}>
-            外挂 .lrc {hasSidecar ? "有" : "无"}
-          </span>
-          <span className="lyr-convert">
-            <button
-              className="link-btn"
-              disabled={!hasEmbedded || saving}
-              title="把内嵌歌词导出为同目录 .lrc 文件"
-              onClick={() => void convert("export")}
-            >
-              <FileOutput size={13} /> 内嵌 → 外挂
-            </button>
-            <button
-              className="link-btn"
-              disabled={!hasSidecar || saving}
-              title="把外挂 .lrc 内嵌进文件标签"
-              onClick={() => void convert("embed")}
-            >
-              <FileInput size={13} /> 外挂 → 内嵌
-            </button>
-          </span>
-        </div>
-
-        <div className="lyr-search-row">
-          <input
-            value={artistInput}
-            onChange={(e) => setArtistInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !searching && void runSearch()}
-            placeholder="歌手"
-            aria-label="歌手"
-          />
-          <input
-            value={titleInput}
-            onChange={(e) => setTitleInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !searching && void runSearch()}
-            placeholder="歌名"
-            aria-label="歌名"
-          />
+    <div className="lyr-panel" role="dialog" aria-label="搜索歌词">
+      <div className="lyr-status">
+        <span className={`lyr-tag${hasEmbedded ? " ok" : ""}`}>
+          内嵌 {hasEmbedded ? "有" : "无"}
+        </span>
+        <span className={`lyr-tag${hasSidecar ? " ok" : ""}`}>
+          外挂 .lrc {hasSidecar ? "有" : "无"}
+        </span>
+        <span className="lyr-convert">
           <button
-            className="btn btn-primary"
-            disabled={searching}
-            onClick={() => void runSearch()}
+            className="link-btn"
+            disabled={!hasEmbedded || saving}
+            title="把内嵌歌词导出为同目录 .lrc 文件"
+            onClick={() => void convert("export")}
           >
-            {searching ? <Loader2 size={14} className="spin" /> : <Search size={14} />}
-            {searching ? "搜索中…" : "搜索"}
+            <FileOutput size={13} /> 内嵌 → 外挂
           </button>
+          <button
+            className="link-btn"
+            disabled={!hasSidecar || saving}
+            title="把外挂 .lrc 内嵌进文件标签"
+            onClick={() => void convert("embed")}
+          >
+            <FileInput size={13} /> 外挂 → 内嵌
+          </button>
+        </span>
+      </div>
+
+      <div className="lyr-search-row">
+        <input
+          value={artistInput}
+          onChange={(e) => setArtistInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !searching && void runSearch()}
+          placeholder="歌手"
+          aria-label="歌手"
+        />
+        <input
+          value={titleInput}
+          onChange={(e) => setTitleInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !searching && void runSearch()}
+          placeholder="歌名"
+          aria-label="歌名"
+        />
+        <button
+          className="btn btn-primary"
+          disabled={searching}
+          onClick={() => void runSearch()}
+        >
+          {searching ? <Loader2 size={14} className="spin" /> : <Search size={14} />}
+          {searching ? "搜索中…" : "搜索"}
+        </button>
+      </div>
+
+      {error && <div className="error-line">{error}</div>}
+      {message && (
+        <div className="toast-line" onClick={() => setMessage(null)}>
+          {message}
         </div>
+      )}
 
-        {error && <div className="error-line">{error}</div>}
-        {message && <div className="toast-line" onClick={() => setMessage(null)}>{message}</div>}
-
-        <div className="lyr-body">
-          <section className="lyr-col">
-            <div className="lyr-col-head">
-              <h3>在线候选</h3>
-              <div className="lyr-sources">
-                {ALL_SOURCES.map((s) => (
-                  <span
-                    key={s}
-                    className={`lyr-src ${sourceDone[s] ?? "idle"}`}
-                    title={
-                      sourceDone[s] === "run"
-                        ? "搜索中"
-                        : sourceDone[s] === "err"
-                          ? "该源失败"
-                          : sourceDone[s] === "ok"
-                            ? "已返回"
-                            : "未搜索"
-                    }
-                  >
-                    {SOURCE_LABEL[s]}
-                    {sourceDone[s] === "run" && <Loader2 size={10} className="spin" />}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="lyr-list">
-              {!searched && (
-                <div className="tertiary lyr-empty">填好歌手、歌名后点「搜索」</div>
-              )}
-              {searched && candidates.length === 0 && !allDone && (
-                <div className="tertiary lyr-empty">
-                  <Loader2 size={14} className="spin" /> 等待各源返回…
-                </div>
-              )}
-              {searched && candidates.length === 0 && allDone && (
-                <div className="tertiary lyr-empty">
-                  所有源都没有找到歌词，可改歌手/歌名后再试
-                </div>
-              )}
-              {candidates.map((c) => (
-                <button
-                  key={c.id}
-                  className={`lyr-item${candId === c.id ? " active" : ""}`}
-                  onClick={() => void pickCandidate(c)}
+      <div className="lyr-body">
+        <section className="lyr-col">
+          <div className="lyr-col-head">
+            <h3>在线候选</h3>
+            <div className="lyr-sources">
+              {ALL_SOURCES.map((s) => (
+                <span
+                  key={s}
+                  className={`lyr-src ${sourceDone[s] ?? "idle"}`}
+                  title={
+                    sourceDone[s] === "run"
+                      ? "搜索中"
+                      : sourceDone[s] === "err"
+                        ? "该源失败"
+                        : sourceDone[s] === "ok"
+                          ? "已返回"
+                          : "未搜索"
+                  }
                 >
-                  <span className="ellipsis">
-                    <span className={`lyr-src-badge ${c.source}`}>{SOURCE_LABEL[c.source]}</span>
-                    {c.track_name}
-                  </span>
-                  <span className="tertiary ellipsis">
-                    {c.artist_name}
-                    {c.album_name ? ` · ${c.album_name}` : ""}
-                    {c.duration > 0 ? ` · ${Math.round(c.duration / 60)}:${String(Math.round(c.duration % 60)).padStart(2, "0")}` : ""}
-                  </span>
-                  <span className="lyr-badges">
-                    {c.has_synced && <span className="lyr-badge sync">同步</span>}
-                    {!c.has_synced && c.has_plain && <span className="lyr-badge">纯文本</span>}
-                  </span>
-                </button>
+                  {SOURCE_LABEL[s]}
+                  {sourceDone[s] === "run" && <Loader2 size={10} className="spin" />}
+                </span>
               ))}
             </div>
-          </section>
-
-          <section className="lyr-col wide">
-            <h3>预览</h3>
-            <div className="lyr-preview">
-              {previewLoading && (
-                <div className="tertiary lyr-empty">
-                  <Loader2 size={14} className="spin" /> 拉取中…
-                </div>
-              )}
-              {!previewLoading && !preview && (
-                <div className="tertiary lyr-empty">选择左侧候选后预览歌词</div>
-              )}
-              {!previewLoading && preview && (
-                <pre className="lyr-text">{previewText || "（该候选无歌词内容）"}</pre>
-              )}
-            </div>
-            {preview?.translation && (
-              <div className="tertiary lyr-trans-hint">该候选含翻译歌词（保存时暂不合并）</div>
+          </div>
+          <div className="lyr-list">
+            {!searched && (
+              <div className="tertiary lyr-empty">填好歌手、歌名后点「搜索」</div>
             )}
-            <div className="lyr-save">
-              <span className="tertiary">保存为：</span>
+            {searched && candidates.length === 0 && !allDone && (
+              <div className="tertiary lyr-empty">
+                <Loader2 size={14} className="spin" /> 等待各源返回…
+              </div>
+            )}
+            {searched && candidates.length === 0 && allDone && (
+              <div className="tertiary lyr-empty">
+                所有源都没有找到歌词，可改歌手/歌名后再试
+              </div>
+            )}
+            {candidates.map((c) => (
               <button
-                className="btn btn-primary"
-                disabled={candId == null || saving || !previewText}
-                title="写入同目录同名 .lrc（推荐，兼容性好，不动音频文件）"
-                onClick={() => void save("sidecar")}
+                key={c.id}
+                className={`lyr-item${candId === c.id ? " active" : ""}`}
+                onClick={() => void pickCandidate(c)}
               >
-                {saving ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
-                外挂 .lrc（默认）
+                <div className="lyr-item-main">
+                  <span className="lyr-item-title ellipsis">{c.track_name || "—"}</span>
+                  <span className="lyr-item-dur">
+                    {c.duration > 0 ? formatTime(c.duration * 1000) : "—"}
+                  </span>
+                </div>
+                <div className="lyr-item-sub">
+                  <span className="lyr-item-artist ellipsis">{c.artist_name || "—"}</span>
+                  <span className={`lyr-src-badge ${c.source}`}>{SOURCE_LABEL[c.source]}</span>
+                </div>
               </button>
-              <button
-                className="btn"
-                disabled={candId == null || saving || !previewText}
-                title="写入文件标签（LYRICS/USLT）"
-                onClick={() => void save("embed")}
-              >
-                内嵌到文件
-              </button>
-            </div>
-          </section>
-        </div>
+            ))}
+          </div>
+        </section>
 
-        <footer className="lyr-foot">
-          <button className="btn" onClick={onClose}>
-            完成
-          </button>
-        </footer>
+        <section className="lyr-col wide">
+          <h3>预览</h3>
+          <div className="lyr-preview">
+            {previewLoading && (
+              <div className="tertiary lyr-empty">
+                <Loader2 size={14} className="spin" /> 拉取中…
+              </div>
+            )}
+            {!previewLoading && !preview && (
+              <div className="tertiary lyr-empty">选择左侧候选后预览歌词</div>
+            )}
+            {!previewLoading && preview && (
+              <pre className="lyr-text">{previewText || "（该候选无歌词内容）"}</pre>
+            )}
+          </div>
+          {preview?.translation && (
+            <div className="tertiary lyr-trans-hint">该候选含翻译歌词（保存时暂不合并）</div>
+          )}
+          <div className="lyr-save">
+            <span className="tertiary">保存为：</span>
+            <button
+              className="btn btn-primary"
+              disabled={candId == null || saving || !previewText}
+              title={
+                hasSidecar
+                  ? "替换同目录同名 .lrc（推荐，兼容性好，不动音频文件）"
+                  : "写入同目录同名 .lrc（推荐，兼容性好，不动音频文件）"
+              }
+              onClick={() => void save("sidecar")}
+            >
+              {saving ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
+              外挂 .lrc（默认）
+            </button>
+            <button
+              className="btn"
+              disabled={candId == null || saving || !previewText}
+              title={
+                hasEmbedded
+                  ? "替换文件标签内嵌歌词（LYRICS/USLT）"
+                  : "写入文件标签（LYRICS/USLT）"
+              }
+              onClick={() => void save("embed")}
+            >
+              内嵌到文件
+            </button>
+          </div>
+        </section>
       </div>
+
+      <footer className="lyr-foot">
+        <button className="btn" onClick={onClose}>
+          完成
+        </button>
+      </footer>
     </div>
   );
 }

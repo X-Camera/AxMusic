@@ -112,20 +112,58 @@ export const api = {
     invoke<number | null>("catalog_match_one", { trackId }),
   catalogMatchAll: () => invoke<number>("catalog_match_all"),
   isInLibrary: (path: string) => invoke<boolean>("is_in_library", { path }),
+  /** 按绝对路径查库内曲目；无库/未入库返回 null */
+  getTrackByPath: (path: string) =>
+    invoke<TrackRow | null>("get_track_by_path", { path }),
 
-  /** 多源并发搜索（歌手/歌名可改，非空才生效）；结果经 lyrics://batch 流式推送，lyrics://done 收尾 */
-  lyricsSearch: (trackId: number, artist?: string, title?: string) =>
-    invoke<void>("lyrics_search", { trackId, artist: artist ?? null, title: title ?? null }),
+  /** 多源并发搜索（歌手/歌名可改，非空才生效）；结果经 lyrics://batch 流式推送，lyrics://done 收尾。
+   *  库外文件只传 path（trackId 传 null/0），事件 trackId 为 0。 */
+  lyricsSearch: (
+    trackId: number | null,
+    artist?: string,
+    title?: string,
+    path?: string | null,
+  ) =>
+    invoke<void>("lyrics_search", {
+      trackId: trackId && trackId > 0 ? trackId : null,
+      path: path ?? null,
+      artist: artist ?? null,
+      title: title ?? null,
+    }),
   lyricsFetch: (id: string) =>
     invoke<import("./types").LyricsContent>("lyrics_fetch", { id }),
-  lyricsSave: (trackId: number, lrcId: string, mode: "sidecar" | "embed") =>
-    invoke<string>("lyrics_save", { trackId, lrcId, mode }),
-  lyricsExportSidecar: (trackId: number, overwrite: boolean) =>
-    invoke<string>("lyrics_export_sidecar", { trackId, overwrite }),
-  lyricsEmbedSidecar: (trackId: number) =>
-    invoke<string>("lyrics_embed_sidecar", { trackId }),
-  lyricsCurrent: (trackId: number) =>
-    invoke<import("./types").LyricsCurrent>("lyrics_current", { trackId }),
+  lyricsSave: (
+    trackId: number | null,
+    lrcId: string,
+    mode: "sidecar" | "embed",
+    path?: string | null,
+  ) =>
+    invoke<string>("lyrics_save", {
+      trackId: trackId && trackId > 0 ? trackId : null,
+      path: path ?? null,
+      lrcId,
+      mode,
+    }),
+  lyricsExportSidecar: (
+    trackId: number | null,
+    overwrite: boolean,
+    path?: string | null,
+  ) =>
+    invoke<string>("lyrics_export_sidecar", {
+      trackId: trackId && trackId > 0 ? trackId : null,
+      path: path ?? null,
+      overwrite,
+    }),
+  lyricsEmbedSidecar: (trackId: number | null, path?: string | null) =>
+    invoke<string>("lyrics_embed_sidecar", {
+      trackId: trackId && trackId > 0 ? trackId : null,
+      path: path ?? null,
+    }),
+  lyricsCurrent: (trackId: number | null, path?: string | null) =>
+    invoke<import("./types").LyricsCurrent>("lyrics_current", {
+      trackId: trackId && trackId > 0 ? trackId : null,
+      path: path ?? null,
+    }),
 
   // ── playlists (m3u8，存 <库>/playlists/) ────────────────────────
   playlistList: () => invoke<PlaylistSummary[]>("playlist_list"),

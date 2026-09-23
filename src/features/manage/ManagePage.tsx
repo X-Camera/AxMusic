@@ -1,16 +1,17 @@
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search } from "lucide-react";
 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
+import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { TrackTable } from "./TrackTable";
 import { ComparePanel } from "./ComparePanel";
 import { StatsPanel } from "./StatsPanel";
 import { ScrapeWizard } from "./ScrapeWizard";
-import { LyricsPanel } from "./LyricsPanel";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import "./ManagePage.css";
 
@@ -29,7 +30,6 @@ export function ManagePage() {
   const [toast, setToast] = useState<string | null>(null);
   const [scrapeTrack, setScrapeTrack] = useState<TrackRow | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
-  const [lyricsTrackId, setLyricsTrackId] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null);
   const [compareVersion, setCompareVersion] = useState(0);
   const [stats, setStats] = useState<LibraryStats | null>(null);
@@ -60,6 +60,9 @@ export function ManagePage() {
     }
   }, [missingOnly, unlinkedOnly]);
 
+  // 歌词子窗口保存后刷新列表
+  useEffect(() => onLyricsSaved(() => void reloadTracks()), [reloadTracks]);
+
   useEffect(() => {
     void reloadRoot();
   }, [reloadRoot]);
@@ -69,12 +72,10 @@ export function ManagePage() {
   }, [root, reloadTracks]);
 
   useEffect(() => {
-    // listen scan progress via polling refresh_scan side channel — events need @tauri-apps/api/event
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
       try {
-        const { listen } = await import("@tauri-apps/api/event");
         const u1 = await listen<ScanProgress>("scan://progress", (e) => {
           if (!cancelled) setProgress(e.payload);
         });
@@ -339,7 +340,17 @@ export function ManagePage() {
                   setCompareVersion((v) => v + 1);
                   void reloadTracks();
                 }}
-                onSearchLyrics={() => setLyricsTrackId(compareId)}
+                onSearchLyrics={() => {
+                  const t = tracks.find((x) => x.id === compareId);
+                  if (!t) return;
+                  void openLyricsWindow({
+                    id: t.id,
+                    path: t.path,
+                    title: t.title || t.filename,
+                    artist: t.artist,
+                    filename: t.filename,
+                  });
+                }}
                 onScrape={() => {
                   if (activeTrack) setScrapeTrack(activeTrack);
                 }}
@@ -391,17 +402,6 @@ export function ManagePage() {
         />
       )}
 
-      {lyricsTrackId != null &&
-        (() => {
-          const lt = tracks.find((t) => t.id === lyricsTrackId);
-          return lt ? (
-            <LyricsPanel
-              track={lt}
-              onClose={() => setLyricsTrackId(null)}
-              onSaved={() => void reloadTracks()}
-            />
-          ) : null;
-        })()}
     </>
   );
 }

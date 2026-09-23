@@ -1,21 +1,68 @@
-.lyr-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: grid;
+/* 独立子窗口：无系统标题栏，自绘顶栏 + 内容区 */
+.lyr-window {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.lyr-win-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 52px;
+  padding: 0 0 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: rgba(11, 12, 15, 0.85);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.lyr-win-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.lyr-win-track {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.lyr-win-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+  align-self: stretch;
+  margin-left: auto;
+}
+
+.lyr-window-empty {
   place-items: center;
-  z-index: 40;
-  padding: 24px;
+  display: grid;
+  flex: 1;
 }
 
 .lyr-panel {
-  width: min(880px, 100%);
-  max-height: min(680px, 100%);
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-height: none;
   overflow: hidden;
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  padding: 16px 20px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px 20px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -23,13 +70,22 @@
 
 .lyr-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
-.lyr-head h2 {
+.lyr-head-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.lyr-track-line {
   margin: 0;
-  font-size: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lyr-status {
@@ -37,6 +93,7 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .lyr-tag {
@@ -68,6 +125,7 @@
   display: grid;
   grid-template-columns: 1fr 1.4fr auto;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .lyr-search-row input {
@@ -76,20 +134,29 @@
 
 .lyr-body {
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.35fr);
   gap: 16px;
   min-height: 0;
   flex: 1;
+}
+
+.lyr-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .lyr-col h3 {
   margin: 0 0 8px;
   font-size: 13px;
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
+/* ── 候选列表：主标题 / 次歌手 · 来源 · 时长 ── */
 .lyr-list {
-  max-height: 380px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -100,8 +167,8 @@
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
+  gap: 4px;
+  padding: 10px 12px;
   border-radius: var(--radius-control);
   border: 1px solid transparent;
 }
@@ -115,25 +182,45 @@
   background: var(--accent-soft);
 }
 
-.lyr-badges {
+.lyr-item-main {
   display: flex;
-  gap: 6px;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
 }
 
-.lyr-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--bg-card);
+.lyr-item-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lyr-item-dur {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
 }
 
-.lyr-badge.sync {
-  color: var(--success);
+.lyr-item-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lyr-item-artist {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .lyr-preview {
-  height: 320px;
+  flex: 1;
+  min-height: 160px;
   overflow: auto;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -164,6 +251,7 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .lyr-col-head h3 {
@@ -195,10 +283,11 @@
 }
 
 .lyr-src-badge {
+  flex-shrink: 0;
   display: inline-block;
   font-size: 10px;
-  padding: 1px 5px;
-  margin-right: 6px;
+  line-height: 1.4;
+  padding: 1px 6px;
   border-radius: 4px;
   background: var(--bg-card);
   color: var(--text-tertiary);
@@ -219,6 +308,7 @@
 .lyr-trans-hint {
   font-size: 11px;
   margin-top: 6px;
+  flex-shrink: 0;
 }
 
 .lyr-save {
@@ -226,6 +316,8 @@
   align-items: center;
   gap: 8px;
   margin-top: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .lyr-foot {
@@ -234,8 +326,15 @@
   gap: 8px;
   border-top: 1px solid var(--border);
   padding-top: 12px;
+  flex-shrink: 0;
 }
 
 .spin {
   animation: spin 1s linear infinite;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
