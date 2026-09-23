@@ -23,11 +23,14 @@ use symphonia::core::probe::Hint;
 use symphonia::core::sample::{i24, u24};
 use symphonia::core::units::Time;
 
-use super::{PlayerEngine, PlayStatus, PlayerSnapshot, QueueItem, TrackInfo};
+use super::{PlayerEngine, PlayMode, PlayStatus, PlayerSnapshot, QueueItem, TrackInfo};
 
 const STATUS_STOPPED: u8 = 0;
 const STATUS_PLAYING: u8 = 1;
 const STATUS_PAUSED: u8 = 2;
+const MODE_SEQUENTIAL: u8 = 0;
+const MODE_SHUFFLE: u8 = 1;
+const MODE_REPEAT_ONE: u8 = 2;
 /// Stereo interleaved samples per block.
 const BLOCK_SAMPLES: usize = 2048;
 /// Blocks kept in flight (~0.15s at 1024 frames).
@@ -56,6 +59,7 @@ struct Shared {
     volume_bits: AtomicU32,
     track_ended: AtomicBool,
     flush_audio: AtomicBool,
+    play_mode: AtomicU8,
     track: Mutex<Option<TrackInfo>>,
     queue: Mutex<Vec<QueueItem>>,
     queue_index: Mutex<Option<usize>>,
@@ -72,11 +76,24 @@ impl Shared {
             volume_bits: AtomicU32::new(0.8f32.to_bits()),
             track_ended: AtomicBool::new(false),
             flush_audio: AtomicBool::new(false),
+            play_mode: AtomicU8::new(MODE_SEQUENTIAL),
             track: Mutex::new(None),
             queue: Mutex::new(Vec::new()),
             queue_index: Mutex::new(None),
             error: Mutex::new(None),
         }
+    }
+
+    fn play_mode(&self) -> PlayMode {
+        match self.play_mode.load(Ordering::SeqCst) {
+            MODE_SHUFFLE => PlayMode::Shuffle,
+            MODE_REPEAT_ONE => PlayMode::RepeatOne,
+            _ => PlayMode::Sequential,
+        }
+    }
+
+    fn play_mode_raw(&self) -> u8 {
+        self.play_mode.load(Ordering::SeqCst)
     }
 
     fn status(&self) -> PlayStatus {
@@ -173,7 +190,17 @@ impl SymphoniaPlayer {
             track,
             queue,
             queue_index,
+            play_mode: self.shared.play_mode(),
         }
+    }
+
+    pub fn set_play_mode(&mut self, mode: PlayMode) {
+        let raw = match mode {
+            PlayMode::Sequential => MODE_SEQUENTIAL,
+            PlayMode::Shuffle => MODE_SHUFFLE,
+            PlayMode::RepeatOne => MODE_REPEAT_ONE,
+        };
+        self.shared.play_mode.store(raw, Ordering::SeqCst);
     }
 
     /// 同步写入 shared（UI 立刻对准本次点击），再下发原子 PlayQueue 打开解码。
@@ -755,6 +782,29 @@ fn fill_block(dec: &mut DecoderState2, out_rate: u32) -> Option<Vec<f32>> {
     Some(block)
 }
 
+/// 轻量伪随机（无外部依赖）：时间 + 当前下标混合
+fn shuffle_pick(len: usize, current: Option<usize>) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    if len == 1 {
+        return Some(0);
+    }
+    let mut x = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E37_79B9_7F4A_7C15)
+        ^ (current.unwrap_or(0) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    let mut idx = (x as usize) % len;
+    if Some(idx) == current {
+        idx = (idx + 1) % len;
+    }
+    Some(idx)
+}
+
 fn decode_loop(
     cmd_rx: Receiver<Cmd>,
     shared: Arc<Shared>,
@@ -766,6 +816,7 @@ fn decode_loop(
     let mut queue: Vec<QueueItem> = Vec::new();
     let mut queue_index: Option<usize> = None;
     let mut pending_block: Option<Vec<f32>> = None;
+    let mut history: Vec<usize> = Vec::new();
 
     // drop leftover blocks helper
     let flush = || {
@@ -778,6 +829,7 @@ fn decode_loop(
                 Cmd::PlayQueue { items, start } => {
                     queue = items;
                     queue_index = Some(start);
+                    history.clear();
                     if let Ok(mut q) = shared.queue.lock() {
                         *q = queue.clone();
                     }
@@ -832,6 +884,7 @@ fn decode_loop(
                 Cmd::SetQueue { items, start } => {
                     queue = items;
                     queue_index = Some(start);
+                    history.clear();
                     if let Ok(mut qi) = shared.queue_index.lock() {
                         *qi = Some(start);
                     }
@@ -840,12 +893,41 @@ fn decode_loop(
                     }
                 }
                 Cmd::Next => {
-                    if let Some(idx) = queue_index {
-                        if idx + 1 < queue.len() {
-                            let item = queue[idx + 1].clone();
+                    let mode = shared.play_mode_raw();
+                    let target = if queue.is_empty() {
+                        None
+                    } else if mode == MODE_SHUFFLE {
+                        shuffle_pick(queue.len(), queue_index)
+                    } else if mode == MODE_REPEAT_ONE {
+                        // 手动下一首：跳过单曲循环，按顺序走（末尾回绕）
+                        Some(match queue_index {
+                            Some(i) => (i + 1) % queue.len(),
+                            None => 0,
+                        })
+                    } else {
+                        Some(match queue_index {
+                            Some(i) if i + 1 < queue.len() => i + 1,
+                            Some(_) => 0, // 手动下一首末尾回绕，方便连播
+                            None => 0,
+                        })
+                    };
+                    if let Some(target) = target {
+                        if let Some(item) = queue.get(target).cloned() {
+                            if let Some(prev) = queue_index {
+                                if prev != target {
+                                    history.push(prev);
+                                    if history.len() > 64 {
+                                        history.remove(0);
+                                    }
+                                }
+                            }
                             let path = PathBuf::from(&item.path);
                             flush();
-                            queue_index = Some(idx + 1);
+                            pending_block = None;
+                            queue_index = Some(target);
+                            if let Ok(mut qi) = shared.queue_index.lock() {
+                                *qi = Some(target);
+                            }
                             dec = open_track_full(&shared, &path, queue_index, Some(&item));
                             if dec.is_some() {
                                 playing = true;
@@ -855,16 +937,45 @@ fn decode_loop(
                     }
                 }
                 Cmd::Prev => {
-                    if let Some(idx) = queue_index {
-                        let target = idx.saturating_sub(1);
-                        if let Some(item) = queue.get(target).cloned() {
-                            let path = PathBuf::from(&item.path);
-                            flush();
-                            queue_index = Some(target);
-                            dec = open_track_full(&shared, &path, queue_index, Some(&item));
-                            if dec.is_some() {
-                                playing = true;
-                                shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                    // 播过 3s 先重头；否则按模式回退
+                    let pos = shared.position_ms();
+                    if pos > 3_000 {
+                        if let Some(idx) = queue_index {
+                            if let Some(item) = queue.get(idx).cloned() {
+                                let path = PathBuf::from(&item.path);
+                                flush();
+                                pending_block = None;
+                                dec = open_track_full(&shared, &path, Some(idx), Some(&item));
+                                if dec.is_some() {
+                                    playing = true;
+                                    shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                                }
+                            }
+                        }
+                    } else if !queue.is_empty() {
+                        let mode = shared.play_mode_raw();
+                        let target = if mode == MODE_SHUFFLE {
+                            history.pop().or_else(|| shuffle_pick(queue.len(), queue_index))
+                        } else {
+                            Some(match queue_index {
+                                Some(0) | None => queue.len() - 1,
+                                Some(i) => i - 1,
+                            })
+                        };
+                        if let Some(target) = target {
+                            if let Some(item) = queue.get(target).cloned() {
+                                let path = PathBuf::from(&item.path);
+                                flush();
+                                pending_block = None;
+                                queue_index = Some(target);
+                                if let Ok(mut qi) = shared.queue_index.lock() {
+                                    *qi = Some(target);
+                                }
+                                dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                                if dec.is_some() {
+                                    playing = true;
+                                    shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                                }
                             }
                         }
                     }
@@ -903,22 +1014,36 @@ fn decode_loop(
                     None => {
                         // EOF — wait until output drains (blocks already in queue)
                         shared.track_ended.store(true, Ordering::SeqCst);
-                        let advanced = if let Some(idx) = queue_index {
-                            if idx + 1 < queue.len() {
-                                let item = queue[idx + 1].clone();
-                                let path = PathBuf::from(&item.path);
-                                flush();
-                                pending_block = None;
-                                queue_index = Some(idx + 1);
-                                let d2 = open_track_full(&shared, &path, queue_index, Some(&item));
-                                dec = d2;
-                                dec.is_some()
+                        let mode = shared.play_mode_raw();
+                        let mut advanced = false;
+                        if !queue.is_empty() {
+                            let target = if mode == MODE_REPEAT_ONE {
+                                queue_index.or(Some(0))
+                            } else if mode == MODE_SHUFFLE {
+                                shuffle_pick(queue.len(), queue_index)
                             } else {
-                                false
+                                queue_index.and_then(|i| {
+                                    if i + 1 < queue.len() {
+                                        Some(i + 1)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            };
+                            if let Some(target) = target {
+                                if let Some(item) = queue.get(target).cloned() {
+                                    let path = PathBuf::from(&item.path);
+                                    flush();
+                                    pending_block = None;
+                                    queue_index = Some(target);
+                                    if let Ok(mut qi) = shared.queue_index.lock() {
+                                        *qi = Some(target);
+                                    }
+                                    dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                                    advanced = dec.is_some();
+                                }
                             }
-                        } else {
-                            false
-                        };
+                        }
                         if !advanced {
                             dec = None;
                             playing = false;

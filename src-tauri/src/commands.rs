@@ -134,6 +134,14 @@ pub fn update_settings(
     }
     if let Some(m) = patch.play_mode {
         guard.play_mode = m;
+        let mode = match m {
+            crate::settings::PlayMode::Sequential => crate::player::PlayMode::Sequential,
+            crate::settings::PlayMode::Shuffle => crate::player::PlayMode::Shuffle,
+            crate::settings::PlayMode::RepeatOne => crate::player::PlayMode::RepeatOne,
+        };
+        if let Ok(mut player) = state.player.lock() {
+            player.set_play_mode(mode);
+        }
     }
     if let Some(v) = patch.restore_volume {
         guard.restore_volume = v;
@@ -794,6 +802,28 @@ pub fn player_set_volume(
     player.engine.set_volume_f32(volume.clamp(0.0, 1.0));
     if let Ok(mut s) = state.settings.lock() {
         s.volume = volume.clamp(0.0, 1.0);
+        let _ = settings::save(&s);
+    }
+    let snap = player.snapshot();
+    let _ = app.emit("player://state", &snap);
+    Ok(snap)
+}
+
+/// 切换播放模式（顺序 / 随机 / 单曲），同时写入 settings.json
+#[tauri::command]
+pub fn player_set_play_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: crate::player::PlayMode,
+) -> Result<PlayerSnapshot, String> {
+    let mut player = state.player.lock().map_err(|e| e.to_string())?;
+    player.set_play_mode(mode);
+    if let Ok(mut s) = state.settings.lock() {
+        s.play_mode = match mode {
+            crate::player::PlayMode::Sequential => crate::settings::PlayMode::Sequential,
+            crate::player::PlayMode::Shuffle => crate::settings::PlayMode::Shuffle,
+            crate::player::PlayMode::RepeatOne => crate::settings::PlayMode::RepeatOne,
+        };
         let _ = settings::save(&s);
     }
     let snap = player.snapshot();

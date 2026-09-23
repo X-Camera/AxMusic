@@ -1,4 +1,5 @@
 export type PlayStatus = "Stopped" | "Playing" | "Paused";
+export type PlayMode = "sequential" | "shuffle" | "repeat_one";
 
 export interface TrackInfo {
   path: string;
@@ -22,6 +23,7 @@ export interface PlayerSnapshot {
   track: TrackInfo | null;
   queue: QueueItem[];
   queue_index: number | null;
+  play_mode: PlayMode;
 }
 
 export interface LibraryRoot {
@@ -137,7 +139,6 @@ export interface PathsInfo {
   settings_path: string;
 }
 
-export type PlayMode = "sequential" | "shuffle" | "repeat_one";
 export type LyricsSaveMode = "sidecar" | "embed";
 export type LyricsPrefer = "sidecar" | "embed";
 export type SongsView = "list" | "grid";

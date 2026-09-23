@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { api } from "../lib/api";
-import type { PlayerSnapshot, QueueItem, RouteId, TrackInfo } from "../lib/types";
+import type { PlayMode, PlayerSnapshot, QueueItem, RouteId, TrackInfo } from "../lib/types";
 
 interface AppState {
   route: RouteId;
@@ -20,6 +20,7 @@ interface AppState {
   prev: () => Promise<void>;
   seek: (ms: number) => Promise<void>;
   setVolume: (v: number) => Promise<void>;
+  setPlayMode: (m: PlayMode) => Promise<void>;
 }
 
 const emptyPlayer = (): PlayerSnapshot => ({
@@ -30,6 +31,7 @@ const emptyPlayer = (): PlayerSnapshot => ({
   track: null,
   queue: [],
   queue_index: null,
+  play_mode: "sequential",
 });
 
 /** 播放器操作序号：轮询结果不得覆盖更新的点播/控制操作 */
@@ -103,6 +105,7 @@ export const useApp = create<AppState>((set, get) => ({
             track: queueItemToTrack(item),
             queue: items,
             queue_index: start,
+            play_mode: prev?.play_mode ?? "sequential",
           },
         });
       }
@@ -156,6 +159,22 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const p = await api.playerSetVolume(v);
       if (rev === playerRev) set({ player: p ?? { ...emptyPlayer(), volume: v } });
+    } finally {
+      endWrite();
+    }
+  },
+  setPlayMode: async (m) => {
+    const rev = beginWrite();
+    try {
+      const p = await api.playerSetPlayMode(m);
+      if (rev === playerRev) {
+        set({
+          player: p ?? {
+            ...(get().player ?? emptyPlayer()),
+            play_mode: m,
+          },
+        });
+      }
     } finally {
       endWrite();
     }

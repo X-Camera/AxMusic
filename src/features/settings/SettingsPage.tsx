@@ -292,7 +292,10 @@ export function SettingsPage() {
                 <Segmented
                   value={settings.play_mode}
                   options={PLAY_MODES}
-                  onChange={(v) => void patch({ play_mode: v })}
+                  onChange={(v) => {
+                    void patch({ play_mode: v });
+                    void useApp.getState().setPlayMode(v);
+                  }}
                 />
               </Row>
               <Row label="启动恢复音量" hint="关闭后每次启动固定 80%">

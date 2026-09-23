@@ -173,6 +173,11 @@
   place-items: center;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
+
+.mp-icon.active {
+  color: var(--accent);
+  background: transparent;
+}
 .mp-icon:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
@@ -180,6 +185,26 @@
 .mp-icon:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* 模式按钮（随机/循环）：无圆底，未激活暗、激活亮 */
+.mp-icon.mode {
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.mp-icon.mode:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.mp-icon.mode.active {
+  color: var(--accent);
+  background: transparent;
+}
+
+.mp-icon.mode.active:hover:not(:disabled) {
+  color: var(--accent);
 }
 
 .mp-play {

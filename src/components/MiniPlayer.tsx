@@ -1,4 +1,4 @@
-import { FolderInput, ListMusic, Pause, Play, Repeat, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
+import { FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { QueueItem } from "../lib/types";
@@ -119,6 +119,8 @@ export function MiniPlayer() {
   const duration = player?.duration_ms ?? 0;
   const position = seeking ? seekMs : (player?.position_ms ?? 0);
   const volume = player?.volume ?? 0.8;
+  const playMode = player?.play_mode ?? "sequential";
+  const setPlayMode = useApp((s) => s.setPlayMode);
   const playing = player?.status === "Playing";
   const queueLen = player?.queue?.length ?? 0;
 
@@ -265,11 +267,25 @@ export function MiniPlayer() {
         <span className="mp-time mono tertiary">
           {formatTime(position)} / {formatTime(duration)}
         </span>
-        <button className="mp-icon" title="随机播放（占位）" disabled>
+        <button
+          className={`mp-icon mode${playMode === "shuffle" ? " active" : ""}`}
+          title={playMode === "shuffle" ? "随机播放（开）" : "随机播放"}
+          onClick={() =>
+            void setPlayMode(playMode === "shuffle" ? "sequential" : "shuffle")
+          }
+        >
           <Shuffle size={15} />
         </button>
-        <button className="mp-icon" title="循环模式（占位）" disabled>
-          <Repeat size={15} />
+        <button
+          className={`mp-icon mode${playMode === "repeat_one" ? " active" : ""}`}
+          title={playMode === "repeat_one" ? "单曲循环（开）" : "单曲循环"}
+          onClick={() =>
+            void setPlayMode(
+              playMode === "repeat_one" ? "sequential" : "repeat_one",
+            )
+          }
+        >
+          {playMode === "repeat_one" ? <Repeat1 size={15} /> : <Repeat size={15} />}
         </button>
         <div className="mp-volume">
           <Volume2 size={15} className="tertiary" />

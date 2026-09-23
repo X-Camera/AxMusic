@@ -41,6 +41,11 @@ pub fn run() {
                 0.8
             };
             player.engine.set_volume_f32(boot_vol);
+            player.set_play_mode(match app_settings.play_mode {
+                settings::PlayMode::Sequential => player::PlayMode::Sequential,
+                settings::PlayMode::Shuffle => player::PlayMode::Shuffle,
+                settings::PlayMode::RepeatOne => player::PlayMode::RepeatOne,
+            });
 
             let state = commands::AppState {
                 db: Mutex::new(db),
@@ -83,6 +88,7 @@ pub fn run() {
             commands::player_prev,
             commands::player_seek,
             commands::player_set_volume,
+            commands::player_set_play_mode,
             commands::list_dir_audio,
             commands::scrape_search_album,
             commands::scrape_search_track,

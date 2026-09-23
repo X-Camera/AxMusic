@@ -265,6 +265,26 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* 模式按钮（随机/循环）：无圆底，仅明暗 */
+.np-icon.mode {
+  background: transparent;
+}
+
+.np-icon.mode:hover:not(:disabled) {
+  background: transparent;
+  transform: none;
+  opacity: 1;
+}
+
+.np-icon.mode {
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.np-icon.mode.active {
+  color: #fff;
+  background: transparent;
+}
+
 .np-icon:disabled {
   opacity: 0.35;
   cursor: not-allowed;

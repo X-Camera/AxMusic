@@ -8,6 +8,7 @@ import type {
   LibraryStats,
   PathsInfo,
   PlayerSnapshot,
+  PlayMode,
   PlaylistAddItem,
   PlaylistDetail,
   PlaylistSummary,
@@ -82,6 +83,8 @@ export const api = {
   playerSeek: (ms: number) => invoke<PlayerSnapshot>("player_seek", { ms }),
   playerSetVolume: (volume: number) =>
     invoke<PlayerSnapshot>("player_set_volume", { volume }),
+  playerSetPlayMode: (mode: PlayMode) =>
+    invoke<PlayerSnapshot>("player_set_play_mode", { mode }),
 
   listDirAudio: (path: string) => invoke<TrackInfo[]>("list_dir_audio", { path }),
 
