@@ -12,7 +12,7 @@ use crate::playlists::{
     FavoriteToggleResult, PlaylistAddItem, PlaylistDetail, PlaylistSummary,
 };
 use crate::settings::AppSettings;
-use crate::{playlists, scanner, settings};
+use crate::{play_session, playlists, scanner, settings};
 
 pub struct AppState {
     /// Library working DB (`<library>/axmusic.db`). None until a library root is set.
@@ -20,6 +20,19 @@ pub struct AppState {
     pub player: Mutex<Player>,
     pub scanning: Mutex<bool>,
     pub settings: Mutex<AppSettings>,
+}
+
+/// 记忆播放列表（队列/当前曲/进度），供退出与变更时落盘。
+pub fn persist_play_session(state: &AppState) {
+    if let Ok(player) = state.player.lock() {
+        play_session::save_from_snapshot(&player.snapshot());
+    }
+}
+
+/// 广播播放器快照并记忆播放列表。
+fn emit_player_state(app: &AppHandle, snap: &PlayerSnapshot) {
+    let _ = app.emit("player://state", snap);
+    play_session::save_from_snapshot(snap);
 }
 
 fn require_db<'a>(
@@ -744,8 +757,13 @@ fn build_library_dest(root: &Path, row: &TrackRow, src: &Path) -> PathBuf {
 pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerSnapshot, String> {
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     // auto-advance tick
-    player.tick();
-    Ok(player.snapshot())
+    let advanced = player.tick();
+    let snap = player.snapshot();
+    // 自动切歌时更新记忆（进度不在此写，避免轮询狂写盘）
+    if advanced.is_some() {
+        play_session::save_from_snapshot(&snap);
+    }
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -762,7 +780,7 @@ pub fn play_file(
     // 以本次点击为准（worker 打开解码前 snapshot 可能仍指向上一首）
     snap.track = Some(info);
     snap.status = crate::player::PlayStatus::Playing;
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -781,7 +799,7 @@ pub fn play_queue(
     // 以本次点击为准，避免界面显示新歌、出声还是上一首
     snap.track = Some(info);
     snap.status = crate::player::PlayStatus::Playing;
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -795,7 +813,7 @@ pub fn player_enqueue(
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     player.enqueue(items);
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -804,7 +822,7 @@ pub fn player_play(app: AppHandle, state: State<'_, AppState>) -> Result<PlayerS
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     player.engine.play_inner();
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -813,7 +831,7 @@ pub fn player_pause(app: AppHandle, state: State<'_, AppState>) -> Result<Player
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     player.engine.pause_inner();
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -822,7 +840,7 @@ pub fn player_toggle(app: AppHandle, state: State<'_, AppState>) -> Result<Playe
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     player.engine.play_pause();
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -831,7 +849,7 @@ pub fn player_next(app: AppHandle, state: State<'_, AppState>) -> Result<PlayerS
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     let _ = player.next().map_err(|e| e.to_string())?;
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -840,7 +858,7 @@ pub fn player_prev(app: AppHandle, state: State<'_, AppState>) -> Result<PlayerS
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     let _ = player.prev().map_err(|e| e.to_string())?;
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 
@@ -853,7 +871,7 @@ pub fn player_seek(
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     player.engine.seek_to(ms).map_err(|e| e.to_string())?;
     let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
+    emit_player_state(&app, &snap);
     Ok(snap)
 }
 

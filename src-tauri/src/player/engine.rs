@@ -45,6 +45,12 @@ enum Cmd {
     Seek { ms: u64 },
     SetVolume { v: f32 },
     SetQueue { items: Vec<QueueItem>, start: usize },
+    /// 启动恢复：装入队列 + 打开当前曲 + 跳进度，**不自动播放**
+    RestoreSession {
+        items: Vec<QueueItem>,
+        start: usize,
+        position_ms: u64,
+    },
     Next,
     Prev,
     #[allow(dead_code)] // 预留：停止/清理通道（gapless、换输出设备时用）
@@ -245,6 +251,49 @@ impl SymphoniaPlayer {
             q.extend(items);
         }
         self.shared.request_flush();
+    }
+
+    /// 启动恢复上次播放列表：写入队列/当前曲/进度，状态为暂停（不自动播）。
+    pub fn restore_session(
+        &mut self,
+        items: Vec<QueueItem>,
+        start: usize,
+        position_ms: u64,
+    ) -> Result<Option<TrackInfo>> {
+        if let Ok(mut q) = self.shared.queue.lock() {
+            *q = items.clone();
+        }
+        if let Ok(mut qi) = self.shared.queue_index.lock() {
+            *qi = if items.is_empty() { None } else { Some(start) };
+        }
+        let info = items.get(start).map(|item| TrackInfo {
+            path: item.path.clone(),
+            title: item.title.clone(),
+            duration_ms: item.duration_ms,
+            sample_rate: self.output_sample_rate,
+            channels: 2,
+        });
+        if let Some(info) = info.as_ref() {
+            if let Ok(mut t) = self.shared.track.lock() {
+                *t = Some(info.clone());
+            }
+            self.shared
+                .duration_ms
+                .store(info.duration_ms.max(1), Ordering::SeqCst);
+        }
+        let rate = self.shared.sample_rate.load(Ordering::SeqCst).max(1);
+        self.shared
+            .position_frames
+            .store(position_ms.saturating_mul(rate) / 1000, Ordering::SeqCst);
+        self.shared.track_ended.store(false, Ordering::SeqCst);
+        self.shared.status.store(STATUS_PAUSED, Ordering::SeqCst);
+        self.shared.request_flush();
+        let _ = self.cmd_tx.send(Cmd::RestoreSession {
+            items,
+            start,
+            position_ms,
+        });
+        Ok(info)
     }
 
     /// 同步写入 shared.track 后打开单文件，保证 snapshot 与点击一致。
@@ -901,6 +950,43 @@ fn decode_loop(
                     }
                     if let Ok(mut q) = shared.queue.lock() {
                         *q = queue.clone();
+                    }
+                }
+                Cmd::RestoreSession {
+                    items,
+                    start,
+                    position_ms,
+                } => {
+                    queue = items;
+                    queue_index = if queue.is_empty() { None } else { Some(start) };
+                    history.clear();
+                    if let Ok(mut q) = shared.queue.lock() {
+                        *q = queue.clone();
+                    }
+                    if let Ok(mut qi) = shared.queue_index.lock() {
+                        *qi = queue_index;
+                    }
+                    flush();
+                    pending_block = None;
+                    if let Some(item) = queue.get(start).cloned() {
+                        let path = PathBuf::from(&item.path);
+                        dec = open_track_full(&shared, &path, Some(start), Some(&item));
+                        if let Some(d) = dec.as_mut() {
+                            if seek_decoder(&mut d.inner, position_ms).is_ok() {
+                                d.pending.clear();
+                                d.resample_pos = 0.0;
+                                let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
+                                shared
+                                    .position_frames
+                                    .store(position_ms * rate / 1000, Ordering::SeqCst);
+                            }
+                        }
+                        playing = false;
+                        shared.status.store(STATUS_PAUSED, Ordering::SeqCst);
+                    } else {
+                        dec = None;
+                        playing = false;
+                        shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                     }
                 }
                 Cmd::Next => {

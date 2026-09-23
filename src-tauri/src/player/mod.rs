@@ -104,6 +104,16 @@ impl Player {
         self.engine.enqueue(items);
     }
 
+    /// 启动恢复上次播放列表（暂停在上次进度，不自动播）。
+    pub fn restore_session(
+        &mut self,
+        items: Vec<QueueItem>,
+        start: usize,
+        position_ms: u64,
+    ) -> Result<Option<TrackInfo>> {
+        self.engine.restore_session(items, start, position_ms)
+    }
+
     pub fn next(&mut self) -> Result<Option<TrackInfo>> {
         self.engine.next()
     }

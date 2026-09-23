@@ -5,6 +5,7 @@ mod folder_meta;
 mod library;
 mod lyrics;
 mod paths;
+mod play_session;
 mod player;
 mod playlists;
 mod scanner;
@@ -48,6 +49,20 @@ pub fn run() {
                 settings::PlayMode::Shuffle => player::PlayMode::Shuffle,
                 settings::PlayMode::RepeatOne => player::PlayMode::RepeatOne,
             });
+
+            // 恢复上次播放列表（队列 + 当前曲），从头暂停不自动播
+            if let Some(session) = play_session::load() {
+                if !session.items.is_empty() {
+                    let start = session
+                        .queue_index
+                        .unwrap_or(0)
+                        .min(session.items.len().saturating_sub(1));
+                    let _ = player.restore_session(session.items, start, 0);
+                } else if let Some(track) = session.track {
+                    let items = vec![track];
+                    let _ = player.restore_session(items, 0, 0);
+                }
+            }
 
             let state = commands::AppState {
                 db: Mutex::new(db),
@@ -152,6 +167,13 @@ pub fn run() {
             commands::favorite_paths,
             commands::favorite_toggle,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running AxMusic");
+        .build(tauri::generate_context!())
+        .expect("error while building AxMusic")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<commands::AppState>() {
+                    commands::persist_play_session(&state);
+                }
+            }
+        });
 }
