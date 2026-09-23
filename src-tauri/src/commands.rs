@@ -117,6 +117,8 @@ pub struct SettingsPatch {
     pub lyrics_sources: Option<crate::settings::LyricsSources>,
     pub songs_view: Option<crate::settings::SongsView>,
     pub close_behavior: Option<crate::settings::CloseBehavior>,
+    pub theme_mode: Option<crate::settings::ThemeMode>,
+    pub color_scheme: Option<crate::settings::ColorScheme>,
 }
 
 #[tauri::command]
@@ -166,6 +168,12 @@ pub fn update_settings(
     }
     if let Some(c) = patch.close_behavior {
         guard.close_behavior = c;
+    }
+    if let Some(t) = patch.theme_mode {
+        guard.theme_mode = t;
+    }
+    if let Some(c) = patch.color_scheme {
+        guard.color_scheme = c;
     }
     settings::save(&guard).map_err(|e| e.to_string())?;
     let snapshot = guard.clone();

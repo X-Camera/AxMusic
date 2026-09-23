@@ -1,23 +1,27 @@
-/* AxMusic dark tokens — docs/界面设计.md §2. Do not hardcode colors outside this file. */
+/* AxMusic design tokens — docs/界面设计.md §2. Do not hardcode colors outside this file.
+   外观 html[data-theme=dark|light] × 皮肤 html[data-color-scheme]。
+   暗色表面中性灰（避免偏色），皮肤只换 accent 家族；浅色表面同样中性。
+   --on-accent：强调色块上的反色字。满窗播放（NowPlaying）不跟主题，见 np 作用域。 */
 :root {
-  /* surfaces */
-  --bg: #0b0c0f;
-  --bg-elevated: #12141a;
-  --bg-card: #181b23;
-  --bg-hover: #222632;
-  --border: #2a2f3a;
+  /* derived（跟随下方 rgb / 强调变量） */
+  --bg: rgb(var(--bg-rgb));
+  --bg-glass: rgba(var(--bg-rgb), 0.85);
+  --border: rgb(var(--border-rgb));
+  --border-soft: rgba(var(--border-rgb), 0.55);
+  --accent-soft: rgba(var(--accent-rgb), 0.22);
+  --accent-glow: rgba(var(--accent-rgb), 0.35);
+  --success-soft: rgba(var(--success-rgb), 0.12);
+  --success-line: rgba(var(--success-rgb), 0.4);
+  --warning-soft: rgba(var(--warning-rgb), 0.12);
+  --danger-soft: rgba(var(--danger-rgb), 0.12);
+  --danger-line: rgba(var(--danger-rgb), 0.35);
 
-  /* text */
-  --text: #f2f4f8;
-  --text-secondary: #a8b0be;
-  --text-tertiary: #6b7385;
-
-  /* accent / status */
-  --accent: #7c6af2;
-  --accent-soft: rgba(124, 106, 242, 0.22);
-  --accent-strong: #6a58e8;
+  /* status（语义固定，不随皮肤） */
+  --success-rgb: 61, 220, 151;
   --success: #3ddc97;
+  --warning-rgb: 245, 197, 66;
   --warning: #f5c542;
+  --danger-rgb: 255, 107, 122;
   --danger: #ff6b7a;
 
   /* geometry */
@@ -46,6 +50,149 @@
   --dur-fast: 120ms;
   --dur: 160ms;
   --dur-slow: 180ms;
+}
+
+/* ═══════════ 暗色：表面中性灰（全皮肤共用），只换 accent ═══════════ */
+:root,
+[data-theme="dark"] {
+  --bg-rgb: 11, 12, 15;
+  --bg-elevated: #12141a;
+  --bg-card: #181b23;
+  --bg-hover: #222632;
+  --bg-placeholder: linear-gradient(145deg, #1a1d26 0%, #222632 100%);
+  --border-rgb: 42, 47, 58;
+  --text: #f2f4f8;
+  --text-secondary: #a8b0be;
+  --text-tertiary: #6b7385;
+  /* 默认星云紫 */
+  --accent-rgb: 124, 106, 242;
+  --accent: #7c6af2;
+  --accent-solid: #7c6af2;
+  --accent-strong: #6a58e8;
+  --on-accent: #ffffff;
+}
+
+/* ── 暗色 · 皮肤只覆盖 accent 家族 ── */
+[data-theme="dark"][data-color-scheme="sky"],
+:not([data-theme])[data-color-scheme="sky"] {
+  --accent-rgb: 91, 157, 255;
+  --accent: #5b9dff;
+  --accent-solid: #5b9dff;
+  --accent-strong: #4580e6;
+  --on-accent: #ffffff;
+}
+
+[data-theme="dark"][data-color-scheme="jade"],
+:not([data-theme])[data-color-scheme="jade"] {
+  --accent-rgb: 52, 211, 153;
+  --accent: #34d399;
+  --accent-solid: #34d399;
+  --accent-strong: #2bbf8a;
+  --on-accent: #06281c;
+}
+
+[data-theme="dark"][data-color-scheme="rose"],
+:not([data-theme])[data-color-scheme="rose"] {
+  --accent-rgb: 244, 114, 182;
+  --accent: #f472b6;
+  --accent-solid: #f472b6;
+  --accent-strong: #ec4899;
+  --on-accent: #3d0a28;
+}
+
+[data-theme="dark"][data-color-scheme="amber"],
+:not([data-theme])[data-color-scheme="amber"] {
+  --accent-rgb: 245, 165, 36;
+  --accent: #f5a524;
+  --accent-solid: #f5a524;
+  --accent-strong: #e09400;
+  --on-accent: #211600;
+}
+
+[data-theme="dark"][data-color-scheme="coral"],
+:not([data-theme])[data-color-scheme="coral"] {
+  --accent-rgb: 255, 122, 92;
+  --accent: #ff7a5c;
+  --accent-solid: #ff7a5c;
+  --accent-strong: #f06543;
+  --on-accent: #2b1208;
+}
+
+[data-theme="dark"][data-color-scheme="graphite"],
+:not([data-theme])[data-color-scheme="graphite"] {
+  --accent-rgb: 168, 176, 190;
+  --accent: #a8b0be;
+  --accent-solid: #c5cad3;
+  --accent-strong: #8b93a5;
+  --on-accent: #1a1d26;
+}
+
+/* ═══════════ 浅色：表面中性浅灰（全皮肤共用） ═══════════ */
+[data-theme="light"] {
+  --bg-rgb: 247, 248, 250;
+  --bg-elevated: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #e8eaf0;
+  --bg-placeholder: linear-gradient(145deg, #e8eaf0 0%, #d8dce6 100%);
+  --border-rgb: 213, 217, 226;
+  --text: #1a1d26;
+  --text-secondary: #5c6578;
+  --text-tertiary: #8b93a5;
+  /* 默认星云紫：文字用加深版保证对比，实心块用亮版避免「太深」 */
+  --accent-rgb: 106, 88, 232;
+  --accent: #6a58e8;
+  --accent-solid: #7c6af2;
+  --accent-strong: #5b4bd4;
+  --on-accent: #ffffff;
+}
+
+/* ── 浅色 · 皮肤只覆盖 accent 家族 ── */
+[data-theme="light"][data-color-scheme="sky"] {
+  --accent-rgb: 59, 130, 246;
+  --accent: #3b82f6;
+  --accent-solid: #5b9dff;
+  --accent-strong: #2563eb;
+  --on-accent: #ffffff;
+}
+
+[data-theme="light"][data-color-scheme="jade"] {
+  --accent-rgb: 16, 185, 129;
+  --accent: #10b981;
+  --accent-solid: #34d399;
+  --accent-strong: #059669;
+  --on-accent: #06281c;
+}
+
+[data-theme="light"][data-color-scheme="rose"] {
+  --accent-rgb: 219, 39, 119;
+  --accent: #db2777;
+  --accent-solid: #f472b6;
+  --accent-strong: #be185d;
+  --on-accent: #3d0a28;
+}
+
+[data-theme="light"][data-color-scheme="amber"] {
+  --accent-rgb: 217, 119, 6;
+  --accent: #d97706;
+  --accent-solid: #f5a524;
+  --accent-strong: #b45309;
+  --on-accent: #211600;
+}
+
+[data-theme="light"][data-color-scheme="coral"] {
+  --accent-rgb: 234, 88, 12;
+  --accent: #ea580c;
+  --accent-solid: #ff7a5c;
+  --accent-strong: #c2410c;
+  --on-accent: #2b1208;
+}
+
+[data-theme="light"][data-color-scheme="graphite"] {
+  --accent-rgb: 92, 101, 120;
+  --accent: #5c6578;
+  --accent-solid: #8b93a5;
+  --accent-strong: #4a5263;
+  --on-accent: #ffffff;
 }
 
 @media (prefers-reduced-motion: reduce) {

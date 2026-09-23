@@ -58,7 +58,7 @@ src/lib/         api.ts（invoke 封装）· types.ts（与 Rust serde 结构对
 ## 约定
 
 - **界面文案中文**、短、动词开头；错误写清怎么办
-- UI 暗色主题，颜色/间距/圆角全部用 `src/styles/tokens.css` 的 CSS 变量，禁止写死颜色；禁止 Win32 灰面板风
+- UI 暗/浅双外观 + 七皮肤（`data-theme` × `data-color-scheme`，表面中性只换 accent）；满窗播放随封面氛围、不跟主题。颜色/间距/圆角全部用 `src/styles/tokens.css` 的 CSS 变量，禁止写死颜色；禁止 Win32 灰面板风
 - Rust 与 TS 的结构体字段保持一致（serde 直传），加字段两边同步 + `types.ts` 同步
 - SQLite 迁移：`CREATE TABLE IF NOT EXISTS` + 逐列 `ALTER TABLE ... ADD COLUMN`（容忍已存在），不支持删列
 - MusicBrainz 合规：UA 带联系信息、限速 ≤1 req/s（`scraper::rate_limit_wait`）、不上传音频内容

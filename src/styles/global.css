@@ -121,9 +121,9 @@ select:focus {
   cursor: not-allowed;
 }
 .btn-primary {
-  background: var(--accent);
+  background: var(--accent-solid);
   border-color: transparent;
-  color: var(--text);
+  color: var(--on-accent);
   font-weight: 600;
 }
 .btn-primary:hover {

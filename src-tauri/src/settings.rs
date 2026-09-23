@@ -53,6 +53,30 @@ pub enum CloseBehavior {
     Exit,
 }
 
+/// 主题色配色（暗色底上的强调色方案）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorScheme {
+    #[default]
+    Nebula,
+    Sky,
+    Jade,
+    Rose,
+    Amber,
+    Coral,
+    /// 中性石墨（灰阶强调，无彩色偏）
+    Graphite,
+}
+
+/// 外观：暗色 / 浅色
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+}
+
 /// 歌词在线源开关
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricsSources {
@@ -99,6 +123,12 @@ pub struct AppSettings {
     /// 关闭主窗口：询问 / 缩到托盘 / 退出
     #[serde(default)]
     pub close_behavior: CloseBehavior,
+    /// 外观：暗色 / 浅色
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
+    /// 皮肤（表面 + 强调色家族）
+    #[serde(default)]
+    pub color_scheme: ColorScheme,
 }
 
 fn default_volume() -> f32 {
@@ -121,6 +151,8 @@ impl Default for AppSettings {
             lyrics_sources: LyricsSources::default(),
             songs_view: SongsView::default(),
             close_behavior: CloseBehavior::default(),
+            theme_mode: ThemeMode::default(),
+            color_scheme: ColorScheme::default(),
         }
     }
 }

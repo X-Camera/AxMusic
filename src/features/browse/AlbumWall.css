@@ -79,7 +79,7 @@
 }
 
 .album-cover.placeholder {
-  background: linear-gradient(145deg, #1a1d26 0%, #222632 100%);
+  background: var(--bg-placeholder);
 }
 
 .album-initial {

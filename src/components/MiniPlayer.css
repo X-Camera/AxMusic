@@ -70,7 +70,7 @@
 
 .mp-cover-btn:hover:not(:disabled) {
   transform: scale(1.04);
-  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(124, 106, 242, 0.35);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px var(--accent-glow);
 }
 
 .mp-cover-btn:disabled {
@@ -225,11 +225,11 @@
   width: 40px;
   height: 40px;
   border-radius: 999px;
-  background: var(--text);
-  color: var(--bg);
+  background: var(--accent-solid);
+  color: var(--on-accent);
   display: grid;
   place-items: center;
-  transition: transform var(--dur-fast) var(--ease-out);
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .mp-play:hover:not(:disabled) {
   transform: scale(1.05);
@@ -372,7 +372,7 @@
   padding: 0 4px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--text);
+  color: var(--on-accent);
   font-size: 10px;
   font-weight: 600;
   line-height: 14px;

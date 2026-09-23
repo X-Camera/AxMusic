@@ -26,7 +26,7 @@
 .track-table td {
   height: var(--table-row-height);
   padding: 0 10px;
-  border-bottom: 1px solid rgba(42, 47, 58, 0.55);
+  border-bottom: 1px solid var(--border-soft);
   white-space: nowrap;
   text-align: center;
 }

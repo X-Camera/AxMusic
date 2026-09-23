@@ -2,6 +2,7 @@ import { FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
+import { COLOR_SCHEMES, THEME_MODES, applyColorScheme, applyThemeMode } from "../../lib/colorScheme";
 import type {
   AppSettings,
   CloseBehavior,
@@ -10,6 +11,7 @@ import type {
   PathsInfo,
   PlayMode,
   SongsView,
+  ThemeMode,
 } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
@@ -391,13 +393,50 @@ export function SettingsPage() {
                   onChange={(v) => void patch({ close_behavior: v })}
                 />
               </Row>
-              <Row label="主题" hint="浅色主题规划中">
+              <Row label="外观" hint="深色 / 浅色整套切换">
                 <Segmented
-                  value={"dark" as "dark"}
-                  options={[{ id: "dark" as const, label: "暗色" }]}
-                  onChange={() => {}}
-                  disabled
+                  value={(settings.theme_mode ?? "dark") as ThemeMode}
+                  options={THEME_MODES}
+                  onChange={(v) => {
+                    applyThemeMode(v);
+                    void patch({ theme_mode: v });
+                  }}
                 />
+              </Row>
+              <Row label="皮肤" hint="强调色（表面中性不偏色）；满窗播放随封面，不跟皮肤">
+                <div className="set-swatches" role="radiogroup" aria-label="皮肤">
+                  {COLOR_SCHEMES.map((s) => {
+                    const mode = settings.theme_mode === "light" ? "light" : "dark";
+                    const preview = s[mode];
+                    const surface = mode === "light" ? "#f7f8fa" : "#12141a";
+                    const card = mode === "light" ? "#ffffff" : "#181b23";
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={settings.color_scheme === s.id}
+                        title={s.label}
+                        className={`set-swatch${settings.color_scheme === s.id ? " active" : ""}`}
+                        style={{ background: surface }}
+                        onClick={() => {
+                          applyColorScheme(s.id);
+                          void patch({ color_scheme: s.id });
+                        }}
+                      >
+                        <span
+                          className="set-swatch-card"
+                          style={{ background: card, borderColor: preview.solid }}
+                        />
+                        <span
+                          className="set-swatch-accent"
+                          style={{ background: preview.solid }}
+                        />
+                        <span className="sr-only">{s.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </Row>
             </Section>
         </div>

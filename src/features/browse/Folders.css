@@ -172,8 +172,8 @@
   margin-bottom: var(--space-2);
   padding: 8px 12px;
   border-radius: var(--radius-control);
-  background: rgba(255, 107, 122, 0.12);
-  border: 1px solid rgba(255, 107, 122, 0.35);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
   color: var(--danger);
   font-size: 12px;
 }
@@ -216,7 +216,7 @@
 .folders-row {
   min-height: 38px;
   color: var(--text);
-  border-bottom: 1px solid rgba(42, 47, 58, 0.45);
+  border-bottom: 1px solid var(--border-soft);
   cursor: default;
 }
 

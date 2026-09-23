@@ -14,7 +14,7 @@
   height: 52px;
   padding: 0 0 0 var(--space-4);
   border-bottom: 1px solid var(--border);
-  background: rgba(11, 12, 15, 0.85);
+  background: var(--bg-glass);
   flex-shrink: 0;
   user-select: none;
 }
@@ -106,7 +106,7 @@
 
 .lyr-tag.ok {
   color: var(--success);
-  border-color: rgba(61, 220, 151, 0.4);
+  border-color: var(--success-line);
 }
 
 .lyr-convert {

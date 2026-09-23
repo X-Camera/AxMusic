@@ -1,4 +1,5 @@
-/* 满窗播放：参考 Apple Music — 左封面+控制 / 右双语歌词 / 玻璃缩回 / 底部滑入滑出 */
+/* 满窗播放：参考 Apple Music — 左封面+控制 / 右双语歌词 / 玻璃缩回 / 底部滑入滑出
+   背景为封面图氛围层，**不跟随主题/皮肤**（固定深色 + 白字），与全局 tokens 脱钩。 */
 .np-page {
   position: fixed;
   inset: 0;
@@ -7,7 +8,8 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg);
+  background: #0b0c0f;
+  color: rgba(255, 255, 255, 0.94);
   animation: np-slide-in 280ms var(--ease-out);
 }
 
@@ -47,6 +49,7 @@
 .np-bg-veil {
   position: absolute;
   inset: 0;
+  /* 固定压暗，不用主题 bg —— 否则浅色会把封面洗白 */
   background: linear-gradient(
     180deg,
     rgba(11, 12, 15, 0.18),
@@ -163,8 +166,8 @@
 .np-cover-empty {
   display: grid;
   place-items: center;
-  background: var(--bg-card);
-  color: var(--text-tertiary);
+  background: #181b23;
+  color: rgba(255, 255, 255, 0.38);
   font-size: clamp(40px, 6vh, 64px);
 }
 

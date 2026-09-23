@@ -144,6 +144,19 @@ export type LyricsPrefer = "sidecar" | "embed";
 export type SongsView = "list" | "grid";
 export type CloseBehavior = "ask" | "tray" | "exit";
 
+/** 外观：暗色 / 浅色 */
+export type ThemeMode = "dark" | "light";
+
+/** 皮肤（表面 + 强调色家族） */
+export type ColorScheme =
+  | "nebula"
+  | "sky"
+  | "jade"
+  | "rose"
+  | "amber"
+  | "coral"
+  | "graphite";
+
 export interface LyricsSources {
   lrclib: boolean;
   netease: boolean;
@@ -160,6 +173,8 @@ export interface AppSettings {
   lyrics_sources: LyricsSources;
   songs_view: SongsView;
   close_behavior: CloseBehavior;
+  theme_mode: ThemeMode;
+  color_scheme: ColorScheme;
 }
 
 export type SettingsPatch = Partial<
