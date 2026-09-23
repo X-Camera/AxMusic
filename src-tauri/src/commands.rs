@@ -833,43 +833,218 @@ pub fn player_set_play_mode(
 
 // ── browse helpers ────────────────────────────────────────────────
 
-/// Fallback browse: list audio files in a folder (any path). Used by placeholder/album open.
-#[tauri::command]
-pub fn list_dir_audio(path: String) -> Result<Vec<TrackInfo>, String> {
-    let dir = PathBuf::from(path);
+/// 文件夹浏览：子目录项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderDir {
+    pub name: String,
+    pub path: String,
+}
+
+/// 文件夹浏览：音频文件（含简要标签，供列表/歌单）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderFile {
+    pub path: String,
+    pub name: String,
+    pub title: String,
+    pub artist: String,
+    pub duration_ms: u64,
+}
+
+/// 单层目录列表（树节点展开 + 右侧文件）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub dirs: Vec<FolderDir>,
+    pub files: Vec<FolderFile>,
+}
+
+/// 递归列音频时的上限，避免超大目录卡 IPC
+const FOLDER_RECURSIVE_LIMIT: usize = 5000;
+
+fn is_skipped_dir_name(name: &str) -> bool {
+    name.starts_with('$')
+        || name.eq_ignore_ascii_case("System Volume Information")
+        || name.eq_ignore_ascii_case("Config.Msi")
+        || name == ".git"
+        || name == "node_modules"
+}
+
+fn path_to_string(p: &Path) -> String {
+    p.to_string_lossy().to_string()
+}
+
+fn is_audio_path(p: &Path) -> bool {
+    p.extension()
+        .and_then(|x| x.to_str())
+        .map(|s| scanner::AUDIO_EXTS.contains(&s.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// 列表用快速项：只读文件名，不打开音频（大目录必须如此）。
+fn folder_file_fast(p: &Path) -> FolderFile {
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let title = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.clone());
+    FolderFile {
+        path: path_to_string(p),
+        name,
+        title,
+        artist: String::new(),
+        duration_ms: 0,
+    }
+}
+
+fn list_audio_files_in_dir(dir: &Path) -> Vec<FolderFile> {
+    let mut files = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return files;
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let p = e.path();
+        if p.is_file() && is_audio_path(&p) {
+            files.push(folder_file_fast(&p));
+        }
+    }
+    files
+}
+
+fn list_dirs_in_dir(dir: &Path) -> Vec<FolderDir> {
+    let mut dirs = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return dirs;
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        if is_skipped_dir_name(&name) {
+            continue;
+        }
+        dirs.push(FolderDir {
+            name,
+            path: path_to_string(&p),
+        });
+    }
+    dirs
+}
+
+fn list_dir_tree_sync(path: String, with_files: bool) -> Result<FolderListing, String> {
+    let dir = PathBuf::from(&path);
     if !dir.is_dir() {
         return Err("不是文件夹".into());
     }
-    let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
-        entries.sort_by_key(|e| e.file_name());
-        for e in entries {
-            let p = e.path();
-            if !p.is_file() {
+    Ok(FolderListing {
+        path: path_to_string(&dir),
+        parent: dir.parent().map(path_to_string),
+        dirs: list_dirs_in_dir(&dir),
+        files: if with_files {
+            list_audio_files_in_dir(&dir)
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+/// Fallback browse: list audio files in a folder (any path). Used by placeholder/album open.
+#[tauri::command]
+pub async fn list_dir_audio(path: String) -> Result<Vec<TrackInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = PathBuf::from(path);
+        if !dir.is_dir() {
+            return Err("不是文件夹".into());
+        }
+        Ok(list_audio_files_in_dir(&dir)
+            .into_iter()
+            .map(|f| TrackInfo {
+                path: f.path,
+                title: f.title,
+                duration_ms: f.duration_ms,
+                sample_rate: 0,
+                channels: 2,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 单层目录：子文件夹 + 本层音频（列表不读标签，大目录不卡）。
+/// `with_files=false` 仅供树展开（只要子目录）。
+#[tauri::command]
+pub async fn list_dir_tree(path: String, with_files: bool) -> Result<FolderListing, String> {
+    tauri::async_runtime::spawn_blocking(move || list_dir_tree_sync(path, with_files))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 批量查标签缓存（仅 mtime/size 仍有效的项）。
+#[tauri::command]
+pub async fn folder_meta_lookup(paths: Vec<String>) -> Result<Vec<crate::folder_meta::FolderMeta>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::folder_meta::lookup(&paths).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 批量读标签并写入缓存（有效缓存直接复用）。
+#[tauri::command]
+pub async fn folder_meta_read(paths: Vec<String>) -> Result<Vec<crate::folder_meta::FolderMeta>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::folder_meta::read_and_cache(&paths).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 递归收集目录下全部音频（按路径排序，带上限，不读标签）。
+#[tauri::command]
+pub async fn list_dir_audio_recursive(path: String) -> Result<Vec<FolderFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = PathBuf::from(&path);
+        if !dir.is_dir() {
+            return Err("不是文件夹".into());
+        }
+        let mut files = Vec::new();
+        for entry in walkdir::WalkDir::new(&dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
                 continue;
             }
-            let ext = p
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|s| s.to_ascii_lowercase())
-                .unwrap_or_default();
-            if scanner::AUDIO_EXTS.contains(&ext.as_str()) {
-                let info = TrackInfo {
-                    path: p.to_string_lossy().to_string(),
-                    title: p
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    duration_ms: 0,
-                    sample_rate: 0,
-                    channels: 2,
-                };
-                out.push(info);
+            let p = entry.path();
+            if !is_audio_path(p) {
+                continue;
+            }
+            let skipped = entry.path().components().any(|c| match c {
+                std::path::Component::Normal(s) => is_skipped_dir_name(&s.to_string_lossy()),
+                _ => false,
+            });
+            if skipped {
+                continue;
+            }
+            files.push(folder_file_fast(p));
+            if files.len() >= FOLDER_RECURSIVE_LIMIT {
+                break;
             }
         }
-    }
-    Ok(out)
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 

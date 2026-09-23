@@ -87,6 +87,18 @@ export const api = {
     invoke<PlayerSnapshot>("player_set_play_mode", { mode }),
 
   listDirAudio: (path: string) => invoke<TrackInfo[]>("list_dir_audio", { path }),
+  /** 单层目录：子文件夹 + 本层音频（withFiles=false 时只要子目录，给树展开用） */
+  listDirTree: (path: string, withFiles = true) =>
+    invoke<import("./types").FolderListing>("list_dir_tree", { path, withFiles }),
+  /** 递归收集音频（含子文件夹，后端有上限，不读标签） */
+  listDirAudioRecursive: (path: string) =>
+    invoke<import("./types").FolderFile[]>("list_dir_audio_recursive", { path }),
+  /** 查标签缓存（mtime/size 有效才返回） */
+  folderMetaLookup: (paths: string[]) =>
+    invoke<import("./types").FolderMeta[]>("folder_meta_lookup", { paths }),
+  /** 读标签并写缓存（有效缓存复用） */
+  folderMetaRead: (paths: string[]) =>
+    invoke<import("./types").FolderMeta[]>("folder_meta_read", { paths }),
 
   scrapeSearchAlbum: (album: string, artist: string) =>
     invoke<ScrapeCandidate[]>("scrape_search_album", { album, artist }),
@@ -223,5 +235,22 @@ export function entryToQueueItem(e: import("./types").PlaylistEntry): QueueItem 
     path: e.path,
     title: title || e.path.split(/[\\/]/).pop() || e.path,
     duration_ms: e.duration_ms,
+  };
+}
+
+export function folderFileToQueueItem(f: import("./types").FolderFile): QueueItem {
+  return {
+    path: f.path,
+    title: f.title || f.name,
+    duration_ms: f.duration_ms,
+  };
+}
+
+export function folderFileToAddItem(f: import("./types").FolderFile): PlaylistAddItem {
+  return {
+    path: f.path,
+    title: f.title || f.name,
+    artist: f.artist,
+    duration_ms: f.duration_ms,
   };
 }

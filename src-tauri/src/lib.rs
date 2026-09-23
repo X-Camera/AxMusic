@@ -1,6 +1,7 @@
 //! AxMusic — local music player with library management.
 
 mod commands;
+mod folder_meta;
 mod library;
 mod lyrics;
 mod paths;
@@ -90,6 +91,10 @@ pub fn run() {
             commands::player_set_volume,
             commands::player_set_play_mode,
             commands::list_dir_audio,
+            commands::list_dir_tree,
+            commands::list_dir_audio_recursive,
+            commands::folder_meta_lookup,
+            commands::folder_meta_read,
             commands::scrape_search_album,
             commands::scrape_search_track,
             commands::scrape_build_plan,

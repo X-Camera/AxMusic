@@ -331,3 +331,29 @@ export interface PlaylistDetail {
   name: string;
   entries: PlaylistEntry[];
 }
+
+/** 文件夹浏览：子目录 */
+export interface FolderDir {
+  name: string;
+  path: string;
+}
+
+/** 文件夹浏览：音频文件（简要标签） */
+export interface FolderFile {
+  path: string;
+  name: string;
+  title: string;
+  artist: string;
+  duration_ms: number;
+}
+
+/** 单层目录列表（树展开 + 右侧文件） */
+export interface FolderListing {
+  path: string;
+  parent: string | null;
+  dirs: FolderDir[];
+  files: FolderFile[];
+}
+
+/** 标签缓存条目（path 唯一，字段与 FolderFile 对齐） */
+export type FolderMeta = FolderFile;
