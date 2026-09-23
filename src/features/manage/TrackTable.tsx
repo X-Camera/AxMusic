@@ -2,6 +2,8 @@ import { Music } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { TrackRow } from "../../lib/types";
+import { trackRowToAddItem } from "../../lib/api";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { loadCover, observeCover, peekCover, unobserveCover } from "./coverCache";
 import "./TrackTable.css";
 
@@ -112,8 +114,11 @@ export function TrackTable({
           <th style={{ width: 56 }} title="封面（文件内嵌）">
             封面
           </th>
-          <th>曲名</th>
-          <th>歌手</th>
+          <th style={{ width: 40 }} title="喜爱">
+            ♥
+          </th>
+          <th className="cell-left">曲名</th>
+          <th className="cell-left">歌手</th>
           <th>专辑</th>
           <th style={{ width: 56 }}>年份</th>
           <th style={{ width: 48 }}>轨号</th>
@@ -150,14 +155,17 @@ export function TrackTable({
               <td>
                 <CoverThumb path={t.path} mtime={t.mtime} hasCover={t.has_cover} />
               </td>
+              <td onClick={(e) => e.stopPropagation()}>
+                <FavoriteHeart item={trackRowToAddItem(t)} />
+              </td>
               <td
-                className={`ellipsis${mTitle ? " cell-match" : ""}`}
+                className={`ellipsis cell-left${mTitle ? " cell-match" : ""}`}
                 title={t.title || t.filename}
               >
                 {t.title || t.filename}
               </td>
               <td
-                className={`ellipsis${mArtist ? " cell-match" : ""}${t.artist ? "" : " cell-empty"}`}
+                className={`ellipsis cell-left${mArtist ? " cell-match" : ""}${t.artist ? "" : " cell-empty"}`}
                 title={t.artist}
               >
                 {t.artist || "—"}

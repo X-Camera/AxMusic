@@ -18,6 +18,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, formatTime } from "../../lib/api";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import { WindowControls } from "../../components/WindowControls";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { useApp } from "../../state/useApp";
 import { useAmllLyrics } from "./amll/useAmllLyrics";
 import { pickLyrics, type LrcLine } from "./lrc";
@@ -314,7 +315,21 @@ export function NowPlayingPage() {
 
           <div className="np-meta">
             <div>
-              <h2 className="np-title">{title}</h2>
+              <div className="np-title-row">
+                <h2 className="np-title">{title}</h2>
+                {track && (
+                  <FavoriteHeart
+                    item={{
+                      path: track.path,
+                      title,
+                      artist: artist || "",
+                      duration_ms: track.duration_ms,
+                    }}
+                    size={20}
+                    className="inline"
+                  />
+                )}
+              </div>
               <p className="np-sub">{artist || "—"}</p>
             </div>
           </div>

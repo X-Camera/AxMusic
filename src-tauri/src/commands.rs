@@ -8,7 +8,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::library::{AlbumCard, ArtistCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
-use crate::playlists::{PlaylistAddItem, PlaylistDetail, PlaylistSummary};
+use crate::playlists::{
+    FavoriteToggleResult, PlaylistAddItem, PlaylistDetail, PlaylistSummary,
+};
 use crate::settings::AppSettings;
 use crate::{playlists, scanner, settings};
 
@@ -771,6 +773,20 @@ pub fn play_queue(
     // 以本次点击为准，避免界面显示新歌、出声还是上一首
     snap.track = Some(info);
     snap.status = crate::player::PlayStatus::Playing;
+    let _ = app.emit("player://state", &snap);
+    Ok(snap)
+}
+
+/// 追加到当前播放队列（排队等播放，不替换当前队列、不打断正在播的曲目）。
+#[tauri::command]
+pub fn player_enqueue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    items: Vec<QueueItem>,
+) -> Result<PlayerSnapshot, String> {
+    let mut player = state.player.lock().map_err(|e| e.to_string())?;
+    player.enqueue(items);
+    let snap = player.snapshot();
     let _ = app.emit("player://state", &snap);
     Ok(snap)
 }
@@ -1722,15 +1738,32 @@ pub fn catalog_compare(
         "track": track,
         "catalog": catalog,
         "changes": changes,
-        "cover_data": cover_data_of(catalog.as_ref()),
+        "cover_data": cover_data_of(catalog.as_ref(), track_id, &state),
     }))
 }
 
-/// catalog 缓存封面 → data URL（未刮取返回 None）。
-fn cover_data_of(catalog: Option<&crate::library::CatalogRow>) -> Option<String> {
+/// 库封面 → data URL：优先 catalog.cover_path，退回 `covers/track-{id}.jpg`（未刮削也能显示）。
+fn cover_data_of(
+    catalog: Option<&crate::library::CatalogRow>,
+    track_id: i64,
+    state: &State<'_, AppState>,
+) -> Option<String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-    let path = catalog?.cover_path.as_ref()?;
-    let bytes = std::fs::read(path).ok()?;
+    if let Some(path) = catalog.and_then(|c| c.cover_path.as_ref()) {
+        if let Ok(bytes) = std::fs::read(path) {
+            return Some(format!("data:image/jpeg;base64,{}", B64.encode(bytes)));
+        }
+    }
+    let root = state
+        .settings
+        .lock()
+        .ok()?
+        .library_root
+        .clone()?;
+    let fallback = PathBuf::from(root)
+        .join("covers")
+        .join(format!("track-{track_id}.jpg"));
+    let bytes = std::fs::read(fallback).ok()?;
     Some(format!("data:image/jpeg;base64,{}", B64.encode(bytes)))
 }
 
@@ -1925,6 +1958,7 @@ pub fn track_write_tags(
 
 /// Write selected catalog fields into the audio file (tags + optional cover from covers/).
 /// Only fields listed in `fields` are written; empty catalog values never overwrite tags.
+/// `write_cover` 在未关联 catalog 时也可用（读 `covers/track-{id}.jpg`）。
 #[tauri::command]
 pub fn catalog_apply_to_track(
     state: State<'_, AppState>,
@@ -1939,10 +1973,10 @@ pub fn catalog_apply_to_track(
             .get_track_by_id(track_id)
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?;
-        let cat = db
-            .find_catalog_for_track(track_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("未关联 catalog，请先刮削或自动匹配")?;
+        let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
+        if cat.is_none() && !fields.is_empty() {
+            return Err("未关联 catalog，请先刮削或自动匹配".into());
+        }
         let root = state
             .settings
             .lock()
@@ -1955,28 +1989,30 @@ pub fn catalog_apply_to_track(
 
     let wanted = |f: &str| fields.iter().any(|x| x == f);
     let mut changes: Vec<crate::scraper::FieldChange> = Vec::new();
-    let mut push = |field: &str, new: &str| {
-        // Only selected fields with a non-empty catalog value are written —
-        // an empty value must never wipe an existing tag.
-        if wanted(field) && !new.trim().is_empty() {
-            changes.push(crate::scraper::FieldChange {
-                field: field.into(),
-                old: String::new(),
-                new: new.into(),
-            });
-        }
-    };
+    if let Some(catalog) = &catalog {
+        let mut push = |field: &str, new: &str| {
+            // Only selected fields with a non-empty catalog value are written —
+            // an empty value must never wipe an existing tag.
+            if wanted(field) && !new.trim().is_empty() {
+                changes.push(crate::scraper::FieldChange {
+                    field: field.into(),
+                    old: String::new(),
+                    new: new.into(),
+                });
+            }
+        };
 
-    push("title", &catalog.title);
-    push("artist", &catalog.artist);
-    push("album", &catalog.album);
-    push("album_artist", &catalog.album_artist);
-    push("year", &catalog.year);
-    push("release_type", &catalog.release_type);
-    push("musicbrainz_recording", &catalog.mbid);
-    push("musicbrainz_release", &catalog.release_mbid);
-    if let Some(n) = catalog.track_no {
-        push("track_no", &n.to_string());
+        push("title", &catalog.title);
+        push("artist", &catalog.artist);
+        push("album", &catalog.album);
+        push("album_artist", &catalog.album_artist);
+        push("year", &catalog.year);
+        push("release_type", &catalog.release_type);
+        push("musicbrainz_recording", &catalog.mbid);
+        push("musicbrainz_release", &catalog.release_mbid);
+        if let Some(n) = catalog.track_no {
+            push("track_no", &n.to_string());
+        }
     }
 
     if changes.is_empty() && !write_cover {
@@ -1987,16 +2023,20 @@ pub fn catalog_apply_to_track(
 
     let cover: Option<Vec<u8>> = if write_cover {
         catalog
-            .cover_path
             .as_ref()
-            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|c| c.cover_path.as_ref().and_then(|p| std::fs::read(p).ok()))
             .or_else(|| {
-                let rel = catalog.release_mbid.as_str();
+                let rel = catalog.as_ref().map(|c| c.release_mbid.as_str()).unwrap_or("");
                 if rel.is_empty() {
                     None
                 } else {
                     std::fs::read(Path::new(&root).join("covers").join(format!("{rel}.jpg"))).ok()
                 }
+            })
+            .or_else(|| {
+                // 未刮削：读刮封面时落盘的 covers/track-{id}.jpg
+                std::fs::read(Path::new(&root).join("covers").join(format!("track-{track_id}.jpg")))
+                    .ok()
             })
     } else {
         None
@@ -2041,16 +2081,37 @@ fn require_library_root(state: &State<'_, AppState>) -> Result<String, String> {
 
 /// 歌单详情（带 DB 富化；无 DB 也能出列表，仅展示字段退化）。
 fn playlist_detail_of(root: &str, name: &str, state: &State<'_, AppState>) -> Result<PlaylistDetail, String> {
-    let parsed = playlists::read_playlist(Path::new(root), name)?;
+    let parsed = if playlists::is_favorites_id(name) {
+        playlists::read_favorites(Path::new(root))
+    } else {
+        playlists::read_playlist(Path::new(root), name)?
+    };
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     Ok(playlists::to_entries(Path::new(root), name, &parsed, guard.as_ref()))
 }
 
-/// 列出 `<库>/playlists/*.m3u8`。
+/// 列出 `<库>/playlists/*.m3u8`（「喜爱」系统歌单始终置顶）。
 #[tauri::command]
 pub fn playlist_list(state: State<'_, AppState>) -> Result<Vec<PlaylistSummary>, String> {
     let root = require_library_root(&state)?;
     playlists::list_playlists(Path::new(&root))
+}
+
+/// 喜爱歌单路径列表（绝对路径），供前端心形状态对照。
+#[tauri::command]
+pub fn favorite_paths(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let root = require_library_root(&state)?;
+    Ok(playlists::favorite_paths(Path::new(&root)))
+}
+
+/// 切换单曲喜爱状态；返回切换后是否已喜爱及喜爱总数。
+#[tauri::command]
+pub fn favorite_toggle(
+    state: State<'_, AppState>,
+    item: PlaylistAddItem,
+) -> Result<FavoriteToggleResult, String> {
+    let root = require_library_root(&state)?;
+    playlists::favorite_toggle(Path::new(&root), &item)
 }
 
 /// 新建歌单并一次写入条目（items 可空 = 空歌单）。
@@ -2079,6 +2140,7 @@ pub fn playlist_rename(
         name,
         track_count: parsed.len(),
         total_ms: parsed.iter().map(|x| x.duration_ms).sum(),
+        is_favorites: false,
     })
 }
 

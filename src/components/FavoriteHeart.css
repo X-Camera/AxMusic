@@ -1,0 +1,43 @@
+/* 心形喜爱开关 — 列列表 / 名称旁共用 */
+.fav-heart {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.fav-heart:hover {
+  color: var(--danger);
+  transform: scale(1.08);
+}
+
+.fav-heart.on {
+  color: var(--danger);
+}
+
+.fav-heart:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+
+/* 列表里的独立心形列：始终可见（不跟 hover 隐藏） */
+.fav-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 贴在曲名旁的紧凑心形（缩小点击框，减少与标题的空隙） */
+.fav-heart.inline {
+  width: 20px;
+  height: 20px;
+}

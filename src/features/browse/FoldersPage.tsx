@@ -24,6 +24,7 @@ import type { FolderDir, FolderFile, PlaylistAddItem } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import "./Folders.css";
 
 const ROOT_KEY = "axmusic.folders.root";
@@ -609,6 +610,7 @@ export function FoldersPage() {
                   <div className="folders-head tertiary">
                     <span />
                     <span>#</span>
+                    <span />
                     <span>曲名</span>
                     <span>歌手</span>
                     <span>文件</span>
@@ -646,6 +648,16 @@ export function FoldersPage() {
                           />
                         </span>
                         <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                        <span className="fav-col">
+                          <FavoriteHeart
+                            item={{
+                              path: f.path,
+                              title: f.title || f.name,
+                              artist: f.artist,
+                              duration_ms: f.duration_ms,
+                            }}
+                          />
+                        </span>
                         <span className="ellipsis folders-title" onClick={() => playOne(f)}>
                           {f.title || f.name}
                         </span>

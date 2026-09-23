@@ -99,6 +99,11 @@ impl Player {
         self.engine.play_queue_at(items, start)
     }
 
+    /// 追加到当前队列末尾，排队等播放（不替换、不打断当前曲）。
+    pub fn enqueue(&mut self, items: Vec<QueueItem>) {
+        self.engine.enqueue(items);
+    }
+
     pub fn next(&mut self) -> Result<Option<TrackInfo>> {
         self.engine.next()
     }

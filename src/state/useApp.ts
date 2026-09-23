@@ -15,6 +15,8 @@ interface AppState {
   refreshPlayer: () => Promise<void>;
   playPath: (path: string) => Promise<void>;
   playQueue: (items: QueueItem[], start: number) => Promise<void>;
+  /** 追加到当前播放队列（排队等播放，不打断当前曲） */
+  enqueue: (items: QueueItem[]) => Promise<void>;
   toggle: () => Promise<void>;
   next: () => Promise<void>;
   prev: () => Promise<void>;
@@ -110,6 +112,19 @@ export const useApp = create<AppState>((set, get) => ({
         });
       }
       const p = await api.playQueue(items, start);
+      if (rev === playerRev) set({ player: p });
+    } finally {
+      endWrite();
+    }
+  },
+  enqueue: async (items) => {
+    const rev = beginWrite();
+    try {
+      const prev = get().player;
+      if (prev) {
+        set({ player: { ...prev, queue: [...prev.queue, ...items] } });
+      }
+      const p = await api.playerEnqueue(items);
       if (rev === playerRev) set({ player: p });
     } finally {
       endWrite();

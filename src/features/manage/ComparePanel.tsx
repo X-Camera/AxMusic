@@ -228,6 +228,42 @@ export function ComparePanel({
       </header>
       {error && <div className="error-line cmp-error">{error}</div>}
       {!data && !error && <div className="tertiary cmp-empty">加载中…</div>}
+      {/* 封面展示与刮取不依赖 catalog：未刮削也能看文件封面、刮封面 */}
+      {data && (
+        <div className="cmp-covers">
+          <figure className="cmp-cover">
+            {catalogCover ? (
+              <img src={catalogCover} alt="封面" />
+            ) : fileCover ? (
+              <img src={fileCover} alt="封面" />
+            ) : (
+              <div className="cmp-cover-empty tertiary">无封面，可刮取</div>
+            )}
+            <figcaption className="muted">
+              {catalogCover ? "库封面" : fileCover ? "文件封面" : "封面"}
+            </figcaption>
+          </figure>
+          <div className="cmp-cover-actions">
+            <button
+              className="btn"
+              title="多源搜索封面（CAA / iTunes / 网易云 / QQ音乐），点选一张采纳到库 covers/"
+              onClick={() => setCoverOpen(true)}
+            >
+              <ImagePlus size={14} />
+              {catalogCover ? "重新刮取封面" : "刮取封面"}
+            </button>
+            <button
+              className="btn"
+              disabled={!catalogCover || writingCover}
+              title="将库封面写入歌曲文件"
+              onClick={() => void writeCover()}
+            >
+              {writingCover ? <Loader2 size={14} className="spin" /> : <FileInput size={14} />}
+              写入封面
+            </button>
+          </div>
+        </div>
+      )}
       {data && !data.catalog && (
         <>
           <div className="tertiary cmp-hint">
@@ -261,71 +297,36 @@ export function ComparePanel({
         </>
       )}
       {data && data.catalog && (
-        <>
-          <div className="cmp-covers">
-            <figure className="cmp-cover">
-              {catalogCover ? (
-                <img src={catalogCover} alt="封面" />
-              ) : fileCover ? (
-                <img src={fileCover} alt="封面" />
+        <div className="cmp-fields">
+          <div className="cmp-fields-title">catalog 字段</div>
+          {fields.map((f) => (
+            <div key={f.field} className={`cmp-field${f.changed ? " changed" : ""}`}>
+              <span className="cmp-field-label">{f.label}</span>
+              <span className="cmp-field-value" title={f.value || "—"}>
+                {f.value || "—"}
+              </span>
+              {f.writable ? (
+                <button
+                  className="icon-btn"
+                  title="写入歌曲文件"
+                  disabled={writingField === f.field}
+                  onClick={() => void writeField(f.field)}
+                >
+                  {writingField === f.field ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    <FileInput size={14} />
+                  )}
+                </button>
               ) : (
-                <div className="cmp-cover-empty tertiary">无封面，可刮取</div>
+                <span className="icon-btn-placeholder" />
               )}
-              <figcaption className="muted">
-                {catalogCover ? "catalog 封面" : fileCover ? "文件封面" : "封面"}
-              </figcaption>
-            </figure>
-            <div className="cmp-cover-actions">
-              <button
-                className="btn"
-                title="多源搜索封面（CAA / iTunes / 网易云 / QQ音乐），点选一张采纳到库 covers/"
-                onClick={() => setCoverOpen(true)}
-              >
-                <ImagePlus size={14} />
-                {catalogCover ? "重新刮取封面" : "刮取封面"}
-              </button>
-              <button
-                className="btn"
-                disabled={!catalogCover || writingCover}
-                title="将 catalog 封面写入歌曲文件"
-                onClick={() => void writeCover()}
-              >
-                {writingCover ? <Loader2 size={14} className="spin" /> : <FileInput size={14} />}
-                写入封面
-              </button>
             </div>
+          ))}
+          <div className="tertiary cmp-hint">
+            带写入按钮的字段与文件不一致；catalog 空值不写入。
           </div>
-          <div className="cmp-fields">
-            <div className="cmp-fields-title">catalog 字段</div>
-            {fields.map((f) => (
-              <div key={f.field} className={`cmp-field${f.changed ? " changed" : ""}`}>
-                <span className="cmp-field-label">{f.label}</span>
-                <span className="cmp-field-value" title={f.value || "—"}>
-                  {f.value || "—"}
-                </span>
-                {f.writable ? (
-                  <button
-                    className="icon-btn"
-                    title="写入歌曲文件"
-                    disabled={writingField === f.field}
-                    onClick={() => void writeField(f.field)}
-                  >
-                    {writingField === f.field ? (
-                      <Loader2 size={14} className="spin" />
-                    ) : (
-                      <FileInput size={14} />
-                    )}
-                  </button>
-                ) : (
-                  <span className="icon-btn-placeholder" />
-                )}
-              </div>
-            ))}
-            <div className="tertiary cmp-hint">
-              带写入按钮的字段与文件不一致；catalog 空值不写入。
-            </div>
-          </div>
-        </>
+        </div>
       )}
       {coverOpen && (
         <CoverPicker

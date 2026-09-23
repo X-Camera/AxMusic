@@ -301,12 +301,14 @@ export interface LyricsBatch {
 }
 
 export interface PlaylistSummary {
-  /** 文件名（不含 .m3u8） */
+  /** 文件名（不含 .m3u8）；喜爱固定为「喜爱」 */
   name: string;
   /** 条目总数（含失效项） */
   track_count: number;
   /** EXTINF 时长之和（未知计 0） */
   total_ms: number;
+  /** 系统「喜爱」歌单（不可重命名/删除） */
+  is_favorites: boolean;
 }
 
 export interface PlaylistAddItem {
@@ -330,8 +332,18 @@ export interface PlaylistEntry {
 }
 
 export interface PlaylistDetail {
+  /** 喜爱固定为「喜爱」 */
   name: string;
   entries: PlaylistEntry[];
+  /** 系统「喜爱」歌单 */
+  is_favorites: boolean;
+}
+
+export interface FavoriteToggleResult {
+  /** 切换后是否已喜爱 */
+  favorited: boolean;
+  /** 喜爱歌单当前条目数 */
+  track_count: number;
 }
 
 /** 文件夹浏览：子目录 */

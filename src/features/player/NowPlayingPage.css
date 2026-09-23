@@ -190,6 +190,18 @@
   margin-top: clamp(4px, 0.8vh, 10px);
 }
 
+.np-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.np-title-row .np-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .np-title {
   margin: 0;
   font-family: var(--font-display);

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, ListMusic, Play, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Heart, ListMusic, Play, Plus, Trash2 } from "lucide-react";
 
 import { api, entryToQueueItem, formatTime } from "../../lib/api";
 import type { PlaylistDetail, PlaylistSummary } from "../../lib/types";
 import { useApp } from "../../state/useApp";
+import { useFavorites } from "../../state/useFavorites";
 import { TopBar } from "../../components/TopBar";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import "./Playlists.css";
 
 export function PlaylistsPage() {
@@ -47,10 +49,25 @@ export function PlaylistsPage() {
     void reload();
   }, [reload]);
 
+  // 进入页面时自动选中「喜爱」（无则第一项），避免左侧看似选中、右侧空着
+  useEffect(() => {
+    if (selected || list.length === 0) return;
+    const first = list.find((p) => p.is_favorites) ?? list[0];
+    if (first) setSelected(first.name);
+  }, [list, selected]);
+
   useEffect(() => {
     if (selected) void loadDetail(selected);
     else setDetail(null);
   }, [selected, loadDetail]);
+
+  // 迷你条/满窗/其它列表改喜爱时，刷新左侧计数；若正开着「喜爱」则同步曲目
+  const favRev = useFavorites((s) => s.rev);
+  useEffect(() => {
+    if (favRev === 0) return;
+    void reload();
+    if (selected === "喜爱") void loadDetail(selected);
+  }, [favRev, selected, reload, loadDetail]);
 
   async function onCreate() {
     const name = window.prompt("新建歌单名称", "");
@@ -115,7 +132,9 @@ export function PlaylistsPage() {
   async function onRemove(index: number) {
     if (!detail) return;
     try {
-      setDetail(await api.playlistRemoveTrack(detail.name, index));
+      const next = await api.playlistRemoveTrack(detail.name, index);
+      setDetail(next);
+      if (detail.is_favorites) void useFavorites.getState().reload();
     } catch (e) {
       setError(String(e));
     }
@@ -130,6 +149,7 @@ export function PlaylistsPage() {
       }
       setDetail(d);
       await reload();
+      if (detail.is_favorites) void useFavorites.getState().reload();
       setToast("已清理失效条目");
     } catch (e) {
       setError(String(e));
@@ -174,43 +194,68 @@ export function PlaylistsPage() {
                     还没有歌单
                   </div>
                 ) : (
-                  list.map((p) => (
-                    <div
-                      key={p.name}
-                      className={`pl-row${selected === p.name ? " active" : ""}`}
-                      onClick={() => setSelected(p.name)}
-                    >
-                      <ListMusic size={15} className="tertiary" />
-                      <span className="pl-row-main">
-                        <span className="ellipsis">{p.name}</span>
-                        <span className="tertiary mono" style={{ fontSize: 11 }}>
-                          {p.track_count} 首{p.total_ms > 0 ? ` · ${formatTime(p.total_ms)}` : ""}
-                        </span>
-                      </span>
-                      <span className="pl-row-actions">
-                        <button
-                          className="link-btn"
-                          title="重命名"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void onRename(p.name);
-                          }}
+                  <>
+                    {list
+                      .filter((p) => p.is_favorites)
+                      .map((p) => (
+                        <div
+                          key={p.name}
+                          className={`pl-row favorites${selected === p.name ? " active" : ""}`}
+                          onClick={() => setSelected(p.name)}
                         >
-                          重命名
-                        </button>
-                        <button
-                          className="link-btn"
-                          title="删除歌单"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void onDelete(p.name);
-                          }}
+                          <Heart size={15} className="pl-fav-icon" fill="currentColor" />
+                          <span className="pl-row-main">
+                            <span className="ellipsis">{p.name}</span>
+                            <span className="tertiary mono" style={{ fontSize: 11 }}>
+                              {p.track_count} 首{p.total_ms > 0 ? ` · ${formatTime(p.total_ms)}` : ""}
+                            </span>
+                          </span>
+                          <span className="pl-badge">系统</span>
+                        </div>
+                      ))}
+                    {list.some((p) => !p.is_favorites) && (
+                      <div className="pl-user-divider">自定义歌单</div>
+                    )}
+                    {list
+                      .filter((p) => !p.is_favorites)
+                      .map((p) => (
+                        <div
+                          key={p.name}
+                          className={`pl-row${selected === p.name ? " active" : ""}`}
+                          onClick={() => setSelected(p.name)}
                         >
-                          <Trash2 size={13} />
-                        </button>
-                      </span>
-                    </div>
-                  ))
+                          <ListMusic size={15} className="tertiary" />
+                          <span className="pl-row-main">
+                            <span className="ellipsis">{p.name}</span>
+                            <span className="tertiary mono" style={{ fontSize: 11 }}>
+                              {p.track_count} 首{p.total_ms > 0 ? ` · ${formatTime(p.total_ms)}` : ""}
+                            </span>
+                          </span>
+                          <span className="pl-row-actions">
+                            <button
+                              className="link-btn"
+                              title="重命名"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onRename(p.name);
+                              }}
+                            >
+                              重命名
+                            </button>
+                            <button
+                              className="link-btn"
+                              title="删除歌单"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onDelete(p.name);
+                              }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                  </>
                 )}
               </div>
 
@@ -221,9 +266,10 @@ export function PlaylistsPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="pl-head">
+                    <div className={`pl-head${detail.is_favorites ? " favorites" : ""}`}>
                       <div>
                         <div className="display" style={{ fontSize: 18 }}>
+                          {detail.is_favorites && <Heart size={18} fill="currentColor" />}
                           {detail.name}
                         </div>
                         <div className="tertiary">
@@ -252,7 +298,11 @@ export function PlaylistsPage() {
                     </div>
                     {detail.entries.length === 0 ? (
                       <div className="empty-state">
-                        <p className="muted">歌单为空，去管理表或专辑「加入歌单」。</p>
+                        <p className="muted">
+                          {detail.is_favorites
+                            ? "还没有喜爱的歌曲，点任意列表旁的心形即可加入。"
+                            : "歌单为空，去管理表或专辑「加入歌单」。"}
+                        </p>
                       </div>
                     ) : (
                       <div className="pl-tracks">
@@ -262,6 +312,30 @@ export function PlaylistsPage() {
                           return (
                             <div key={`${e.rel_path}-${i}`} className={`pl-track-row${e.exists ? "" : " missing"}`}>
                               <span className="tertiary mono">{String(i + 1).padStart(2, "0")}</span>
+                              <span className="fav-col">
+                                <FavoriteHeart
+                                  item={{
+                                    path: e.path,
+                                    title,
+                                    artist,
+                                    duration_ms: e.duration_ms,
+                                  }}
+                                  onToggle={(fav) => {
+                                    if (detail.is_favorites && !fav) {
+                                      const path = e.path;
+                                      setDetail({
+                                        ...detail,
+                                        entries: detail.entries.filter((x) => x.path !== path),
+                                      });
+                                      void reload();
+                                      void useFavorites.getState().reload();
+                                    } else if (detail.is_favorites) {
+                                      void reload();
+                                      void useFavorites.getState().reload();
+                                    }
+                                  }}
+                                />
+                              </span>
                               <span className="ellipsis" title={title}>
                                 {title}
                                 {!e.exists && <span className="chip" style={{ marginLeft: 8 }}>缺失</span>}

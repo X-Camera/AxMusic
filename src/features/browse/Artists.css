@@ -28,6 +28,31 @@
   max-width: 160px;
 }
 
+/* 封面正中悬浮提示（与专辑墙/歌曲网格同语言） */
+.cover-hover-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.5));
+  pointer-events: none;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+.artist-card:hover .cover-hover-icon,
+.artist-albums .album-card:hover .cover-hover-icon {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
 /* 歌手圆形头像 */
 .artist-cover-wrap .album-cover,
 .artist-hero .album-cover {

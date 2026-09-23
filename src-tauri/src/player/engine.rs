@@ -236,6 +236,17 @@ impl SymphoniaPlayer {
         Ok(info)
     }
 
+    /// 追加到当前播放队列末尾（不打断正在播的曲目；空队列时仅入队等播）。
+    pub fn enqueue(&mut self, items: Vec<QueueItem>) {
+        if items.is_empty() {
+            return;
+        }
+        if let Ok(mut q) = self.shared.queue.lock() {
+            q.extend(items);
+        }
+        self.shared.request_flush();
+    }
+
     /// 同步写入 shared.track 后打开单文件，保证 snapshot 与点击一致。
     pub fn play_path_at(&mut self, path: &Path) -> Result<TrackInfo> {
         let info = quick_track_info(path);

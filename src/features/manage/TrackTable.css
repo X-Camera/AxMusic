@@ -31,6 +31,12 @@
   text-align: center;
 }
 
+/* 曲名 / 歌手：左对齐，便于扫读 */
+.track-table th.cell-left,
+.track-table td.cell-left {
+  text-align: left;
+}
+
 .track-table tr.row:hover {
   background: var(--bg-hover);
 }

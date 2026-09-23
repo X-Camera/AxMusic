@@ -78,6 +78,9 @@ export const api = {
   playFile: (path: string) => invoke<PlayerSnapshot>("play_file", { path }),
   playQueue: (items: QueueItem[], start: number) =>
     invoke<PlayerSnapshot>("play_queue", { items, start }),
+  /** 追加到当前队列末尾（排队等播放） */
+  playerEnqueue: (items: QueueItem[]) =>
+    invoke<PlayerSnapshot>("player_enqueue", { items }),
   playerPlay: () => invoke<PlayerSnapshot>("player_play"),
   playerPause: () => invoke<PlayerSnapshot>("player_pause"),
   playerToggle: () => invoke<PlayerSnapshot>("player_toggle"),
@@ -205,6 +208,10 @@ export const api = {
     invoke<PlaylistDetail>("playlist_remove_track", { name, index }),
   playlistMoveTrack: (name: string, fromIndex: number, toIndex: number) =>
     invoke<PlaylistDetail>("playlist_move_track", { name, fromIndex, toIndex }),
+  // ── 喜爱（系统歌单「喜爱」的快捷读写）──────────────────────────
+  favoritePaths: () => invoke<string[]>("favorite_paths"),
+  favoriteToggle: (item: PlaylistAddItem) =>
+    invoke<import("./types").FavoriteToggleResult>("favorite_toggle", { item }),
 };
 
 export function formatTime(ms: number): string {

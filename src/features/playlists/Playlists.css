@@ -68,13 +68,58 @@
 
 .pl-track-row {
   display: grid;
-  grid-template-columns: 32px 1fr 120px 48px auto;
+  grid-template-columns: 32px 28px 1fr 120px 48px auto;
   gap: 8px;
   align-items: center;
   min-height: 36px;
   padding: 0 8px;
   border-radius: 6px;
   color: var(--text);
+}
+
+/* 系统「喜爱」歌单：置顶 + 与用户歌单视觉区分（未选中时用描边区分，避免像已选中） */
+.pl-row.favorites {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  margin-bottom: 6px;
+}
+
+.pl-row.favorites:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.pl-row.favorites.active {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+.pl-row.favorites .pl-fav-icon {
+  color: var(--danger);
+}
+
+.pl-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 16px;
+  flex-shrink: 0;
+}
+
+.pl-user-divider {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.pl-head.favorites .display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
 }
 
 .pl-track-row:hover {
@@ -157,6 +202,15 @@
 
 .picker-item:hover {
   background: var(--bg-hover);
+}
+
+.picker-item.favorites {
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  margin-bottom: 4px;
+}
+
+.picker-item.favorites .pl-fav-icon {
+  color: var(--danger);
 }
 
 .picker-error {

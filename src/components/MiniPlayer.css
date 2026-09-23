@@ -101,7 +101,7 @@
 .mp-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -112,7 +112,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   padding: 0;
   text-align: left;
   color: inherit;
@@ -140,6 +140,7 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
   height: 22px;
   padding: 0 8px;
   border: 1px solid var(--border);
@@ -337,6 +338,29 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+.mp-queue-item-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-control);
+}
+
+.mp-queue-item-wrap .mp-queue-item {
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
+}
+
+.mp-queue-fav {
+  opacity: 0.55;
+  margin-right: 4px;
+}
+
+.mp-queue-item-wrap:hover .mp-queue-fav,
+.mp-queue-fav.on {
+  opacity: 1;
 }
 
 .mp-queue-badge {

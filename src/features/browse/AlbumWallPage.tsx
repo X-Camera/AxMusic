@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ListPlus, Play } from "lucide-react";
+import { Disc3, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { AlbumCard, PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import { AlbumCover } from "./AlbumCover";
 import "./AlbumWall.css";
@@ -163,6 +164,7 @@ export function AlbumWallPage() {
               <div className="album-track-list">
                 <div className="album-track-head tertiary">
                   <span />
+                  <span />
                   <span>曲名</span>
                   <span>歌手</span>
                   <span />
@@ -176,6 +178,9 @@ export function AlbumWallPage() {
                     onClick={() => playTrack(t)}
                   >
                     <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                    <span className="fav-col">
+                      <FavoriteHeart item={trackRowToAddItem(t)} />
+                    </span>
                     <span className="ellipsis">{t.title || t.filename}</span>
                     <span className="tertiary ellipsis">{t.artist || "—"}</span>
                     <span className="song-actions">
@@ -226,12 +231,9 @@ export function AlbumWallPage() {
                       hasCover={a.has_cover}
                       initial={albumInitial(a)}
                     />
-                    <span
-                      className="album-play"
-                      title="播放专辑"
-                      onClick={(e) => void playAlbum(a, e)}
-                    >
-                      <Play size={16} fill="currentColor" />
+                    {/* 点封面 = 打开专辑，中央提示用唱片图标（非播放） */}
+                    <span className="album-open" aria-hidden>
+                      <Disc3 size={36} strokeWidth={1.5} />
                     </span>
                   </div>
                   <div className="album-name">{a.album || "Unknown Album"}</div>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ListPlus, X } from "lucide-react";
+import { Heart, ListPlus, X } from "lucide-react";
 
 import { api } from "../../lib/api";
 import type { PlaylistAddItem, PlaylistSummary } from "../../lib/types";
+import { useFavorites } from "../../state/useFavorites";
 import "./Playlists.css";
 
 /** 「加入歌单」对话框：选现有歌单追加，或新建并加入。 */
@@ -27,11 +28,12 @@ export function PlaylistPicker({
       .catch(() => setList([]));
   }, []);
 
-  async function addTo(name: string) {
+  async function addTo(name: string, isFavorites = false) {
     setBusy(true);
     setError(null);
     try {
       await api.playlistAddTracks(name, items);
+      if (isFavorites) void useFavorites.getState().reload();
       onAdded(name);
     } catch (e) {
       setError(String(e));
@@ -89,10 +91,15 @@ export function PlaylistPicker({
             list.map((p) => (
               <button
                 key={p.name}
-                className="picker-item"
+                className={`picker-item${p.is_favorites ? " favorites" : ""}`}
                 disabled={busy}
-                onClick={() => void addTo(p.name)}
+                onClick={() => void addTo(p.name, p.is_favorites)}
               >
+                {p.is_favorites ? (
+                  <Heart size={15} className="pl-fav-icon" fill="currentColor" />
+                ) : (
+                  <ListPlus size={15} className="tertiary" />
+                )}
                 <span className="ellipsis" style={{ flex: 1 }}>
                   {p.name}
                 </span>

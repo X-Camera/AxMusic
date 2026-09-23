@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ListPlus, Play } from "lucide-react";
+import { ListPlus, Play, UserRound } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { AlbumCard, ArtistCard, PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import { AlbumCover } from "./AlbumCover";
 import "./Artists.css";
@@ -186,8 +187,9 @@ export function ArtistsPage() {
                               hasCover={al.has_cover}
                               initial={(al.album || "?").slice(0, 1).toUpperCase()}
                             />
-                            <span className="album-play" title="播放专辑">
-                              <Play size={16} fill="currentColor" />
+                            {/* 点封面 = 播放专辑 */}
+                            <span className="cover-hover-icon" aria-hidden>
+                              <Play size={36} fill="currentColor" strokeWidth={0} />
                             </span>
                           </div>
                           <div className="album-name">{al.album || "Unknown Album"}</div>
@@ -211,6 +213,7 @@ export function ArtistsPage() {
                     <div className="album-track-list">
                       <div className="album-track-head tertiary">
                         <span />
+                        <span />
                         <span>曲名</span>
                         <span>专辑</span>
                         <span />
@@ -224,6 +227,9 @@ export function ArtistsPage() {
                           onClick={() => playTrack(t)}
                         >
                           <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                          <span className="fav-col">
+                            <FavoriteHeart item={trackRowToAddItem(t)} />
+                          </span>
                           <span className="ellipsis">{t.title || t.filename}</span>
                           <span className="tertiary ellipsis">{t.album || "—"}</span>
                           <span className="song-actions">
@@ -276,12 +282,9 @@ export function ArtistsPage() {
                     hasCover={a.has_cover}
                     initial={artistInitial(a.name)}
                   />
-                  <span
-                    className="album-play"
-                    title="播放歌手"
-                    onClick={(e) => void playArtist(a, e)}
-                  >
-                    <Play size={16} fill="currentColor" />
+                  {/* 点卡片 = 打开歌手 */}
+                  <span className="cover-hover-icon" aria-hidden>
+                    <UserRound size={36} strokeWidth={1.5} />
                   </span>
                 </div>
                 <div className="artist-name">{a.name || "Unknown Artist"}</div>

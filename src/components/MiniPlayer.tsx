@@ -5,6 +5,7 @@ import type { QueueItem } from "../lib/types";
 
 import { api, formatTime } from "../lib/api";
 import { useApp } from "../state/useApp";
+import { FavoriteHeart } from "./FavoriteHeart";
 import "./MiniPlayer.css";
 
 export function MiniPlayer() {
@@ -228,6 +229,18 @@ export function MiniPlayer() {
             >
               {track?.title ?? "未在播放"}
             </button>
+            {track && (
+              <FavoriteHeart
+                item={{
+                  path: track.path,
+                  title: track.title,
+                  artist: "",
+                  duration_ms: track.duration_ms,
+                }}
+                size={13}
+                className="inline"
+              />
+            )}
             {outsideLib && (
               <button
                 className="mp-include"
@@ -344,16 +357,27 @@ export function MiniPlayer() {
                   <div className="tertiary mp-queue-empty">队列为空</div>
                 ) : (
                   (player?.queue ?? []).map((q, i) => (
-                    <button
-                      key={`${q.path}-${i}`}
-                      className={`mp-queue-item${i === player?.queue_index ? " active" : ""}`}
-                      role="option"
-                      aria-selected={i === player?.queue_index}
-                      onClick={() => void playQueueAt(player?.queue ?? [], i)}
-                    >
-                      <span className="mp-queue-item-title">{q.title || q.path.split(/[\\/]/).pop()}</span>
-                      <span className="mono tertiary">{formatTime(q.duration_ms)}</span>
-                    </button>
+                    <div key={`${q.path}-${i}`} className="mp-queue-item-wrap">
+                      <button
+                        className={`mp-queue-item${i === player?.queue_index ? " active" : ""}`}
+                        role="option"
+                        aria-selected={i === player?.queue_index}
+                        onClick={() => void playQueueAt(player?.queue ?? [], i)}
+                      >
+                        <span className="mp-queue-item-title">{q.title || q.path.split(/[\\/]/).pop()}</span>
+                        <span className="mono tertiary">{formatTime(q.duration_ms)}</span>
+                      </button>
+                      <FavoriteHeart
+                        item={{
+                          path: q.path,
+                          title: q.title,
+                          artist: "",
+                          duration_ms: q.duration_ms,
+                        }}
+                        size={13}
+                        className="mp-queue-fav"
+                      />
+                    </div>
                   ))
                 )}
               </div>

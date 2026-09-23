@@ -110,6 +110,7 @@ pub fn run() {
             commands::get_player_state,
             commands::play_file,
             commands::play_queue,
+            commands::player_enqueue,
             commands::player_play,
             commands::player_pause,
             commands::player_toggle,
@@ -148,6 +149,8 @@ pub fn run() {
             commands::playlist_add_tracks,
             commands::playlist_remove_track,
             commands::playlist_move_track,
+            commands::favorite_paths,
+            commands::favorite_toggle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AxMusic");

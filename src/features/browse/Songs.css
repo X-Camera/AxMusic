@@ -38,7 +38,7 @@
 
 .songs-head {
   display: grid;
-  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
+  grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
   height: 28px;
@@ -54,7 +54,7 @@
 
 .song-row {
   display: grid;
-  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
+  grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
   min-height: 36px;
@@ -86,11 +86,33 @@
   padding: 0;
   background: transparent;
   color: var(--text);
+  cursor: pointer;
   transition: transform var(--dur) var(--ease-out);
 }
 
 .song-card:hover {
   transform: translateY(-2px);
+}
+
+.song-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.song-card-title-row .song-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.song-card-title-row .fav-heart {
+  opacity: 0.55;
+}
+
+.song-card:hover .song-card-title-row .fav-heart,
+.song-card-title-row .fav-heart.on {
+  opacity: 1;
 }
 
 .song-card-cover {
@@ -108,17 +130,20 @@
   place-items: center;
   border-radius: 999px;
   opacity: 0;
-  transform: translateY(4px);
   transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
 }
 
+/* 封面正中：半透明三角播放（无底圆） */
 .song-card-play {
-  right: 8px;
-  bottom: 8px;
-  width: 32px;
-  height: 32px;
-  background: var(--accent);
-  color: var(--text);
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  transform: translate(-50%, -50%) scale(0.92);
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.5));
+  pointer-events: none;
 }
 
 .song-card-add {
@@ -126,12 +151,20 @@
   top: 8px;
   width: 28px;
   height: 28px;
+  padding: 0;
+  appearance: none;
   background: rgba(0, 0, 0, 0.55);
   border: 1px solid var(--border);
   color: var(--text);
+  cursor: pointer;
+  transform: translateY(4px);
 }
 
-.song-card:hover .song-card-play,
+.song-card:hover .song-card-play {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
 .song-card:hover .song-card-add {
   opacity: 1;
   transform: translateY(0);
@@ -145,11 +178,22 @@
 }
 
 .song-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
   margin-top: -4px;
+}
+
+.song-card-sub > .ellipsis {
+  flex: 1;
+  min-width: 0;
+}
+
+.song-card-dur {
+  flex-shrink: 0;
+  font-size: 11px;
 }
 
 @keyframes songs-fade-in {

@@ -94,25 +94,28 @@
   font-size: 56px;
 }
 
-.album-play {
+/* 封面正中：半透明唱片「打开专辑」提示（与歌曲卡中央播放提示同语言） */
+.album-open {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--text);
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
   opacity: 0;
-  transform: translateY(4px);
+  transform: translate(-50%, -50%) scale(0.92);
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.5));
+  pointer-events: none;
   transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
 }
 
-.album-card:hover .album-play {
+.album-card:hover .album-open {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .album-name {
@@ -150,7 +153,7 @@
 
 .album-track-head {
   display: grid;
-  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
+  grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
   height: 28px;
@@ -162,7 +165,7 @@
 
 .album-track-row {
   display: grid;
-  grid-template-columns: 36px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
+  grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
   min-height: 36px;

@@ -7,14 +7,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::library::{LibraryDb, TrackRow};
 
+/// 系统「喜爱」歌单的磁盘文件名（不含 .m3u8），不可重命名/删除。
+pub const FAVORITES_FILE: &str = "__favorites__";
+/// 「喜爱」在界面上的固定展示名。
+pub const FAVORITES_LABEL: &str = "喜爱";
+
+/// 是否为系统「喜爱」歌单（接受内部名 / 展示名）。
+pub fn is_favorites_id(name: &str) -> bool {
+    let n = name.trim();
+    n.eq_ignore_ascii_case(FAVORITES_FILE) || n == FAVORITES_LABEL || n.eq_ignore_ascii_case("favorites")
+}
+
+/// 把「喜爱」的各种叫法归一到内部文件名；其余走 validate_name。
+fn resolve_name(name: &str) -> Result<String, String> {
+    if is_favorites_id(name) {
+        return Ok(FAVORITES_FILE.to_string());
+    }
+    validate_name(name)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaylistSummary {
-    /// 文件名（不含 .m3u8）
+    /// 文件名（不含 .m3u8）；喜爱固定为「喜爱」
     pub name: String,
     /// 条目总数（含失效项）
     pub track_count: usize,
     /// EXTINF 时长之和（未知计 0）
     pub total_ms: u64,
+    /// 系统「喜爱」歌单（不可重命名/删除）
+    #[serde(default)]
+    pub is_favorites: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,8 +66,20 @@ pub struct PlaylistEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaylistDetail {
+    /// 喜爱固定为「喜爱」
     pub name: String,
     pub entries: Vec<PlaylistEntry>,
+    /// 系统「喜爱」歌单
+    #[serde(default)]
+    pub is_favorites: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoriteToggleResult {
+    /// 切换后是否已喜爱
+    pub favorited: bool,
+    /// 喜爱歌单当前条目数
+    pub track_count: usize,
 }
 
 /// 解析中间态（文件一行 + 其前的 EXTINF）
@@ -81,15 +115,20 @@ pub fn validate_name(name: &str) -> Result<String, String> {
         || n.ends_with('.')
         || n.chars()
             .any(|c| "\\/:*?\"<>|".contains(c) || c.is_control())
-        || RESERVED.iter().any(|r| n.eq_ignore_ascii_case(r));
+        || RESERVED.iter().any(|r| n.eq_ignore_ascii_case(r))
+        || is_favorites_id(n);
     if bad {
-        return Err("歌单名不合法".into());
+        return Err(if is_favorites_id(n) {
+            "「喜爱」是系统歌单名，不可占用".into()
+        } else {
+            "歌单名不合法".into()
+        });
     }
     Ok(n.to_string())
 }
 
 fn file_path(root: &Path, name: &str) -> Result<PathBuf, String> {
-    Ok(playlists_dir(root).join(format!("{}.m3u8", validate_name(name)?)))
+    Ok(playlists_dir(root).join(format!("{}.m3u8", resolve_name(name)?)))
 }
 
 /// 磁盘上是否已有同名歌单（Windows 文件名大小写不敏感）。
@@ -246,6 +285,20 @@ pub fn read_playlist(root: &Path, name: &str) -> Result<Vec<ParsedEntry>, String
     Ok(parse_m3u8(&text))
 }
 
+/// 读取喜爱歌单；文件不存在时视为空（喜爱始终可写）。
+pub fn read_favorites(root: &Path) -> Vec<ParsedEntry> {
+    read_playlist(root, FAVORITES_FILE).unwrap_or_default()
+}
+
+/// 展示名：喜爱 →「喜爱」，其余为文件名。
+pub fn display_name(name: &str) -> String {
+    if is_favorites_id(name) {
+        FAVORITES_LABEL.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// 规范写出（`#EXTM3U` + `#EXTINF` + 相对路径行），`.tmp` + rename 原子替换。
 fn write_playlist(root: &Path, name: &str, entries: &[ParsedEntry]) -> Result<(), String> {
     let path = file_path(root, name)?;
@@ -282,15 +335,30 @@ pub fn list_playlists(root: &Path) -> Result<Vec<PlaylistSummary>, String> {
             let Some(name) = p.file_stem().map(|s| s.to_string_lossy().to_string()) else {
                 continue;
             };
+            // 系统喜爱单独置顶注入，不进普通列表
+            if is_favorites_id(&name) {
+                continue;
+            }
             let parsed = read_playlist(root, &name)?;
             out.push(PlaylistSummary {
                 track_count: parsed.len(),
                 total_ms: parsed.iter().map(|x| x.duration_ms).sum(),
                 name,
+                is_favorites: false,
             });
         }
     }
     out.sort_by_key(|s| s.name.to_lowercase());
+    let fav = read_favorites(root);
+    out.insert(
+        0,
+        PlaylistSummary {
+            name: FAVORITES_LABEL.to_string(),
+            track_count: fav.len(),
+            total_ms: fav.iter().map(|x| x.duration_ms).sum(),
+            is_favorites: true,
+        },
+    );
     Ok(out)
 }
 
@@ -336,15 +404,20 @@ pub fn to_entries(
             }
         })
         .collect();
+    let is_favorites = is_favorites_id(name);
     PlaylistDetail {
-        name: name.to_string(),
+        name: display_name(name),
         entries,
+        is_favorites,
     }
 }
 
 // ── 变更操作（read-parse-rewrite）────────────────────────────────────
 
 pub fn create(root: &Path, name: &str, items: &[PlaylistAddItem]) -> Result<(), String> {
+    if is_favorites_id(name) {
+        return Err("「喜爱」是系统歌单，不可新建覆盖".into());
+    }
     let name = validate_name(name)?;
     if exists_ci(root, &name) {
         return Err(format!("歌单已存在：{name}"));
@@ -354,6 +427,9 @@ pub fn create(root: &Path, name: &str, items: &[PlaylistAddItem]) -> Result<(), 
 }
 
 pub fn rename(root: &Path, name: &str, new_name: &str) -> Result<(), String> {
+    if is_favorites_id(name) || is_favorites_id(new_name) {
+        return Err("「喜爱」是系统歌单，不可重命名".into());
+    }
     let name = validate_name(name)?;
     let new_name = validate_name(new_name)?;
     if exists_ci(root, &new_name) {
@@ -368,6 +444,9 @@ pub fn rename(root: &Path, name: &str, new_name: &str) -> Result<(), String> {
 }
 
 pub fn delete(root: &Path, name: &str) -> Result<(), String> {
+    if is_favorites_id(name) {
+        return Err("「喜爱」是系统歌单，不可删除".into());
+    }
     let path = file_path(root, name)?;
     if !path.is_file() {
         return Err("歌单不存在".into());
@@ -375,9 +454,18 @@ pub fn delete(root: &Path, name: &str) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|e| format!("删除失败：{e}"))
 }
 
+/// 变更前读取：喜爱文件可不存在（视为空），普通歌单缺失报错。
+fn read_for_update(root: &Path, name: &str) -> Result<Vec<ParsedEntry>, String> {
+    if is_favorites_id(name) {
+        Ok(read_favorites(root))
+    } else {
+        read_playlist(root, name)
+    }
+}
+
 /// 追加条目；按归一化绝对路径去重（Windows 不区分大小写），已在的跳过。
 pub fn add_tracks(root: &Path, name: &str, items: &[PlaylistAddItem]) -> Result<(), String> {
-    let mut entries = read_playlist(root, name)?;
+    let mut entries = read_for_update(root, name)?;
     let dir = playlists_dir(root);
     let mut known: Vec<String> = entries
         .iter()
@@ -396,7 +484,7 @@ pub fn add_tracks(root: &Path, name: &str, items: &[PlaylistAddItem]) -> Result<
 }
 
 pub fn remove_track(root: &Path, name: &str, index: usize) -> Result<(), String> {
-    let mut entries = read_playlist(root, name)?;
+    let mut entries = read_for_update(root, name)?;
     if index >= entries.len() {
         return Err("位置无效".into());
     }
@@ -405,7 +493,7 @@ pub fn remove_track(root: &Path, name: &str, index: usize) -> Result<(), String>
 }
 
 pub fn move_track(root: &Path, name: &str, from_index: usize, to_index: usize) -> Result<(), String> {
-    let mut entries = read_playlist(root, name)?;
+    let mut entries = read_for_update(root, name)?;
     if from_index >= entries.len() || to_index >= entries.len() {
         return Err("位置无效".into());
     }
@@ -415,6 +503,40 @@ pub fn move_track(root: &Path, name: &str, from_index: usize, to_index: usize) -
     let e = entries.remove(from_index);
     entries.insert(to_index, e);
     write_playlist(root, name, &entries)
+}
+
+/// 喜爱歌单里各条目的绝对路径（原样）。
+pub fn favorite_paths(root: &Path) -> Vec<String> {
+    let dir = playlists_dir(root);
+    read_favorites(root)
+        .iter()
+        .map(|e| abs_from(&dir, &e.rel).to_string_lossy().to_string())
+        .collect()
+}
+
+fn path_key(root: &Path, abs: &Path) -> String {
+    abs_from(&playlists_dir(root), &rel_from(&playlists_dir(root), abs))
+        .to_string_lossy()
+        .to_lowercase()
+}
+
+/// 切换喜爱：已存在则移除，否则追加。返回切换后状态与条目数。
+pub fn favorite_toggle(root: &Path, item: &PlaylistAddItem) -> Result<FavoriteToggleResult, String> {
+    let mut entries = read_favorites(root);
+    let abs = PathBuf::from(&item.path);
+    let key = path_key(root, &abs);
+    let dir = playlists_dir(root);
+    let before = entries.len();
+    entries.retain(|e| path_key(root, &abs_from(&dir, &e.rel)) != key);
+    let was_present = entries.len() < before;
+    if !was_present {
+        entries.push(item_to_entry(root, item));
+    }
+    write_playlist(root, FAVORITES_FILE, &entries)?;
+    Ok(FavoriteToggleResult {
+        favorited: !was_present,
+        track_count: entries.len(),
+    })
 }
 
 #[cfg(test)]
@@ -473,5 +595,18 @@ mod tests {
         assert!(validate_name("a/b").is_err());
         assert!(validate_name("CON").is_err());
         assert!(validate_name("x.").is_err());
+    }
+
+    #[test]
+    fn favorites_reserved() {
+        assert!(is_favorites_id("喜爱"));
+        assert!(is_favorites_id("__favorites__"));
+        assert!(is_favorites_id("__FAVORITES__"));
+        assert!(!is_favorites_id("我的最爱"));
+        assert!(validate_name("喜爱").is_err());
+        assert!(validate_name("__favorites__").is_err());
+        assert_eq!(resolve_name("喜爱").unwrap(), FAVORITES_FILE);
+        assert_eq!(display_name("喜爱"), FAVORITES_LABEL);
+        assert_eq!(display_name("跑步"), "跑步");
     }
 }

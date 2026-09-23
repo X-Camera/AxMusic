@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LayoutGrid, List, ListPlus, Play } from "lucide-react";
+import { LayoutGrid, List, ListEnd, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
+import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import { AlbumCover } from "./AlbumCover";
 import "./Songs.css";
@@ -13,6 +14,7 @@ type ViewMode = "list" | "grid";
 
 export function SongsPage() {
   const playQueue = useApp((s) => s.playQueue);
+  const enqueue = useApp((s) => s.enqueue);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -152,6 +154,7 @@ export function SongsPage() {
           <div className="songs-list" key="list">
             <div className="songs-head tertiary">
               <span />
+              <span />
               <span>曲名</span>
               <span>歌手</span>
               <span>专辑</span>
@@ -166,6 +169,9 @@ export function SongsPage() {
                 onClick={() => playOne(t)}
               >
                 <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                <span className="fav-col">
+                  <FavoriteHeart item={trackRowToAddItem(t)} />
+                </span>
                 <span className="ellipsis">{t.title || t.filename}</span>
                 <span className="tertiary ellipsis">{t.artist || "—"}</span>
                 <span className="tertiary ellipsis">{t.album || "—"}</span>
@@ -188,7 +194,7 @@ export function SongsPage() {
         ) : (
           <div className="songs-grid" key="grid">
             {filtered.map((t) => (
-              <button
+              <div
                 key={t.id}
                 className="song-card"
                 title="播放"
@@ -201,33 +207,33 @@ export function SongsPage() {
                     hasCover={t.has_cover}
                     initial={(t.title || t.filename || "?").slice(0, 1).toUpperCase()}
                   />
-                  <span
-                    className="song-card-play"
-                    title="播放"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      playOne(t);
-                    }}
-                  >
-                    <Play size={16} fill="currentColor" />
+                  <span className="song-card-play" aria-hidden>
+                    <Play size={36} fill="currentColor" strokeWidth={0} />
                   </span>
-                  <span
+                  <button
+                    type="button"
                     className="song-card-add"
-                    title="加入歌单"
+                    title="加入队列"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setPickerItems([trackRowToAddItem(t)]);
+                      void enqueue([trackRowToQueueItem(t)]);
                     }}
                   >
-                    <ListPlus size={14} />
-                  </span>
+                    <ListEnd size={14} />
+                  </button>
                 </div>
-                <div className="song-card-title">{t.title || t.filename}</div>
+                <div className="song-card-title-row">
+                  <FavoriteHeart item={trackRowToAddItem(t)} />
+                  <div className="song-card-title">{t.title || t.filename}</div>
+                </div>
                 <div className="song-card-sub tertiary">
-                  {t.artist || "—"}
-                  {t.album ? ` · ${t.album}` : ""}
+                  <span className="ellipsis">
+                    {t.artist || "—"}
+                    {t.album ? ` · ${t.album}` : ""}
+                  </span>
+                  <span className="mono song-card-dur">{formatTime(t.duration_ms)}</span>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}

@@ -196,7 +196,7 @@
 .folders-head,
 .folders-row {
   display: grid;
-  grid-template-columns: 36px 40px minmax(140px, 1.4fr) minmax(80px, 0.9fr) minmax(100px, 1fr) 56px;
+  grid-template-columns: 36px 40px 28px minmax(140px, 1.4fr) minmax(80px, 0.9fr) minmax(100px, 1fr) 56px;
   gap: 8px;
   align-items: center;
   padding: 0 12px;
