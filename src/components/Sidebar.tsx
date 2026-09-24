@@ -45,7 +45,7 @@ export function Sidebar() {
     <aside className="sidebar">
       <div className="brand" data-tauri-drag-region="deep">
         <div className="brand-mark">
-          <BrandMark size={32} />
+          <BrandMark size={38} />
         </div>
         <div className="brand-text">
           <div className="brand-name">

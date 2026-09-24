@@ -13,12 +13,15 @@ import { ComparePanel } from "./ComparePanel";
 import { StatsPanel } from "./StatsPanel";
 import { ScrapeWizard } from "./ScrapeWizard";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
+import { QueuePanel } from "../../components/QueuePanel";
 import "./ManagePage.css";
 
 const TRACKS_LIMIT = 2000;
 
 export function ManagePage() {
   const playQueue = useApp((s) => s.playQueue);
+  const queuePanelOpen = useApp((s) => s.queuePanelOpen);
+  const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
   const [root, setRoot] = useState<LibraryRoot | null | undefined>(undefined);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [missingOnly, setMissingOnly] = useState(false);
@@ -195,9 +198,10 @@ export function ManagePage() {
     return (
       <>
         <TopBar title="管理" />
-        <div className="page-scroll">
+        <div className={`page-scroll${queuePanelOpen ? " queue-squeeze-self" : ""}`}>
           <div className="empty-state">加载中…</div>
         </div>
+        {queuePanelOpen && <QueuePanel variant="dock" />}
       </>
     );
   }
@@ -206,7 +210,7 @@ export function ManagePage() {
     return (
       <>
         <TopBar title="管理" />
-        <div className="page-scroll">
+        <div className={`page-scroll${queuePanelOpen ? " queue-squeeze-self" : ""}`}>
           <h2 className="display">设置库目录</h2>
           <p className="muted" style={{ maxWidth: 520, marginTop: -8 }}>
             洗库只面向库目录。新建一个文件夹，或选择已有音乐文件夹作为库根并初始化。之后手动放入音频，再「刷新扫描」。
@@ -223,6 +227,7 @@ export function ManagePage() {
           </div>
           {error && <div className="error-line">{error}</div>}
         </div>
+        {queuePanelOpen && <QueuePanel variant="dock" />}
       </>
     );
   }
@@ -280,7 +285,13 @@ export function ManagePage() {
       />
 
       <div className="manage-body">
-        <div className="manage-main">
+        <div
+          className="manage-main"
+          onPointerDown={() => {
+            // 点左侧区域：收起播放列表，恢复本页右边栏
+            if (queuePanelOpen) setQueuePanelOpen(false);
+          }}
+        >
           <div className="manage-toolbar">
             <div className="manage-search">
               <Search size={14} className="tertiary" />
@@ -361,53 +372,60 @@ export function ManagePage() {
           </div>
         </div>
 
+        {/* 播放列表激活时只替换右边栏内容，不另外挤压 */}
         <div className="manage-side">
-          <div className="manage-side-scroll">
-            {compareId != null ? (
-              <ComparePanel
-                key={`${compareId}-${compareVersion}`}
-                trackId={compareId}
-                onWritten={() => {
-                  setCompareVersion((v) => v + 1);
-                  void reloadTracks();
-                }}
-                onSearchLyrics={() => {
-                  const t = tracks.find((x) => x.id === compareId);
-                  if (!t) return;
-                  void openLyricsWindow({
-                    id: t.id,
-                    path: t.path,
-                    title: t.title || t.filename,
-                    artist: t.artist,
-                    filename: t.filename,
-                  });
-                }}
-                onScrape={() => {
-                  if (activeTrack) setScrapeTrack(activeTrack);
-                }}
-              />
-            ) : (
-              <StatsPanel stats={stats} />
-            )}
-          </div>
-          <div className="side-actions">
-            <button
-              className="btn btn-primary"
-              disabled={actionTracks.length === 0}
-              title={actionTracks.length > 1 ? `播放所选 ${actionTracks.length} 首` : "播放"}
-              onClick={() => void onPlayAction()}
-            >
-              <Play size={15} /> 播放
-            </button>
-            <button
-              className="btn"
-              disabled={actionTracks.length === 0}
-              title="加入歌单"
-              onClick={() => onPlaylistAction()}
-            >
-              <ListPlus size={15} /> 歌单
-            </button>
-          </div>
+          {queuePanelOpen ? (
+            <QueuePanel variant="slot" />
+          ) : (
+            <>
+              <div className="manage-side-scroll">
+                {compareId != null ? (
+                  <ComparePanel
+                    key={`${compareId}-${compareVersion}`}
+                    trackId={compareId}
+                    onWritten={() => {
+                      setCompareVersion((v) => v + 1);
+                      void reloadTracks();
+                    }}
+                    onSearchLyrics={() => {
+                      const t = tracks.find((x) => x.id === compareId);
+                      if (!t) return;
+                      void openLyricsWindow({
+                        id: t.id,
+                        path: t.path,
+                        title: t.title || t.filename,
+                        artist: t.artist,
+                        filename: t.filename,
+                      });
+                    }}
+                    onScrape={() => {
+                      if (activeTrack) setScrapeTrack(activeTrack);
+                    }}
+                  />
+                ) : (
+                  <StatsPanel stats={stats} />
+                )}
+              </div>
+              <div className="side-actions">
+                <button
+                  className="btn btn-primary"
+                  disabled={actionTracks.length === 0}
+                  title={actionTracks.length > 1 ? `播放所选 ${actionTracks.length} 首` : "播放"}
+                  onClick={() => void onPlayAction()}
+                >
+                  <Play size={15} /> 播放
+                </button>
+                <button
+                  className="btn"
+                  disabled={actionTracks.length === 0}
+                  title="加入歌单"
+                  onClick={() => onPlaylistAction()}
+                >
+                  <ListPlus size={15} /> 歌单
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

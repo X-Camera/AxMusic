@@ -1,11 +1,9 @@
-/* 双栏：左自适应滚动，右定宽不滚 */
+/* 双栏：左自适应滚动，右定宽边栏（与管理页 manage-side 同壳） */
 .set-shell {
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: stretch;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
   overflow: hidden;
 }
 
@@ -15,7 +13,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 4px;
+  padding: var(--space-5) var(--space-6);
 }
 
 .set-error {
@@ -84,16 +82,23 @@
   gap: 8px;
 }
 
-/* ── 右侧：软件介绍（定宽，不随左栏滚） ── */
+/* ── 右侧边栏壳：与管理页一致（贴边 + 左分割线，无圆角卡片） ── */
 .set-about {
-  width: 380px;
+  width: var(--panel-width);
   flex-shrink: 0;
-  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  padding: 22px 18px 18px;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+}
+
+.set-about-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -482,7 +487,8 @@
 
   .set-about {
     width: 100%;
-    align-self: auto;
+    border-left: none;
+    border-top: 1px solid var(--border);
     order: -1;
   }
 }

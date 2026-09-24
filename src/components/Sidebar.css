@@ -13,14 +13,15 @@
   align-items: center;
   gap: 10px;
   min-height: 52px;
-  padding: 4px 8px 12px;
+  /* 侧栏 pad 上 8 / 左 12，此处补 8/4 → logo 距左上角等距 16px */
+  padding: var(--space-2) var(--space-1) var(--space-3);
   user-select: none;
 }
 
 .brand-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -29,7 +30,7 @@
 .brand-name {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1.1;
   display: flex;
   align-items: baseline;

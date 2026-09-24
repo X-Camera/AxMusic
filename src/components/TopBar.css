@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  height: 52px;
+  height: var(--topbar-height);
   padding: 0 0 0 var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--bg-glass);
@@ -38,16 +38,21 @@
   user-select: text;
 }
 
-.topbar-search input {
+/* 必须压过 global 的 input:not([type=...]) 边框/底色/内边距，否则框中框 */
+.topbar-search input:not([type="checkbox"]):not([type="range"]),
+.topbar-search input:not([type="checkbox"]):not([type="range"]):hover,
+.topbar-search input:not([type="checkbox"]):not([type="range"]):focus {
   border: none;
   background: transparent;
   padding: 0;
   width: 100%;
   box-shadow: none;
+  outline: none;
 }
 
-.topbar-search input:focus {
-  box-shadow: none;
+.topbar-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .topbar-search input:disabled {

@@ -1,8 +1,6 @@
 import { FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import type { QueueItem } from "../lib/types";
-
 import { api, formatTime } from "../lib/api";
 import {
   clockNow,
@@ -24,7 +22,8 @@ export function MiniPlayer() {
   const seek = useApp((s) => s.seek);
   const setVolume = useApp((s) => s.setVolume);
   const setFullPlayer = useApp((s) => s.setFullPlayer);
-  const playQueue = useApp((s) => s.playQueue);
+  const queuePanelOpen = useApp((s) => s.queuePanelOpen);
+  const toggleQueuePanel = useApp((s) => s.toggleQueuePanel);
 
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
@@ -33,9 +32,7 @@ export function MiniPlayer() {
   const [outsideLib, setOutsideLib] = useState(false);
   const [including, setIncluding] = useState(false);
   const [includedAt, setIncludedAt] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [cover, setCover] = useState<string | null>(null);
-  const [queueOpen, setQueueOpen] = useState(false);
   const pollRef = useRef<number | null>(null);
   /** 进度圆点：轮询 500ms 太粗，用时钟外推 + rAF 直接写 DOM，避免一顿一顿 */
   const seekInputRef = useRef<HTMLInputElement>(null);
@@ -103,29 +100,6 @@ export function MiniPlayer() {
       /* keep button visible for retry */
     } finally {
       setIncluding(false);
-    }
-  }
-
-  /** 队列存为歌单（另存为新歌单，重名不覆盖） */
-  async function saveQueueAs() {
-    const queue = player?.queue ?? [];
-    if (queue.length === 0) return;
-    const name = window.prompt("存为歌单名称", "");
-    if (!name || !name.trim()) return;
-    try {
-      await api.playlistCreate(
-        name.trim(),
-        queue.map((q) => ({
-          path: q.path,
-          title: q.title,
-          artist: "",
-          duration_ms: q.duration_ms,
-        })),
-      );
-      setSavedAt(name.trim());
-      window.setTimeout(() => setSavedAt(null), 2000);
-    } catch (e) {
-      window.alert(String(e));
     }
   }
 
@@ -215,23 +189,6 @@ export function MiniPlayer() {
       window.removeEventListener("pointercancel", end);
     };
   }, []);
-
-  // 队列弹层：点外关闭
-  useEffect(() => {
-    if (!queueOpen) return;
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t?.closest(".mp-queue-wrap")) return;
-      setQueueOpen(false);
-    };
-    window.addEventListener("pointerdown", onDown);
-    return () => window.removeEventListener("pointerdown", onDown);
-  }, [queueOpen]);
-
-  async function playQueueAt(items: QueueItem[], index: number) {
-    setQueueOpen(false);
-    await playQueue(items, index);
-  }
 
   return (
     <footer className="mini-player" aria-label="迷你播放条">
@@ -371,63 +328,20 @@ export function MiniPlayer() {
         </div>
         <div className="mp-queue-wrap">
           <button
-            className="mp-icon mp-queue"
-            title={queueLen > 0 ? `播放队列 · ${queueLen} 首` : "播放队列为空"}
-            aria-expanded={queueOpen}
-            onClick={() => setQueueOpen((v) => !v)}
+            className={`mp-icon mp-queue${queuePanelOpen ? " active" : ""}`}
+            title={
+              queuePanelOpen
+                ? "收起播放列表"
+                : queueLen > 0
+                  ? `播放列表 · ${queueLen} 首`
+                  : "播放列表为空"
+            }
+            aria-expanded={queuePanelOpen}
+            onClick={() => toggleQueuePanel()}
           >
             <ListMusic size={15} />
             {queueLen > 0 && <span className="mp-queue-badge">{queueLen > 99 ? "99+" : queueLen}</span>}
           </button>
-          {queueOpen && (
-            <div className="mp-queue-panel" role="listbox" aria-label="播放队列">
-              <div className="mp-queue-head">
-                <span>播放队列 · {queueLen} 首</span>
-                {savedAt ? (
-                  <span className="tertiary" title="已存为歌单">
-                    已存为「{savedAt}」
-                  </span>
-                ) : (
-                  <button
-                    className="link-btn"
-                    disabled={queueLen === 0}
-                    onClick={() => void saveQueueAs()}
-                  >
-                    存为歌单
-                  </button>
-                )}
-              </div>
-              <div className="mp-queue-list">
-                {queueLen === 0 ? (
-                  <div className="tertiary mp-queue-empty">队列为空</div>
-                ) : (
-                  (player?.queue ?? []).map((q, i) => (
-                    <div key={`${q.path}-${i}`} className="mp-queue-item-wrap">
-                      <button
-                        className={`mp-queue-item${i === player?.queue_index ? " active" : ""}`}
-                        role="option"
-                        aria-selected={i === player?.queue_index}
-                        onClick={() => void playQueueAt(player?.queue ?? [], i)}
-                      >
-                        <span className="mp-queue-item-title">{q.title || q.path.split(/[\\/]/).pop()}</span>
-                        <span className="mono tertiary">{formatTime(q.duration_ms)}</span>
-                      </button>
-                      <FavoriteHeart
-                        item={{
-                          path: q.path,
-                          title: q.title,
-                          artist: "",
-                          duration_ms: q.duration_ms,
-                        }}
-                        size={13}
-                        className="mp-queue-fav"
-                      />
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </footer>

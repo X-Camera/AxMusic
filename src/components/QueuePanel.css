@@ -1,0 +1,128 @@
+/* 播放列表右边栏：与管理/设置右边栏同宽 */
+.queue-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 浏览页：顶栏下方贴右缘，从右往左挤内容；顶栏通栏不动 */
+.queue-panel-dock {
+  position: absolute;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  width: var(--panel-width);
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+  /* 必须低于 .mini-player(z:3)：进度条/圆点骑在下沿分界上，要盖住列表栏 */
+  z-index: 1;
+}
+
+/* 管理/设置：填满原右边栏槽位，不另外占位 */
+.queue-panel-slot {
+  flex: 1;
+  width: 100%;
+  background: transparent;
+}
+
+.queue-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.queue-panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.queue-panel-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.queue-panel-close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.queue-panel-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.queue-panel-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.queue-panel-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  text-align: left;
+  color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.queue-panel-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.queue-panel-item.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.queue-panel-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.queue-panel-item-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-control);
+}
+
+.queue-panel-item-wrap .queue-panel-item {
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
+}
+
+.queue-panel-fav {
+  opacity: 0.55;
+  margin-right: 4px;
+}
+
+.queue-panel-item-wrap:hover .queue-panel-fav,
+.queue-panel-fav.on {
+  opacity: 1;
+}

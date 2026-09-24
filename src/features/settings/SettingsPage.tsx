@@ -19,6 +19,7 @@ import type {
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { BrandMark } from "../../components/BrandMark";
+import { QueuePanel } from "../../components/QueuePanel";
 import "./SettingsPage.css";
 
 const REPEAT_MODES: { id: RepeatMode; label: string }[] = [
@@ -186,7 +187,7 @@ function AboutPanel({
   paths: PathsInfo | null;
 }) {
   return (
-    <aside className="set-about" aria-label="关于 AxMusic">
+    <div className="set-about-scroll" aria-label="关于 AxMusic">
       <div className="set-about-hero">
         <div className="set-about-mark">
           <BrandMark size={88} />
@@ -257,12 +258,14 @@ function AboutPanel({
       <p className="set-about-copy tertiary">
         © {new Date().getFullYear()} AxMusic · MIT License
       </p>
-    </aside>
+    </div>
   );
 }
 
 export function SettingsPage() {
   const setRoute = useApp((s) => s.setRoute);
+  const queuePanelOpen = useApp((s) => s.queuePanelOpen);
+  const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [paths, setPaths] = useState<PathsInfo | null>(null);
   const [appInfo, setAppInfo] = useState<{ name: string; version: string } | null>(
@@ -310,11 +313,12 @@ export function SettingsPage() {
     return (
       <>
         <TopBar title="设置" />
-        <div className="page-scroll">
+        <div className={`page-scroll${queuePanelOpen ? " queue-squeeze-self" : ""}`}>
           <div className="empty-state">
             <p className="muted">{error ?? "加载中…"}</p>
           </div>
         </div>
+        {queuePanelOpen && <QueuePanel variant="dock" />}
       </>
     );
   }
@@ -325,7 +329,13 @@ export function SettingsPage() {
     <>
       <TopBar title="设置" />
       <div className="set-shell">
-        <div className="set-main">
+        <div
+          className="set-main"
+          onPointerDown={() => {
+            // 点左侧区域：收起播放列表，恢复本页右边栏
+            if (queuePanelOpen) setQueuePanelOpen(false);
+          }}
+        >
           {error && <div className="error-line set-error">{error}</div>}
 
             <Section title="播放">
@@ -549,7 +559,14 @@ export function SettingsPage() {
             </Section>
         </div>
 
-        <AboutPanel appInfo={appInfo} paths={paths} />
+        {/* 右边栏壳与管理页一致；播放列表只替换内容 */}
+        <div className="set-about">
+          {queuePanelOpen ? (
+            <QueuePanel variant="slot" />
+          ) : (
+            <AboutPanel appInfo={appInfo} paths={paths} />
+          )}
+        </div>
       </div>
     </>
   );

@@ -136,12 +136,19 @@ input[type="checkbox"]:disabled {
 }
 
 .app-shell .main-col {
+  position: relative;
   grid-row: 1;
   grid-column: 2;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+/* 浏览页播放列表：只挤内容区，顶栏通栏（窗口按钮留在右缘） */
+.main-col.queue-squeeze > :not(.topbar):not(.queue-panel),
+.queue-squeeze-self {
+  margin-right: var(--panel-width);
 }
 
 .app-shell .mini-player {

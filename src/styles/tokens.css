@@ -42,6 +42,9 @@
   --space-6: 32px;
   --sidebar-width: 220px;
   --sidebar-width-collapsed: 56px;
+  /** 管理/设置/播放列表共用右边栏宽度 */
+  --panel-width: 380px;
+  --topbar-height: 52px;
   --miniplayer-height: 84px;
   --table-row-height: 40px;
 

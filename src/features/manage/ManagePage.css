@@ -80,16 +80,21 @@
   border-radius: var(--radius-control);
 }
 
-.manage-search input {
+/* 压过 global input 边框，避免框中框 */
+.manage-search input:not([type="checkbox"]):not([type="range"]),
+.manage-search input:not([type="checkbox"]):not([type="range"]):hover,
+.manage-search input:not([type="checkbox"]):not([type="range"]):focus {
   border: none;
   background: transparent;
   padding: 0;
   width: 100%;
   box-shadow: none;
+  outline: none;
 }
 
-.manage-search input:focus {
-  box-shadow: none;
+.manage-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .manage-chips {
@@ -119,9 +124,9 @@
   min-width: 0;
 }
 
-/* 右栏：上顶到工具栏同一行，底部固定操作排 */
+/* 右栏：上顶到工具栏同一行，底部固定操作排；宽度与设置/播放列表一致 */
 .manage-side {
-  width: 380px;
+  width: var(--panel-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
