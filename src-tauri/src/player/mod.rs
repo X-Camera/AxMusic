@@ -33,14 +33,17 @@ pub enum PlayStatus {
     Paused,
 }
 
-/// 播放模式（与 settings.json 的 play_mode 同构）
+/// 循环模式（业界三态：关 → 列表循环 → 单曲循环；与随机正交）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum PlayMode {
+pub enum RepeatMode {
+    /// 顺序播完即停
     #[default]
-    Sequential,
-    Shuffle,
-    RepeatOne,
+    Off,
+    /// 列表循环
+    All,
+    /// 单曲循环
+    One,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,8 +55,12 @@ pub struct PlayerSnapshot {
     pub track: Option<TrackInfo>,
     pub queue: Vec<QueueItem>,
     pub queue_index: Option<usize>,
+    /// 随机播放（与循环独立）
     #[serde(default)]
-    pub play_mode: PlayMode,
+    pub shuffle: bool,
+    /// 循环模式
+    #[serde(default)]
+    pub repeat: RepeatMode,
 }
 
 /// Swappable playback engine surface (thin).
@@ -122,8 +129,12 @@ impl Player {
         self.engine.prev()
     }
 
-    pub fn set_play_mode(&mut self, mode: PlayMode) {
-        self.engine.set_play_mode(mode);
+    pub fn set_shuffle(&mut self, on: bool) {
+        self.engine.set_shuffle(on);
+    }
+
+    pub fn set_repeat(&mut self, mode: RepeatMode) {
+        self.engine.set_repeat(mode);
     }
 
     /// Called periodically: auto-advance when track finished.

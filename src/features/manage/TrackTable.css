@@ -101,7 +101,6 @@
 }
 
 .track-table input[type="checkbox"] {
-  accent-color: var(--accent);
   width: 14px;
   height: 14px;
 }

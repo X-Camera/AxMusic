@@ -1,5 +1,6 @@
 export type PlayStatus = "Stopped" | "Playing" | "Paused";
-export type PlayMode = "sequential" | "shuffle" | "repeat_one";
+/** 循环模式（与随机正交）：关 → 列表循环 → 单曲循环 */
+export type RepeatMode = "off" | "all" | "one";
 
 export interface TrackInfo {
   path: string;
@@ -23,7 +24,8 @@ export interface PlayerSnapshot {
   track: TrackInfo | null;
   queue: QueueItem[];
   queue_index: number | null;
-  play_mode: PlayMode;
+  shuffle: boolean;
+  repeat: RepeatMode;
 }
 
 export interface LibraryRoot {
@@ -177,7 +179,8 @@ export type LyricsFont =
 export interface AppSettings {
   library_root: string | null;
   volume: number;
-  play_mode: PlayMode;
+  shuffle: boolean;
+  repeat: RepeatMode;
   restore_volume: boolean;
   lyrics_save_mode: LyricsSaveMode;
   lyrics_prefer: LyricsPrefer;

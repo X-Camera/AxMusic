@@ -8,7 +8,7 @@ import type {
   LibraryStats,
   PathsInfo,
   PlayerSnapshot,
-  PlayMode,
+  RepeatMode,
   PlaylistAddItem,
   PlaylistDetail,
   PlaylistSummary,
@@ -88,8 +88,10 @@ export const api = {
   playerSeek: (ms: number) => invoke<PlayerSnapshot>("player_seek", { ms }),
   playerSetVolume: (volume: number) =>
     invoke<PlayerSnapshot>("player_set_volume", { volume }),
-  playerSetPlayMode: (mode: PlayMode) =>
-    invoke<PlayerSnapshot>("player_set_play_mode", { mode }),
+  playerSetShuffle: (shuffle: boolean) =>
+    invoke<PlayerSnapshot>("player_set_shuffle", { shuffle }),
+  playerSetRepeat: (repeat: RepeatMode) =>
+    invoke<PlayerSnapshot>("player_set_repeat", { repeat }),
 
   listDirAudio: (path: string) => invoke<TrackInfo[]>("list_dir_audio", { path }),
   /** 单层目录：子文件夹 + 本层音频（withFiles=false 时只要子目录，给树展开用） */

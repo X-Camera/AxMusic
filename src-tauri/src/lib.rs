@@ -52,10 +52,11 @@ pub fn run() {
                 0.8
             };
             player.engine.set_volume_f32(boot_vol);
-            player.set_play_mode(match app_settings.play_mode {
-                settings::PlayMode::Sequential => player::PlayMode::Sequential,
-                settings::PlayMode::Shuffle => player::PlayMode::Shuffle,
-                settings::PlayMode::RepeatOne => player::PlayMode::RepeatOne,
+            player.set_shuffle(app_settings.shuffle);
+            player.set_repeat(match app_settings.repeat {
+                settings::RepeatMode::Off => player::RepeatMode::Off,
+                settings::RepeatMode::All => player::RepeatMode::All,
+                settings::RepeatMode::One => player::RepeatMode::One,
             });
 
             // 恢复上次播放列表（队列 + 当前曲），从头暂停不自动播
@@ -146,7 +147,8 @@ pub fn run() {
             commands::player_prev,
             commands::player_seek,
             commands::player_set_volume,
-            commands::player_set_play_mode,
+            commands::player_set_shuffle,
+            commands::player_set_repeat,
             commands::list_dir_audio,
             commands::list_dir_tree,
             commands::list_dir_audio_recursive,

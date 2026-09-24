@@ -288,7 +288,9 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--text-secondary);
+  /* 固定亮色把手（iOS/Material）：浅色/深色轨道上都清晰，不用 --text（浅色会发黑） */
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
   transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 
@@ -299,7 +301,9 @@
 
 .set-toggle.on .set-toggle-knob {
   transform: translateX(18px);
-  background: var(--on-accent);
+  /* 固定白把手（iOS/Material）：勿用 --on-accent，浅色皮肤下它是深色字色会发黑 */
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 
 .set-toggle:disabled {
@@ -334,8 +338,10 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--text);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  /* 白圆点 + 强调色环：浅色不发黑，深色也有轮廓 */
+  background: #fff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   cursor: pointer;
 }
 
@@ -359,10 +365,6 @@
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
-}
-
-.set-check input {
-  accent-color: var(--accent);
 }
 
 /* 皮肤色板：底表面 + 卡片描边 + 强调块 */

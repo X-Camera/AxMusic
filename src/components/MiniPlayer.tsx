@@ -10,6 +10,7 @@ import {
   clockSyncFromSnapshot,
   createPlayClock,
 } from "../lib/playClock";
+import { nextRepeat, REPEAT_TITLE } from "../lib/playMode";
 import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
 import "./MiniPlayer.css";
@@ -130,8 +131,10 @@ export function MiniPlayer() {
 
   const duration = player?.duration_ms ?? 0;
   const volume = player?.volume ?? 0.8;
-  const playMode = player?.play_mode ?? "sequential";
-  const setPlayMode = useApp((s) => s.setPlayMode);
+  const shuffle = player?.shuffle ?? false;
+  const repeat = player?.repeat ?? "off";
+  const setShuffle = useApp((s) => s.setShuffle);
+  const setRepeat = useApp((s) => s.setRepeat);
   const playing = player?.status === "Playing";
   const queueLen = player?.queue?.length ?? 0;
   const trackPath = track?.path ?? "";
@@ -336,24 +339,18 @@ export function MiniPlayer() {
       <div className="mp-right">
         <span ref={timeLabelRef} className="mp-time mono tertiary" />
         <button
-          className={`mp-icon mode${playMode === "shuffle" ? " active" : ""}`}
-          title={playMode === "shuffle" ? "随机播放（开）" : "随机播放"}
-          onClick={() =>
-            void setPlayMode(playMode === "shuffle" ? "sequential" : "shuffle")
-          }
+          className={`mp-icon mode${shuffle ? " active" : ""}`}
+          title={shuffle ? "随机播放（开）" : "随机播放"}
+          onClick={() => void setShuffle(!shuffle)}
         >
           <Shuffle size={15} />
         </button>
         <button
-          className={`mp-icon mode${playMode === "repeat_one" ? " active" : ""}`}
-          title={playMode === "repeat_one" ? "单曲循环（开）" : "单曲循环"}
-          onClick={() =>
-            void setPlayMode(
-              playMode === "repeat_one" ? "sequential" : "repeat_one",
-            )
-          }
+          className={`mp-icon mode${repeat !== "off" ? " active" : ""}`}
+          title={REPEAT_TITLE[repeat]}
+          onClick={() => void setRepeat(nextRepeat(repeat))}
         >
-          {playMode === "repeat_one" ? <Repeat1 size={15} /> : <Repeat size={15} />}
+          {repeat === "one" ? <Repeat1 size={15} /> : <Repeat size={15} />}
         </button>
         <div className="mp-volume">
           <Volume2 size={15} className="tertiary" />

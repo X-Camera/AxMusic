@@ -41,10 +41,6 @@
   user-select: none;
 }
 
-.close-remember input {
-  accent-color: var(--accent);
-}
-
 .close-actions {
   display: flex;
   justify-content: flex-end;

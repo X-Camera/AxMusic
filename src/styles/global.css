@@ -38,7 +38,7 @@ button {
   background: transparent;
 }
 
-input,
+input:not([type="checkbox"]):not([type="range"]),
 textarea,
 select {
   background: var(--bg-card);
@@ -48,11 +48,61 @@ select {
   outline: none;
 }
 
-input:focus,
+input:not([type="checkbox"]):not([type="range"]):focus,
 textarea:focus,
 select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 复选框：自绘白色勾。勿用 accent-color —— Chromium 会按强调色亮度选勾色，
+   亮绿等浅强调色会画出黑勾，深紫/蓝才是白勾。 */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  vertical-align: middle;
+  outline: none;
+  box-shadow: none;
+}
+
+input[type="checkbox"]:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 ::-webkit-scrollbar {

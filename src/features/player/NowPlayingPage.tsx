@@ -18,6 +18,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, formatTime } from "../../lib/api";
 import { lyricsDisplayVars } from "../../lib/lyricsDisplay";
+import { nextRepeat, REPEAT_TITLE } from "../../lib/playMode";
 import type { LyricsFont } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import {
@@ -59,9 +60,11 @@ export function NowPlayingPage() {
   const prev = useApp((s) => s.prev);
   const seek = useApp((s) => s.seek);
   const setVolume = useApp((s) => s.setVolume);
-  const setPlayMode = useApp((s) => s.setPlayMode);
+  const setShuffle = useApp((s) => s.setShuffle);
+  const setRepeat = useApp((s) => s.setRepeat);
   const setFullPlayer = useApp((s) => s.setFullPlayer);
-  const playMode = player?.play_mode ?? "sequential";
+  const shuffle = player?.shuffle ?? false;
+  const repeat = player?.repeat ?? "off";
 
   const track = player?.track ?? null;
   const path = track?.path ?? "";
@@ -429,11 +432,9 @@ export function NowPlayingPage() {
 
           <div className="np-btns">
             <button
-              className={`np-icon mode${playMode === "shuffle" ? " active" : ""}`}
-              title={playMode === "shuffle" ? "随机播放（开）" : "随机播放"}
-              onClick={() =>
-                void setPlayMode(playMode === "shuffle" ? "sequential" : "shuffle")
-              }
+              className={`np-icon mode${shuffle ? " active" : ""}`}
+              title={shuffle ? "随机播放（开）" : "随机播放"}
+              onClick={() => void setShuffle(!shuffle)}
             >
               <Shuffle size={18} />
             </button>
@@ -456,19 +457,11 @@ export function NowPlayingPage() {
               <SkipForward size={26} fill="currentColor" />
             </button>
             <button
-              className={`np-icon mode${playMode === "repeat_one" ? " active" : ""}`}
-              title={playMode === "repeat_one" ? "单曲循环（开）" : "单曲循环"}
-              onClick={() =>
-                void setPlayMode(
-                  playMode === "repeat_one" ? "sequential" : "repeat_one",
-                )
-              }
+              className={`np-icon mode${repeat !== "off" ? " active" : ""}`}
+              title={REPEAT_TITLE[repeat]}
+              onClick={() => void setRepeat(nextRepeat(repeat))}
             >
-              {playMode === "repeat_one" ? (
-                <Repeat1 size={18} />
-              ) : (
-                <Repeat size={18} />
-              )}
+              {repeat === "one" ? <Repeat1 size={18} /> : <Repeat size={18} />}
             </button>
           </div>
 

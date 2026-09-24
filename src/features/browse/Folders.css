@@ -240,7 +240,6 @@
 }
 
 .folders-check input {
-  accent-color: var(--accent);
   cursor: pointer;
   width: 15px;
   height: 15px;

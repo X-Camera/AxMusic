@@ -12,7 +12,7 @@ import type {
   LyricsPrefer,
   LyricsSaveMode,
   PathsInfo,
-  PlayMode,
+  RepeatMode,
   SongsView,
   ThemeMode,
 } from "../../lib/types";
@@ -21,10 +21,10 @@ import { TopBar } from "../../components/TopBar";
 import { BrandMark } from "../../components/BrandMark";
 import "./SettingsPage.css";
 
-const PLAY_MODES: { id: PlayMode; label: string }[] = [
-  { id: "sequential", label: "顺序" },
-  { id: "shuffle", label: "随机" },
-  { id: "repeat_one", label: "单曲" },
+const REPEAT_MODES: { id: RepeatMode; label: string }[] = [
+  { id: "off", label: "关闭" },
+  { id: "all", label: "列表循环" },
+  { id: "one", label: "单曲" },
 ];
 
 const LYRICS_SAVE: { id: LyricsSaveMode; label: string }[] = [
@@ -352,15 +352,22 @@ export function SettingsPage() {
                   </span>
                 </div>
               </Row>
-              <Row label="播放模式" hint="顺序播完 / 随机 / 单曲循环">
-                <Segmented
-                  value={settings.play_mode}
-                  options={PLAY_MODES}
+              <Row label="随机播放" hint="与循环独立；开=乱序，关=按列表顺序">
+                <Toggle
+                  checked={settings.shuffle}
                   onChange={(v) => {
-                    // 单一写路径：player_set_play_mode 落引擎+落盘并发 settings://changed，
-                    // 本页的 settings://changed 监听负责回同步，不再双写
-                    setSettings((s) => (s ? { ...s, play_mode: v } : s));
-                    void useApp.getState().setPlayMode(v);
+                    setSettings((s) => (s ? { ...s, shuffle: v } : s));
+                    void useApp.getState().setShuffle(v);
+                  }}
+                />
+              </Row>
+              <Row label="循环" hint="关闭=播完停 / 列表循环 / 单曲循环">
+                <Segmented
+                  value={settings.repeat}
+                  options={REPEAT_MODES}
+                  onChange={(v) => {
+                    setSettings((s) => (s ? { ...s, repeat: v } : s));
+                    void useApp.getState().setRepeat(v);
                   }}
                 />
               </Row>

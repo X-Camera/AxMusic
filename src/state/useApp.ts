@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { api } from "../lib/api";
-import type { PlayMode, PlayerSnapshot, QueueItem, RouteId, TrackInfo } from "../lib/types";
+import type { PlayerSnapshot, QueueItem, RepeatMode, RouteId, TrackInfo } from "../lib/types";
 
 interface AppState {
   route: RouteId;
@@ -22,7 +22,8 @@ interface AppState {
   prev: () => Promise<void>;
   seek: (ms: number) => Promise<void>;
   setVolume: (v: number) => Promise<void>;
-  setPlayMode: (m: PlayMode) => Promise<void>;
+  setShuffle: (on: boolean) => Promise<void>;
+  setRepeat: (r: RepeatMode) => Promise<void>;
 }
 
 const emptyPlayer = (): PlayerSnapshot => ({
@@ -33,7 +34,8 @@ const emptyPlayer = (): PlayerSnapshot => ({
   track: null,
   queue: [],
   queue_index: null,
-  play_mode: "sequential",
+  shuffle: false,
+  repeat: "off",
 });
 
 /** 播放器操作序号：轮询结果不得覆盖更新的点播/控制操作 */
@@ -107,7 +109,8 @@ export const useApp = create<AppState>((set, get) => ({
             track: queueItemToTrack(item),
             queue: items,
             queue_index: start,
-            play_mode: prev?.play_mode ?? "sequential",
+            shuffle: prev?.shuffle ?? false,
+            repeat: prev?.repeat ?? "off",
           },
         });
       }
@@ -178,15 +181,31 @@ export const useApp = create<AppState>((set, get) => ({
       endWrite();
     }
   },
-  setPlayMode: async (m) => {
+  setShuffle: async (on) => {
     const rev = beginWrite();
     try {
-      const p = await api.playerSetPlayMode(m);
+      const p = await api.playerSetShuffle(on);
       if (rev === playerRev) {
         set({
           player: p ?? {
             ...(get().player ?? emptyPlayer()),
-            play_mode: m,
+            shuffle: on,
+          },
+        });
+      }
+    } finally {
+      endWrite();
+    }
+  },
+  setRepeat: async (r) => {
+    const rev = beginWrite();
+    try {
+      const p = await api.playerSetRepeat(r);
+      if (rev === playerRev) {
+        set({
+          player: p ?? {
+            ...(get().player ?? emptyPlayer()),
+            repeat: r,
           },
         });
       }

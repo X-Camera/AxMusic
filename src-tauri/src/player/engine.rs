@@ -23,14 +23,11 @@ use symphonia::core::probe::Hint;
 use symphonia::core::sample::{i24, u24};
 use symphonia::core::units::Time;
 
-use super::{PlayerEngine, PlayMode, PlayStatus, PlayerSnapshot, QueueItem, TrackInfo};
+use super::{PlayerEngine, PlayStatus, PlayerSnapshot, QueueItem, RepeatMode, TrackInfo};
 
 const STATUS_STOPPED: u8 = 0;
 const STATUS_PLAYING: u8 = 1;
 const STATUS_PAUSED: u8 = 2;
-const MODE_SEQUENTIAL: u8 = 0;
-const MODE_SHUFFLE: u8 = 1;
-const MODE_REPEAT_ONE: u8 = 2;
 /// Stereo interleaved samples per block.
 const BLOCK_SAMPLES: usize = 2048;
 /// Blocks kept in flight (~0.15s at 1024 frames).
@@ -96,7 +93,7 @@ impl Shared {
             track_ended: AtomicBool::new(false),
             audio_gen: AtomicU64::new(0),
             switch_seq: AtomicU64::new(0),
-            play_mode: AtomicU8::new(MODE_SEQUENTIAL),
+            play_mode: AtomicU8::new(0),
             track: Mutex::new(None),
             queue: Mutex::new(Vec::new()),
             queue_index: Mutex::new(None),
@@ -104,14 +101,19 @@ impl Shared {
         }
     }
 
-    fn play_mode(&self) -> PlayMode {
-        match self.play_mode.load(Ordering::SeqCst) {
-            MODE_SHUFFLE => PlayMode::Shuffle,
-            MODE_REPEAT_ONE => PlayMode::RepeatOne,
-            _ => PlayMode::Sequential,
+    fn shuffle(&self) -> bool {
+        self.play_mode.load(Ordering::SeqCst) & 1 != 0
+    }
+
+    fn repeat(&self) -> RepeatMode {
+        match self.play_mode.load(Ordering::SeqCst) >> 1 {
+            1 => RepeatMode::All,
+            2 => RepeatMode::One,
+            _ => RepeatMode::Off,
         }
     }
 
+    /// bit0 = shuffle，高 2 位 = repeat（0 off / 1 all / 2 one）
     fn play_mode_raw(&self) -> u8 {
         self.play_mode.load(Ordering::SeqCst)
     }
@@ -199,17 +201,26 @@ impl SymphoniaPlayer {
             track,
             queue,
             queue_index,
-            play_mode: self.shared.play_mode(),
+            shuffle: self.shared.shuffle(),
+            repeat: self.shared.repeat(),
         }
     }
 
-    pub fn set_play_mode(&mut self, mode: PlayMode) {
-        let raw = match mode {
-            PlayMode::Sequential => MODE_SEQUENTIAL,
-            PlayMode::Shuffle => MODE_SHUFFLE,
-            PlayMode::RepeatOne => MODE_REPEAT_ONE,
+    pub fn set_shuffle(&mut self, on: bool) {
+        let raw = self.shared.play_mode_raw();
+        let next = if on { raw | 1 } else { raw & !1 };
+        self.shared.play_mode.store(next, Ordering::SeqCst);
+    }
+
+    pub fn set_repeat(&mut self, mode: RepeatMode) {
+        let rep = match mode {
+            RepeatMode::Off => 0u8,
+            RepeatMode::All => 1,
+            RepeatMode::One => 2,
         };
-        self.shared.play_mode.store(raw, Ordering::SeqCst);
+        let raw = self.shared.play_mode_raw();
+        let next = (raw & 1) | (rep << 1);
+        self.shared.play_mode.store(next, Ordering::SeqCst);
     }
 
     /// 同步写入 shared（UI 立刻对准本次点击），再下发原子 PlayQueue 打开解码。
@@ -990,8 +1001,64 @@ fn decode_loop(
                     seg_anchor = if dec.is_some() { Some(0) } else { None };
                 }
                 Cmd::Play => {
-                    playing = true;
-                    shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                    // 业界惯例：播完停住后再点播放 = 从头再听，而不是假播放（无解码器）
+                    // - 单曲/停在某曲末尾 → 重播当前曲
+                    // - 列表播完停住（末首）→ 从第一首再听一遍
+                    let dur = shared.duration_ms.load(Ordering::SeqCst);
+                    let pos = shared.position_ms();
+                    let at_end = dur > 0 && pos.saturating_add(80) >= dur;
+                    let need_restart = dec.is_none() || at_end;
+                    if !need_restart {
+                        playing = true;
+                        shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                    } else {
+                        let finished_list = dec.is_none()
+                            && queue.len() > 1
+                            && queue_index.map(|i| i + 1 >= queue.len()).unwrap_or(false);
+                        let idx = if finished_list {
+                            Some(0)
+                        } else {
+                            queue_index.filter(|i| *i < queue.len()).or(if queue.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            })
+                        };
+                        let item = idx.and_then(|i| queue.get(i).cloned()).or_else(|| {
+                            // 单文件播放（不在队列里）：用当前 track 重开
+                            shared
+                                .track
+                                .lock()
+                                .ok()
+                                .and_then(|t| t.clone())
+                                .map(|t| QueueItem {
+                                    path: t.path,
+                                    title: t.title,
+                                    duration_ms: t.duration_ms,
+                                })
+                        });
+                        if let Some(item) = item {
+                            let path = PathBuf::from(&item.path);
+                            pending_block = None;
+                            if finished_list {
+                                queue_index = Some(0);
+                                if let Ok(mut qi) = shared.queue_index.lock() {
+                                    *qi = Some(0);
+                                }
+                            }
+                            dec = open_track_full(&shared, &path, idx, Some(&item), true);
+                            playing = dec.is_some();
+                            seg_anchor = if playing { Some(0) } else { None };
+                            shared.status.store(
+                                if playing { STATUS_PLAYING } else { STATUS_STOPPED },
+                                Ordering::SeqCst,
+                            );
+                        } else {
+                            playing = false;
+                            seg_anchor = None;
+                            shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
+                        }
+                    }
                 }
                 Cmd::Pause => {
                     playing = false;
@@ -1063,21 +1130,14 @@ fn decode_loop(
                     }
                 }
                 Cmd::Next => {
-                    let mode = shared.play_mode_raw();
+                    // 手动下一首：随机则抽下一首；顺序则下标 +1 末尾回绕（不受循环模式限制）
                     let target = if queue.is_empty() {
                         None
-                    } else if mode == MODE_SHUFFLE {
+                    } else if shared.shuffle() {
                         shuffle_pick(queue.len(), queue_index)
-                    } else if mode == MODE_REPEAT_ONE {
-                        // 手动下一首：跳过单曲循环，按顺序走（末尾回绕）
-                        Some(match queue_index {
-                            Some(i) => (i + 1) % queue.len(),
-                            None => 0,
-                        })
                     } else {
                         Some(match queue_index {
-                            Some(i) if i + 1 < queue.len() => i + 1,
-                            Some(_) => 0, // 手动下一首末尾回绕，方便连播
+                            Some(i) => (i + 1) % queue.len(),
                             None => 0,
                         })
                     };
@@ -1125,8 +1185,7 @@ fn decode_loop(
                             }
                         }
                     } else if !queue.is_empty() {
-                        let mode = shared.play_mode_raw();
-                        let target = if mode == MODE_SHUFFLE {
+                        let target = if shared.shuffle() {
                             history.pop().or_else(|| shuffle_pick(queue.len(), queue_index))
                         } else {
                             Some(match queue_index {
@@ -1192,17 +1251,19 @@ fn decode_loop(
                         // EOF：不 flush——已入通道的队尾继续播完（gapless），
                         // 新曲首块带锚点 0，播到它时进度归零；自动切歌只在这里发生（单一入口）
                         shared.track_ended.store(true, Ordering::SeqCst);
-                        let mode = shared.play_mode_raw();
                         let mut advanced = false;
                         if !queue.is_empty() {
-                            let target = if mode == MODE_REPEAT_ONE {
+                            // 自动切歌：单曲循环重播；随机续抽；顺序看列表循环/播完停
+                            let target = if shared.repeat() == RepeatMode::One {
                                 queue_index.or(Some(0))
-                            } else if mode == MODE_SHUFFLE {
+                            } else if shared.shuffle() {
                                 shuffle_pick(queue.len(), queue_index)
                             } else {
                                 queue_index.and_then(|i| {
                                     if i + 1 < queue.len() {
                                         Some(i + 1)
+                                    } else if shared.repeat() == RepeatMode::All {
+                                        Some(0)
                                     } else {
                                         None
                                     }

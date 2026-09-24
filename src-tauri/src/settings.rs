@@ -6,11 +6,20 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// 播放模式（顺序 / 随机 / 单曲）
+/// 循环模式（关 / 列表循环 / 单曲循环；与随机正交）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum PlayMode {
+pub enum RepeatMode {
     #[default]
+    Off,
+    All,
+    One,
+}
+
+/// 旧版单一播放模式（仅迁移读取用）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyPlayMode {
     Sequential,
     Shuffle,
     RepeatOne,
@@ -121,9 +130,15 @@ pub struct AppSettings {
     /// 0.0 ..= 1.0
     #[serde(default = "default_volume")]
     pub volume: f32,
-    /// 播放模式（P0 先落盘，P1 接引擎）
+    /// 随机播放（与循环独立）
     #[serde(default)]
-    pub play_mode: PlayMode,
+    pub shuffle: bool,
+    /// 循环：关 / 列表 / 单曲
+    #[serde(default)]
+    pub repeat: RepeatMode,
+    /// 旧字段，仅迁移；序列化时丢弃
+    #[serde(default, skip_serializing)]
+    pub play_mode: Option<LegacyPlayMode>,
     /// 启动时恢复上次音量
     #[serde(default = "default_true")]
     pub restore_volume: bool,
@@ -180,7 +195,9 @@ impl Default for AppSettings {
         Self {
             library_root: None,
             volume: default_volume(),
-            play_mode: PlayMode::default(),
+            shuffle: false,
+            repeat: RepeatMode::default(),
+            play_mode: None,
             restore_volume: true,
             lyrics_save_mode: LyricsSaveMode::default(),
             lyrics_prefer: LyricsPrefer::default(),
@@ -202,10 +219,24 @@ pub fn settings_path() -> PathBuf {
 
 pub fn load() -> AppSettings {
     let path = settings_path();
-    match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-        Err(_) => AppSettings::default(),
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return AppSettings::default();
+    };
+    let mut s: AppSettings = serde_json::from_str(&text).unwrap_or_default();
+    // 旧版 play_mode → shuffle + repeat
+    if let Some(legacy) = s.play_mode.take() {
+        match legacy {
+            LegacyPlayMode::Sequential => {}
+            LegacyPlayMode::Shuffle => {
+                s.shuffle = true;
+                s.repeat = RepeatMode::All;
+            }
+            LegacyPlayMode::RepeatOne => {
+                s.repeat = RepeatMode::One;
+            }
+        }
     }
+    s
 }
 
 pub fn save(settings: &AppSettings) -> Result<()> {
