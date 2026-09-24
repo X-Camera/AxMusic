@@ -76,6 +76,11 @@ pub fn run() {
                 db: Mutex::new(db),
                 player: Mutex::new(player),
                 scanning: Mutex::new(false),
+                volume_persist: Mutex::new(commands::VolumePersist {
+                    saved: app_settings.volume,
+                    pending: app_settings.volume,
+                    timer_running: false,
+                }),
                 settings: Mutex::new(app_settings),
             };
             app.manage(state);
@@ -172,6 +177,7 @@ pub fn run() {
             commands::playlist_add_tracks,
             commands::playlist_remove_track,
             commands::playlist_move_track,
+            commands::playlist_clean_missing,
             commands::favorite_paths,
             commands::favorite_toggle,
         ])

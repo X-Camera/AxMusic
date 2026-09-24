@@ -62,11 +62,13 @@ export function PlaylistsPage() {
   }, [selected, loadDetail]);
 
   // 迷你条/满窗/其它列表改喜爱时，刷新左侧计数；若正开着「喜爱」则同步曲目
+  // （用 is_favorites 标志判定，不认字面量；list 故意不进依赖——只在 favRev/selected 变化时判定）
   const favRev = useFavorites((s) => s.rev);
   useEffect(() => {
     if (favRev === 0) return;
     void reload();
-    if (selected === "喜爱") void loadDetail(selected);
+    const isFav = list.find((p) => p.name === selected)?.is_favorites ?? false;
+    if (isFav && selected) void loadDetail(selected);
   }, [favRev, selected, reload, loadDetail]);
 
   async function onCreate() {
@@ -118,39 +120,39 @@ export function PlaylistsPage() {
     void playQueue([entryToQueueItem(e)], 0);
   }
 
-  async function onMove(index: number, delta: -1 | 1) {
+  /** 上移/下移一格：按条目 rel_path 定位，连续点击不怕列表已错位 */
+  async function onMove(entry: PlaylistDetail["entries"][number], delta: -1 | 1) {
     if (!detail) return;
-    const to = index + delta;
-    if (to < 0 || to >= detail.entries.length) return;
     try {
-      setDetail(await api.playlistMoveTrack(detail.name, index, to));
+      setDetail(await api.playlistMoveTrack(detail.name, entry.rel_path, delta));
     } catch (e) {
       setError(String(e));
     }
   }
 
-  async function onRemove(index: number) {
+  async function onRemove(entry: PlaylistDetail["entries"][number]) {
     if (!detail) return;
     try {
-      const next = await api.playlistRemoveTrack(detail.name, index);
+      const next = await api.playlistRemoveTrack(detail.name, entry.rel_path);
       setDetail(next);
+      // 左侧列表计数同步（喜爱走 favRev 联动，普通歌单自己刷）
       if (detail.is_favorites) void useFavorites.getState().reload();
+      else void reload();
     } catch (e) {
       setError(String(e));
     }
   }
 
+  /** 批量清理失效条目：后端一次读写完事，不再逐条 IPC */
   async function onCleanMissing() {
     if (!detail) return;
+    const missing = detail.entries.filter((e) => !e.exists).length;
+    if (missing === 0) return;
     try {
-      let d = detail;
-      for (let i = d.entries.length - 1; i >= 0; i--) {
-        if (!d.entries[i].exists) d = await api.playlistRemoveTrack(d.name, i);
-      }
-      setDetail(d);
+      setDetail(await api.playlistCleanMissing(detail.name));
       await reload();
       if (detail.is_favorites) void useFavorites.getState().reload();
-      setToast("已清理失效条目");
+      setToast(`已清理 ${missing} 首失效条目`);
     } catch (e) {
       setError(String(e));
     }
@@ -282,7 +284,8 @@ export function PlaylistsPage() {
                       <div style={{ display: "flex", gap: 8 }}>
                         <button
                           className="btn"
-                          disabled={!detail.entries.some((e) => e.exists)}
+                          disabled={!detail.entries.some((e) => !e.exists)}
+                          title="移除磁盘上已不存在的条目"
                           onClick={() => void onCleanMissing()}
                         >
                           清理失效
@@ -357,7 +360,7 @@ export function PlaylistsPage() {
                                   className="link-btn"
                                   title="上移"
                                   disabled={i === 0}
-                                  onClick={() => void onMove(i, -1)}
+                                  onClick={() => void onMove(e, -1)}
                                 >
                                   <ChevronUp size={13} />
                                 </button>
@@ -365,14 +368,14 @@ export function PlaylistsPage() {
                                   className="link-btn"
                                   title="下移"
                                   disabled={i === detail.entries.length - 1}
-                                  onClick={() => void onMove(i, 1)}
+                                  onClick={() => void onMove(e, 1)}
                                 >
                                   <ChevronDown size={13} />
                                 </button>
                                 <button
                                   className="link-btn"
                                   title="移除"
-                                  onClick={() => void onRemove(i)}
+                                  onClick={() => void onRemove(e)}
                                 >
                                   移除
                                 </button>

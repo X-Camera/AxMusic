@@ -68,6 +68,8 @@ struct SongItem {
     release_date: Option<String>,
     #[serde(rename = "trackNumber")]
     track_number: Option<i64>,
+    #[serde(rename = "discNumber")]
+    disc_number: Option<i64>,
 }
 
 /// 搜索 storefront 策略：CJK 内容在默认（US）店几乎搜不到，先试 TW（中文曲库全），
@@ -178,6 +180,7 @@ pub fn fetch_release(collection_id: &str) -> Result<ReleaseDetail> {
         };
         tracks.push(ReleaseTrack {
             position: s.track_number.unwrap_or((tracks.len() + 1) as i64),
+            disc: s.disc_number.filter(|d| *d > 0).unwrap_or(1),
             title: s.track_name.unwrap_or_default(),
             artist: s.artist_name.clone().unwrap_or_default(),
             // 非 MB 源无录音 MBID：留空，避免污染 catalog.mbid 的唯一匹配语义

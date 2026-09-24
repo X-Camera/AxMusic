@@ -220,3 +220,14 @@ select:focus {
   color: var(--success);
   font-size: 12px;
 }
+
+/* 截断/限量提示条（列表只显示前 N 条时） */
+.notice-line {
+  margin: 8px var(--space-6) 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+}

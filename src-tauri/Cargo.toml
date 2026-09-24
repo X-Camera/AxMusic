@@ -48,6 +48,8 @@ ringbuf = "0.4"
 crossbeam-channel = "0.5"
 walkdir = "2"
 base64 = "0.22"
+# GBK/GB18030 歌词与歌单文件回退解码（Windows 中文环境常见；reqwest 已传递依赖）
+encoding_rs = "0.8"
 # 内嵌封面缩略图（管理表）：仅 jpeg/png 解码 + 缩放，保持编译轻量
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 

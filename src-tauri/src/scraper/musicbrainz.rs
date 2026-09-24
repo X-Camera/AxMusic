@@ -251,11 +251,11 @@ pub fn fetch_release(release_id: &str) -> Result<ReleaseDetail> {
     let mut tracks = Vec::new();
     if let Some(mediums) = v.get("media").and_then(|m| m.as_array()) {
         for medium in mediums {
+            // 碟号：多碟发行同一 position 每碟各出现一次，配对/去重都靠它区分
             let disc = medium
                 .get("position")
                 .and_then(|p| p.as_i64())
                 .unwrap_or(1);
-            let _ = disc;
             if let Some(list) = medium.get("tracks").and_then(|t| t.as_array()) {
                 for t in list {
                     let position = t
@@ -286,6 +286,7 @@ pub fn fetch_release(release_id: &str) -> Result<ReleaseDetail> {
                         .to_string();
                     tracks.push(ReleaseTrack {
                         position,
+                        disc,
                         title,
                         artist,
                         recording_id,

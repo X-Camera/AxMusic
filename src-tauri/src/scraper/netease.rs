@@ -173,6 +173,8 @@ struct AlbumSong {
     artists: Option<Vec<IdName>>,
     /// 轨号（旧 API 字段；缺省用序号兜底）
     no: Option<i64>,
+    /// 碟号（字符串如 "01"；多碟才有意义）
+    cd: Option<String>,
 }
 
 pub fn fetch_release(album_id: &str) -> Result<ReleaseDetail> {
@@ -203,6 +205,12 @@ pub fn fetch_release(album_id: &str) -> Result<ReleaseDetail> {
         .enumerate()
         .map(|(i, s)| ReleaseTrack {
             position: s.no.filter(|n| *n > 0).unwrap_or((i + 1) as i64),
+            disc: s
+                .cd
+                .as_deref()
+                .and_then(|c| c.trim().parse::<i64>().ok())
+                .filter(|d| *d > 0)
+                .unwrap_or(1),
             title: s.name.unwrap_or_default(),
             artist: join_artists(s.artists),
             recording_id: String::new(),

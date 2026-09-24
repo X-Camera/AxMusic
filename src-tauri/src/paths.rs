@@ -102,6 +102,21 @@ pub fn write_atomic(target: &Path, contents: &[u8]) -> std::io::Result<()> {
     result
 }
 
+/// 字节 → 文本：UTF-8（容忍 BOM）优先，失败回退 GB18030
+///（GBK 超集；Windows 中文环境的 .lrc/.m3u8 大量是 ANSI/GBK 编码）。
+pub fn decode_text(bytes: &[u8]) -> String {
+    let b = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    match std::str::from_utf8(b) {
+        Ok(s) => s.to_string(),
+        Err(_) => encoding_rs::GB18030.decode(b).0.into_owned(),
+    }
+}
+
+/// 读文本文件（编码容错版 `read_to_string`）；IO 错误原样上抛（调用方可区分 NotFound）。
+pub fn read_text_lossy(path: &Path) -> std::io::Result<String> {
+    Ok(decode_text(&fs::read(path)?))
+}
+
 /// True when running in portable mode (data next to exe / marked by ini).
 pub fn is_portable() -> bool {
     portable_root().is_some()

@@ -4,7 +4,8 @@
 //! - 全程在**同目录临时副本**上改标签，成功后 `rename` 原子替换原文件；
 //!   中途崩溃/失败只留无害临时文件（`.axtmp-*`），原音频不动。
 //! - 只写 primary 标签容器（缺失则新建），不向 ID3v1 等受限次级容器退化。
-//! - 空值永不写入；字段值非法（track_no/year）或字段名未知时显式报错。
+//! - 空值 = 显式删除该字段（仅手工编辑路径会传空值；catalog 写回路径的空值过滤在
+//!   调用方做，「空值永不覆盖已有标签」的刮削铁律不变）；字段值非法或未知时显式报错。
 
 use std::path::Path;
 
@@ -17,10 +18,30 @@ use lofty::probe::Probe;
 
 use crate::scraper::FieldChange;
 
+/// 显式清空（空值）→ 从标签容器删除该字段
+fn remove_field(tag: &mut lofty::tag::Tag, field: &str) -> Result<()> {
+    let key = match field {
+        "title" => ItemKey::TrackTitle,
+        "artist" => ItemKey::TrackArtist,
+        "album" => ItemKey::AlbumTitle,
+        "year" => ItemKey::RecordingDate,
+        "album_artist" => ItemKey::AlbumArtist,
+        "track_no" => ItemKey::TrackNumber,
+        "lyrics" => ItemKey::Lyrics,
+        "release_type" => ItemKey::Unknown("RELEASETYPE".into()),
+        "musicbrainz_recording" => ItemKey::MusicBrainzRecordingId,
+        "musicbrainz_release" => ItemKey::MusicBrainzReleaseId,
+        "musicbrainz_releasegroup" => ItemKey::MusicBrainzReleaseGroupId,
+        "musicbrainz_artist" => ItemKey::MusicBrainzArtistId,
+        other => bail!("不支持的标签字段: {other}"),
+    };
+    tag.remove_key(&key);
+    Ok(())
+}
+
 fn apply_change(tag: &mut lofty::tag::Tag, field: &str, new: &str) -> Result<()> {
-    // Never write empty values — an empty catalog field must not wipe file tags.
     if new.trim().is_empty() {
-        return Ok(());
+        return remove_field(tag, field);
     }
     match field {
         "title" => {

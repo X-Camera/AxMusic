@@ -77,6 +77,8 @@ pub struct ScrapeCandidate {
 #[derive(Debug, Clone)]
 pub struct ReleaseTrack {
     pub position: i64,
+    /// 碟号（多碟发行；源无此信息时为 1）
+    pub disc: i64,
     pub title: String,
     pub artist: String,
     /// 录音 MBID（仅 MusicBrainz 有；其余源为空串）
@@ -168,6 +170,9 @@ pub struct CatalogTrackDraft {
     pub album_artist: String,
     pub year: String,
     pub track_no: Option<i64>,
+    /// 碟号（多碟发行；单碟/无信息为 None）
+    #[serde(default)]
+    pub disc_no: Option<i64>,
     pub release_type: String,
 }
 

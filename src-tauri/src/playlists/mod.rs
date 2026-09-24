@@ -281,8 +281,9 @@ pub fn parse_m3u8(text: &str) -> Vec<ParsedEntry> {
 
 pub fn read_playlist(root: &Path, name: &str) -> Result<Vec<ParsedEntry>, String> {
     let path = file_path(root, name)?;
-    // 区分「不存在」与真 IO 故障（占用/编码失败等）：折叠成不存在会让调用方按空歌单整写回
-    let text = std::fs::read_to_string(&path).map_err(|e| {
+    // 区分「不存在」与真 IO 故障（占用等）：折叠成不存在会让调用方按空歌单整写回；
+    // 编码上容错：非 UTF-8（GBK/ANSI）按 GB18030 回退解码，不再整条目丢失
+    let text = crate::paths::read_text_lossy(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             "歌单不存在".to_string()
         } else {
@@ -295,7 +296,7 @@ pub fn read_playlist(root: &Path, name: &str) -> Result<Vec<ParsedEntry>, String
 /// 读取喜爱歌单；文件不存在时视为空（喜爱始终可写），读取故障如实报错。
 pub fn read_favorites(root: &Path) -> Result<Vec<ParsedEntry>, String> {
     let path = file_path(root, FAVORITES_FILE)?;
-    match std::fs::read_to_string(&path) {
+    match crate::paths::read_text_lossy(&path) {
         Ok(text) => Ok(parse_m3u8(&text)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(format!("读取喜爱歌单失败：{e}")),
@@ -500,26 +501,43 @@ pub fn add_tracks(root: &Path, name: &str, items: &[PlaylistAddItem]) -> Result<
     write_playlist(root, name, &entries)
 }
 
-pub fn remove_track(root: &Path, name: &str, index: usize) -> Result<(), String> {
+/// 按条目定位移除（`rel_path` 即文件里存的那一行，界面持有的稳定标识）。
+/// 不用下标：连续点「移除」时两次调用看到的列表可能不同步，下标会移错行。
+pub fn remove_entry(root: &Path, name: &str, rel_path: &str) -> Result<(), String> {
     let mut entries = read_for_update(root, name)?;
-    if index >= entries.len() {
-        return Err("位置无效".into());
+    let before = entries.len();
+    entries.retain(|e| e.rel != rel_path);
+    if entries.len() == before {
+        return Err("条目不存在（可能已被移除）".into());
     }
-    entries.remove(index);
     write_playlist(root, name, &entries)
 }
 
-pub fn move_track(root: &Path, name: &str, from_index: usize, to_index: usize) -> Result<(), String> {
+/// 按条目定位移动一格（delta = ±1）；目标越界则不动。同理不拿下标。
+pub fn move_entry(root: &Path, name: &str, rel_path: &str, delta: i64) -> Result<(), String> {
     let mut entries = read_for_update(root, name)?;
-    if from_index >= entries.len() || to_index >= entries.len() {
-        return Err("位置无效".into());
-    }
-    if from_index == to_index {
+    let Some(idx) = entries.iter().position(|e| e.rel == rel_path) else {
+        return Err("条目不存在（可能已被移除）".into());
+    };
+    let to = idx as i64 + delta;
+    if to < 0 || to >= entries.len() as i64 {
         return Ok(());
     }
-    let e = entries.remove(from_index);
-    entries.insert(to_index, e);
+    entries.swap(idx, to as usize);
     write_playlist(root, name, &entries)
+}
+
+/// 批量清理失效条目（磁盘上已不存在），一次读写完事；返回清掉条数。
+pub fn clean_missing(root: &Path, name: &str) -> Result<usize, String> {
+    let dir = playlists_dir(root);
+    let mut entries = read_for_update(root, name)?;
+    let before = entries.len();
+    entries.retain(|e| abs_from(&dir, &e.rel).is_file());
+    let removed = before - entries.len();
+    if removed > 0 {
+        write_playlist(root, name, &entries)?;
+    }
+    Ok(removed)
 }
 
 /// 喜爱歌单里各条目的绝对路径（原样）。

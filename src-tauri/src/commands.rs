@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::library::{AlbumCard, ArtistCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
@@ -14,12 +14,24 @@ use crate::playlists::{
 use crate::settings::AppSettings;
 use crate::{play_session, playlists, scanner, settings};
 
+/// 音量落盘防抖：拖动滑杆每次 input 都会调 player_set_volume，
+/// 引擎即时生效，settings.json 落盘 300ms 拖尾一次（避免磁盘狂写）。
+pub struct VolumePersist {
+    /// 最近一次已落盘的音量
+    pub saved: f32,
+    /// 待落盘的最新音量
+    pub pending: f32,
+    /// 拖尾计时线程是否在跑
+    pub timer_running: bool,
+}
+
 pub struct AppState {
     /// Library working DB (`<library>/axmusic.db`). None until a library root is set.
     pub db: Mutex<Option<LibraryDb>>,
     pub player: Mutex<Player>,
     pub scanning: Mutex<bool>,
     pub settings: Mutex<AppSettings>,
+    pub volume_persist: Mutex<VolumePersist>,
 }
 
 /// 记忆播放列表（队列/当前曲/进度），供退出与变更时落盘。
@@ -146,6 +158,7 @@ pub fn update_settings(
     state: State<'_, AppState>,
     patch: SettingsPatch,
 ) -> Result<crate::settings::AppSettings, String> {
+    // 锁序约定：全局只允许 settings → player 这一层嵌套方向（player_set_* 均不嵌套）
     let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
     if let Some(v) = patch.volume {
         guard.volume = v.clamp(0.0, 1.0);
@@ -631,8 +644,7 @@ pub fn include_in_library(
         return Err("文件不存在".into());
     }
 
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let db = db.as_ref().ok_or("尚未初始化库目录")?;
+    // settings 先取先放：不持锁做磁盘 IO，也不与 db 锁嵌套
     let root = state
         .settings
         .lock()
@@ -642,22 +654,28 @@ pub fn include_in_library(
         .ok_or("尚未初始化库目录")?;
     let root = PathBuf::from(root);
 
-    // Same-file shortcut
+    /// 登记一行进 tracks 表（唯一持 db 锁的地方，纯 SQL 无 IO）
+    fn register(state: &State<'_, AppState>, row: &TrackRow, path: &Path) -> Result<(), String> {
+        let meta = std::fs::metadata(path).ok();
+        let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mtime = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let db = db.as_ref().ok_or("尚未初始化库目录")?;
+        db.upsert_track(row, file_size, mtime).map_err(|e| e.to_string())
+    }
+
+    // Same-file shortcut：已在库内 → 仅重新登记
     if let Ok(src_can) = src.canonicalize() {
         if let Ok(root_can) = root.canonicalize() {
             if src_can.starts_with(&root_can) {
-                // already inside library — just ensure it's registered via a rescan of one file
                 let mut row = scanner::read_track(&src).map_err(|e| e.to_string())?;
-                let meta = std::fs::metadata(&src).ok();
-                let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let mtime = meta
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
                 row.path = src.to_string_lossy().to_string();
-                db.upsert_track(&row, file_size, mtime).map_err(|e| e.to_string())?;
+                register(&state, &row, &src)?;
                 return Ok(IncludeResult {
                     copied_to: row.path.clone(),
                     track: row,
@@ -680,22 +698,12 @@ pub fn include_in_library(
     }
     std::fs::copy(&src, &dest).map_err(|e| format!("复制失败: {e}"))?;
 
-    let meta = std::fs::metadata(&dest).ok();
-    let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-    let mtime = meta
-        .as_ref()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
     row.path = dest.to_string_lossy().to_string();
     row.filename = dest
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    db.upsert_track(&row, file_size, mtime)
-        .map_err(|e| e.to_string())?;
+    register(&state, &row, &dest)?;
 
     Ok(IncludeResult {
         copied_to: row.path.clone(),
@@ -882,14 +890,51 @@ pub fn player_set_volume(
     state: State<'_, AppState>,
     volume: f32,
 ) -> Result<PlayerSnapshot, String> {
-    let mut player = state.player.lock().map_err(|e| e.to_string())?;
-    player.engine.set_volume_f32(volume.clamp(0.0, 1.0));
-    if let Ok(mut s) = state.settings.lock() {
-        s.volume = volume.clamp(0.0, 1.0);
-        let _ = settings::save(&s);
-    }
-    let snap = player.snapshot();
+    let v = volume.clamp(0.0, 1.0);
+    // 锁序约定：不嵌套持锁——player 用毕即放，再碰 settings，杜绝锁序反转
+    let snap = {
+        let mut player = state.player.lock().map_err(|e| e.to_string())?;
+        player.engine.set_volume_f32(v);
+        player.snapshot()
+    };
     let _ = app.emit("player://state", &snap);
+
+    // 落盘降噪：300ms 拖尾防抖（拖滑杆期间每次 input 都会调进来）
+    {
+        let mut vp = state.volume_persist.lock().map_err(|e| e.to_string())?;
+        vp.pending = v;
+        if !vp.timer_running {
+            vp.timer_running = true;
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let state = app2.state::<AppState>();
+                let v = {
+                    let Ok(mut vp) = state.volume_persist.lock() else {
+                        return;
+                    };
+                    vp.timer_running = false;
+                    if (vp.pending - vp.saved).abs() <= f32::EPSILON {
+                        return;
+                    }
+                    vp.saved = vp.pending;
+                    vp.pending
+                };
+                let Ok(mut s) = state.settings.lock() else {
+                    return;
+                };
+                s.volume = v;
+                match settings::save(&s) {
+                    Ok(()) => {
+                        let snapshot = s.clone();
+                        drop(s);
+                        let _ = app2.emit("settings://changed", &snapshot);
+                    }
+                    Err(e) => eprintln!("[AxMusic] 音量落盘失败: {e}"),
+                }
+            });
+        }
+    }
     Ok(snap)
 }
 
@@ -900,18 +945,26 @@ pub fn player_set_play_mode(
     state: State<'_, AppState>,
     mode: crate::player::PlayMode,
 ) -> Result<PlayerSnapshot, String> {
-    let mut player = state.player.lock().map_err(|e| e.to_string())?;
-    player.set_play_mode(mode);
-    if let Ok(mut s) = state.settings.lock() {
+    // 锁序约定：不嵌套持锁（player 先放再拿 settings）
+    let snap = {
+        let mut player = state.player.lock().map_err(|e| e.to_string())?;
+        player.set_play_mode(mode);
+        player.snapshot()
+    };
+    let _ = app.emit("player://state", &snap);
+    {
+        let mut s = state.settings.lock().map_err(|e| e.to_string())?;
         s.play_mode = match mode {
             crate::player::PlayMode::Sequential => crate::settings::PlayMode::Sequential,
             crate::player::PlayMode::Shuffle => crate::settings::PlayMode::Shuffle,
             crate::player::PlayMode::RepeatOne => crate::settings::PlayMode::RepeatOne,
         };
         let _ = settings::save(&s);
+        let snapshot = s.clone();
+        drop(s);
+        // 让设置页等监听方同步（与 update_settings 同一事件协议）
+        let _ = app.emit("settings://changed", &snapshot);
     }
-    let snap = player.snapshot();
-    let _ = app.emit("player://state", &snap);
     Ok(snap)
 }
 
@@ -1290,22 +1343,27 @@ pub async fn lyrics_fetch(id: String) -> Result<LyricsContent, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Re-read one track's file state into DB (shared by lyrics ops).
+/// Re-read one track's file state into DB (shared by lyrics/tag write ops).
+/// 磁盘 IO（lofty 解析 + metadata）在 db 锁外做，锁内只有一条 upsert。
 fn rescan_track_row(state: &State<'_, AppState>, path: &Path) {
-    if let Ok(mut guard) = state.db.lock() {
-        if let Some(db) = guard.as_mut() {
-            if let Ok(mut row) = scanner::read_track(path) {
-                let meta = std::fs::metadata(path).ok();
-                let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let mtime = meta
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                row.path = path.to_string_lossy().to_string();
-                let _ = db.upsert_track(&row, file_size, mtime);
-            }
+    let scanned = scanner::read_track(path).ok().map(|mut row| {
+        let meta = std::fs::metadata(path).ok();
+        let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mtime = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        row.path = path.to_string_lossy().to_string();
+        (row, file_size, mtime)
+    });
+    let Some((row, file_size, mtime)) = scanned else {
+        return;
+    };
+    if let Ok(guard) = state.db.lock() {
+        if let Some(db) = guard.as_ref() {
+            let _ = db.upsert_track(&row, file_size, mtime);
         }
     }
 }
@@ -1609,6 +1667,7 @@ fn build_plan_inner(
                 album_artist: String::new(),
                 year: rec.year.clone(),
                 track_no: None,
+                disc_no: None,
                 release_type: String::new(),
             }],
             unmatched,
@@ -1666,6 +1725,9 @@ fn build_plan_inner(
             album_artist: detail.album_artist.clone(),
             year: detail.year.clone(),
             track_no: Some(t.position),
+            // 碟号如实存（单碟 = Some(1)，None 仅表示源无此信息），
+            // 多碟配对与 (release, disc, track) 去重都依赖它区分各碟
+            disc_no: if t.disc > 0 { Some(t.disc) } else { None },
             release_type: detail.release_type.clone(),
         })
         .collect();
@@ -1726,7 +1788,13 @@ fn match_album_tracks(
                 continue;
             }
             let mut score = title_similarity(&local.title, &r.title);
-            if local.track_no == Some(r.position) {
+            // 轨号加权：多碟发行同一 track_no 每碟各出现一次，
+            // 本地有碟号时要求碟号一致才给分（本地无碟号则放行，与旧行为一致）
+            let disc_ok = match local.disc_no {
+                Some(d) => d == r.disc,
+                None => true,
+            };
+            if local.track_no == Some(r.position) && disc_ok {
                 score += 0.5;
             }
             if best.map(|(_, s)| score > s).unwrap_or(true) {
@@ -1778,6 +1846,7 @@ pub async fn catalog_save(
                 album_artist: ct.album_artist.clone(),
                 year: ct.year.clone(),
                 track_no: ct.track_no,
+                disc_no: ct.disc_no,
                 release_type: ct.release_type.clone(),
                 cover_path: None,
                 created_at: String::new(),
@@ -1817,16 +1886,19 @@ pub fn catalog_compare(
     state: State<'_, AppState>,
     track_id: i64,
 ) -> Result<serde_json::Value, String> {
-    let guard = require_db(&state)?;
-    let db = db_ref(&guard)?;
-    let track = db
-        .get_track_by_id(track_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("曲目不存在")?;
-    let catalog = db
-        .find_catalog_for_track(track_id)
-        .map_err(|e| e.to_string())?;
-
+    let (track, catalog) = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        let track = db
+            .get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?;
+        let catalog = db
+            .find_catalog_for_track(track_id)
+            .map_err(|e| e.to_string())?;
+        (track, catalog)
+    };
+    // db 锁已放：封面读盘 / settings 取根都在锁外
     let changes = if let Some(cat) = &catalog {
         vec![
             crate::scraper::FieldChange {
@@ -1961,10 +2033,8 @@ pub async fn cover_apply(
     track_id: i64,
     url: String,
 ) -> Result<String, String> {
-    let (catalog_id, release_mbid, source, library_root) = {
-        let guard = require_db(&state)?;
-        let db = db_ref(&guard)?;
-        let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
+    // settings 先取先放（不与 db 锁嵌套）
+    let library_root = {
         let root = state
             .settings
             .lock()
@@ -1972,11 +2042,16 @@ pub async fn cover_apply(
             .library_root
             .clone()
             .ok_or("尚未初始化库目录")?;
+        PathBuf::from(root)
+    };
+    let (catalog_id, release_mbid, source) = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
         (
             cat.as_ref().map(|c| c.id),
             cat.as_ref().map(|c| c.release_mbid.clone()).unwrap_or_default(),
             cat.map(|c| c.source).unwrap_or_default(),
-            PathBuf::from(root),
         )
     };
 
@@ -2054,7 +2129,8 @@ pub fn catalog_match_all(state: State<'_, AppState>) -> Result<usize, String> {
 
 /// Write user-edited tag fields into the audio file, refresh the tracks row,
 /// then try field-match against local catalog (fixing title/artist may unlock a link).
-/// Empty values never overwrite tags.
+/// 手工编辑语义：空值 = 显式删除该标签（对比面板的「清空」）；catalog 写回路径的空值铁律在
+/// catalog_apply_to_track 上游保证，不经过这里。
 #[tauri::command]
 pub fn track_write_tags(
     state: State<'_, AppState>,
@@ -2071,34 +2147,19 @@ pub fn track_write_tags(
         track.path.clone()
     };
 
-    let writable: Vec<FieldChange> = changes
-        .into_iter()
-        .filter(|ch| !ch.new.trim().is_empty())
-        .collect();
-    if writable.is_empty() {
+    if changes.is_empty() {
         return Ok(track_id);
     }
-
     let path_buf = PathBuf::from(&path);
-    crate::tagger::write_track(&path_buf, &writable, None, "", "").map_err(|e| e.to_string())?;
+    // 手工编辑语义：空值 = 显式删除该字段（catalog 写回路径的空值过滤在 catalog_apply_to_track）
+    crate::tagger::write_track(&path_buf, &changes, None, "", "").map_err(|e| e.to_string())?;
 
+    rescan_track_row(&state, Path::new(&path));
     {
-        let mut guard = state.db.lock().map_err(|e| e.to_string())?;
-        let Some(db) = guard.as_mut() else {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let Some(db) = guard.as_ref() else {
             return Err("尚未初始化库目录".into());
         };
-        if let Ok(mut row) = scanner::read_track(Path::new(&path)) {
-            let meta = std::fs::metadata(&path).ok();
-            let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let mtime = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            row.path = path.clone();
-            let _ = db.upsert_track(&row, file_size, mtime);
-        }
         // 修正字段后立刻尝试关联 catalog
         if let Ok(Some(row)) = db.get_track_by_id(track_id) {
             if row.catalog_id.is_none() || row.catalog_id == Some(0) {
@@ -2121,7 +2182,17 @@ pub fn catalog_apply_to_track(
     fields: Vec<String>,
     write_cover: bool,
 ) -> Result<i64, String> {
-    let (path, catalog, root) = {
+    // settings 先取先放（不与 db 锁嵌套）
+    let root = {
+        state
+            .settings
+            .lock()
+            .map_err(|e| e.to_string())?
+            .library_root
+            .clone()
+            .ok_or("尚未初始化库目录")?
+    };
+    let (path, catalog) = {
         let guard = require_db(&state)?;
         let db = db_ref(&guard)?;
         let track = db
@@ -2132,14 +2203,7 @@ pub fn catalog_apply_to_track(
         if cat.is_none() && !fields.is_empty() {
             return Err("未关联 catalog，请先刮削或自动匹配".into());
         }
-        let root = state
-            .settings
-            .lock()
-            .map_err(|e| e.to_string())?
-            .library_root
-            .clone()
-            .ok_or("尚未初始化库目录")?;
-        (track.path.clone(), cat, root)
+        (track.path.clone(), cat)
     };
 
     let wanted = |f: &str| fields.iter().any(|x| x == f);
@@ -2200,25 +2264,8 @@ pub fn catalog_apply_to_track(
     crate::tagger::write_track(&path, &changes, cover.as_deref(), "", "")
         .map_err(|e| e.to_string())?;
 
-    // refresh row
-    {
-        let mut guard = state.db.lock().map_err(|e| e.to_string())?;
-        let Some(db) = guard.as_mut() else {
-            return Err("尚未初始化库目录".into());
-        };
-        if let Ok(mut row) = scanner::read_track(Path::new(&path)) {
-            let meta = std::fs::metadata(&path).ok();
-            let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let mtime = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            row.path = path.to_string_lossy().to_string();
-            let _ = db.upsert_track(&row, file_size, mtime);
-        }
-    }
+    // refresh row（IO 在 db 锁外）
+    rescan_track_row(&state, &path);
     Ok(track_id)
 }
 
@@ -2323,26 +2370,39 @@ pub fn playlist_add_tracks(
     playlist_detail_of(&root, &name, &state)
 }
 
+/// 移除条目（按 rel_path 定位：连续点击时两次调用看到的列表可能不同步，下标会移错行）。
 #[tauri::command]
 pub fn playlist_remove_track(
     state: State<'_, AppState>,
     name: String,
-    index: usize,
+    rel_path: String,
 ) -> Result<PlaylistDetail, String> {
     let root = require_library_root(&state)?;
-    playlists::remove_track(Path::new(&root), &name, index)?;
+    playlists::remove_entry(Path::new(&root), &name, &rel_path)?;
     playlist_detail_of(&root, &name, &state)
 }
 
+/// 条目上移/下移一格（delta = ±1，按 rel_path 定位）。
 #[tauri::command]
 pub fn playlist_move_track(
     state: State<'_, AppState>,
     name: String,
-    from_index: usize,
-    to_index: usize,
+    rel_path: String,
+    delta: i64,
 ) -> Result<PlaylistDetail, String> {
     let root = require_library_root(&state)?;
-    playlists::move_track(Path::new(&root), &name, from_index, to_index)?;
+    playlists::move_entry(Path::new(&root), &name, &rel_path, delta)?;
+    playlist_detail_of(&root, &name, &state)
+}
+
+/// 批量清理失效条目（磁盘上已不存在），一次读写；返回清理后的歌单详情。
+#[tauri::command]
+pub fn playlist_clean_missing(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<PlaylistDetail, String> {
+    let root = require_library_root(&state)?;
+    playlists::clean_missing(Path::new(&root), &name)?;
     playlist_detail_of(&root, &name, &state)
 }
 
@@ -2362,6 +2422,7 @@ mod tests {
             album_artist: String::new(),
             year: String::new(),
             track_no,
+            disc_no: None,
             duration_ms: 0,
             format: "flac".into(),
             sample_rate: None,
@@ -2390,9 +2451,21 @@ mod tests {
     fn rt(position: i64, title: &str, recording_id: &str) -> ReleaseTrack {
         ReleaseTrack {
             position,
+            disc: 1,
             title: title.into(),
             artist: "周杰倫".into(),
             recording_id: recording_id.into(),
+        }
+    }
+
+    /// 多碟远端：碟号 + 碟内轨号
+    fn rt_disc(disc: i64, position: i64, title: &str) -> ReleaseTrack {
+        ReleaseTrack {
+            position,
+            disc,
+            title: title.into(),
+            artist: "周杰倫".into(),
+            recording_id: String::new(),
         }
     }
 
@@ -2447,6 +2520,26 @@ mod tests {
         let locals = [local("晴天", None, "")];
         let remote = vec![rt(1, "晴天", "r1")];
         let (pairs, _) = match_album_tracks(&locals, &remote, Some(9));
+        assert_eq!(pairs, vec![(0, 0)]);
+    }
+
+    #[test]
+    fn multi_disc_track_no_disambiguated_by_disc() {
+        // 两碟同名同轨号：本地碟 2 的轨 1 必须配到碟 2 的行
+        let mut l = local("", Some(1), "");
+        l.disc_no = Some(2);
+        let locals = [l];
+        let remote = vec![rt_disc(1, 1, "碟一"), rt_disc(2, 1, "碟二")];
+        let (pairs, _) = match_album_tracks(&locals, &remote, None);
+        assert_eq!(pairs, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn multi_disc_local_without_disc_still_matches() {
+        // 本地无碟号：轨号加权放行（同旧行为），两个候选里挑标题更像的
+        let locals = [local("碟一", Some(1), "")];
+        let remote = vec![rt_disc(1, 1, "碟一"), rt_disc(2, 1, "碟二")];
+        let (pairs, _) = match_album_tracks(&locals, &remote, None);
         assert_eq!(pairs, vec![(0, 0)]);
     }
 }

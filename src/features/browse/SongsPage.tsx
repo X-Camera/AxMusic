@@ -12,10 +12,13 @@ import "./Songs.css";
 
 type ViewMode = "list" | "grid";
 
+const SONGS_LIMIT = 10000;
+
 export function SongsPage() {
   const playQueue = useApp((s) => s.playQueue);
   const enqueue = useApp((s) => s.enqueue);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [loading, setLoading] = useState(false);
@@ -37,10 +40,14 @@ export function SongsPage() {
     setLoading(true);
     setError(null);
     try {
-      const list = await api.getTracks({ sort: "title", limit: 10000 });
+      const [list, total] = await Promise.all([
+        api.getTracks({ sort: "title", limit: SONGS_LIMIT }),
+        api.getTrackCount(),
+      ]);
       setTracks(list);
+      setTotalCount(total);
     } catch (e) {
-      setTracks([]);
+      // 保留旧列表，错误单独提示；空态与故障态分开
       setError(String(e));
     } finally {
       setLoading(false);
@@ -50,6 +57,9 @@ export function SongsPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /** 列表被 limit 截断（库比一页大）：提示并引导用搜索过滤 */
+  const truncated = totalCount != null && totalCount > tracks.length;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -133,17 +143,30 @@ export function SongsPage() {
         }
       />
       <div className="page-scroll">
+        {truncated && (
+          <div className="notice-line">
+            库共 {totalCount} 首，这里仅显示前 {tracks.length} 首；用顶部搜索缩小范围。
+          </div>
+        )}
         {loading && tracks.length === 0 ? (
           <div className="empty-state">加载中…</div>
+        ) : error && tracks.length === 0 ? (
+          <div className="empty-state">
+            <div className="display" style={{ fontSize: 20 }}>
+              加载失败
+            </div>
+            <p className="muted">{error}</p>
+            <button className="btn" onClick={() => void reload()}>
+              重试
+            </button>
+          </div>
         ) : tracks.length === 0 ? (
           <div className="empty-state">
             <div className="display" style={{ fontSize: 20 }}>
               还没有歌曲
             </div>
             <p className="muted">
-              {error
-                ? error
-                : "到侧栏「管理」初始化库目录并刷新扫描，或先把音频放进库文件夹再扫描。"}
+              到侧栏「管理」初始化库目录并刷新扫描，或先把音频放进库文件夹再扫描。
             </p>
           </div>
         ) : filtered.length === 0 ? (

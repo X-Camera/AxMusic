@@ -167,6 +167,12 @@ pub fn search_tracks(title: &str, artist: &str) -> Result<Vec<ScrapeCandidate>> 
 struct AlbumSong {
     songname: Option<String>,
     singer: Option<Vec<Singer>>,
+    /// 碟号（多碟时 >1）
+    #[serde(rename = "belongCD")]
+    belong_cd: Option<i64>,
+    /// 碟内轨号（多碟时与 belongCD 配对；缺省用列表序号兜底）
+    #[serde(rename = "indexCD")]
+    index_cd: Option<i64>,
 }
 
 pub fn fetch_release(album_mid: &str) -> Result<ReleaseDetail> {
@@ -194,7 +200,8 @@ pub fn fetch_release(album_mid: &str) -> Result<ReleaseDetail> {
         .into_iter()
         .enumerate()
         .map(|(i, s)| ReleaseTrack {
-            position: (i + 1) as i64,
+            position: s.index_cd.filter(|n| *n > 0).unwrap_or((i + 1) as i64),
+            disc: s.belong_cd.filter(|d| *d > 0).unwrap_or(1),
             title: s.songname.unwrap_or_default(),
             artist: join_singers(s.singer),
             recording_id: String::new(),

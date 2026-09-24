@@ -192,6 +192,7 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         album_artist: String::new(),
         year: String::new(),
         track_no: None,
+        disc_no: None,
         duration_ms,
         format,
         sample_rate,
@@ -230,6 +231,8 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
             .unwrap_or_default();
         row.has_year = !row.year.is_empty();
         row.track_no = tag.track().map(|t| t as i64);
+        // 碟号（多碟发行配对/排序用；单碟或无此标签为 None）
+        row.disc_no = tag.disk().map(|d| d as i64);
 
         row.album_artist = tag
             .get_string(&ItemKey::AlbumArtist)

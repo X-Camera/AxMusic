@@ -63,6 +63,9 @@ export function ComparePanel({
   const [catalogCover, setCatalogCover] = useState<string | null>(null);
   const [coverOpen, setCoverOpen] = useState(false);
 
+  /** 任一写操作在途即锁住全部写按钮：它们最终都写同一个音频文件，并发会相互覆盖 */
+  const writing = writingField !== null || writingCover || writingTags;
+
   useEffect(() => {
     let cancelled = false;
     setData(null);
@@ -192,7 +195,8 @@ export function ComparePanel({
       field,
       old: base[field] ?? "",
       new: draft[field] ?? "",
-    })).filter((c) => c.old.trim() !== c.new.trim() && c.new.trim() !== "");
+      // 「与旧值不同即变更」：清空也是变更（写入文件 = 显式删除该标签）
+    })).filter((c) => c.old.trim() !== c.new.trim());
   }, [data, draft]);
 
   const writeTags = useCallback(async () => {
@@ -254,7 +258,7 @@ export function ComparePanel({
             </button>
             <button
               className="btn"
-              disabled={!catalogCover || writingCover}
+              disabled={!catalogCover || writing}
               title="将库封面写入歌曲文件"
               onClick={() => void writeCover()}
             >
@@ -267,7 +271,7 @@ export function ComparePanel({
       {data && !data.catalog && (
         <>
           <div className="tertiary cmp-hint">
-            尚未关联 catalog。可改正文件标签后写入，有助于刮削/匹配；空值不会覆盖已有标签。
+            尚未关联 catalog。可改正文件标签后写入，有助于刮削/匹配；把字段清空再写入 = 删除该标签。
           </div>
           <div className="cmp-fields">
             <div className="cmp-fields-title">文件字段（可编辑）</div>
@@ -284,8 +288,8 @@ export function ComparePanel({
             <div className="cmp-edit-actions">
               <button
                 className="btn btn-primary"
-                disabled={writingTags || dirtyFields.length === 0}
-                title="将修改写入歌曲文件标签"
+                disabled={writing || dirtyFields.length === 0}
+                title="将修改写入歌曲文件标签（清空某字段 = 删除该标签）"
                 onClick={() => void writeTags()}
               >
                 {writingTags ? <Loader2 size={14} className="spin" /> : <FileInput size={14} />}
@@ -309,7 +313,7 @@ export function ComparePanel({
                 <button
                   className="icon-btn"
                   title="写入歌曲文件"
-                  disabled={writingField === f.field}
+                  disabled={writing}
                   onClick={() => void writeField(f.field)}
                 >
                   {writingField === f.field ? (

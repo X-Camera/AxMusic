@@ -15,6 +15,8 @@ import { ScrapeWizard } from "./ScrapeWizard";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import "./ManagePage.css";
 
+const TRACKS_LIMIT = 2000;
+
 export function ManagePage() {
   const playQueue = useApp((s) => s.playQueue);
   const [root, setRoot] = useState<LibraryRoot | null | undefined>(undefined);
@@ -49,14 +51,16 @@ export function ManagePage() {
         api.getTracks({
           missing_only: missingOnly,
           unlinked_only: unlinkedOnly,
-          limit: 2000,
+          limit: TRACKS_LIMIT,
         }),
         api.getLibraryStats(),
       ]);
       setTracks(list);
       setStats(st);
-    } catch {
-      setTracks([]);
+      setError(null);
+    } catch (e) {
+      // 失败保留旧列表（避免瞬时故障把表格清空），错误条单独提示
+      setError(String(e));
     }
   }, [missingOnly, unlinkedOnly]);
 
@@ -223,6 +227,37 @@ export function ManagePage() {
     );
   }
 
+  /** 表格空态：故障 / 搜索无结果 / 真空库 三种分开 */
+  function renderEmptyPane() {
+    if (error) {
+      return (
+        <div className="empty-state">
+          <p className="muted">加载曲目失败：{error}</p>
+          <button className="btn" onClick={() => void reloadTracks()}>
+            重试
+          </button>
+        </div>
+      );
+    }
+    if (tracks.length > 0) {
+      return (
+        <div className="empty-state">
+          <p className="muted">没有匹配「{query}」的曲目</p>
+        </div>
+      );
+    }
+    return (
+      <div className="empty-state">
+        <p className="muted">
+          库中还没有曲目。把 FLAC/MP3 手动放入库根，再点「刷新扫描」。
+        </p>
+        <button className="btn btn-primary" disabled={scanning} onClick={() => void onRefresh()}>
+          刷新扫描
+        </button>
+      </div>
+    );
+  }
+
   // ── archive table ──────────────────────────────────────────────
   return (
     <>
@@ -271,6 +306,9 @@ export function ManagePage() {
               </button>
               <span className="tertiary">
                 共 {filtered.length} 首
+                {stats && stats.total_tracks > tracks.length
+                  ? ` · 仅显示前 ${tracks.length} 首（库共 ${stats.total_tracks} 首）`
+                  : ""}
                 {progress && scanning ? ` · ${progress.scanned}/${progress.totalFiles}` : ""}
                 {lastScan
                   ? ` · 新增 ${lastScan.added} 更新 ${lastScan.updated} 失败 ${lastScan.errors}`
@@ -306,14 +344,7 @@ export function ManagePage() {
             }}
           >
             {filtered.length === 0 ? (
-              <div className="empty-state">
-                <p className="muted">
-                  库中还没有曲目。把 FLAC/MP3 手动放入库根，再点「刷新扫描」。
-                </p>
-                <button className="btn btn-primary" disabled={scanning} onClick={() => void onRefresh()}>
-                  刷新扫描
-                </button>
-              </div>
+              renderEmptyPane()
             ) : (
               <TrackTable
                 rows={filtered}

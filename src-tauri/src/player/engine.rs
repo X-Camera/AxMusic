@@ -60,11 +60,16 @@ enum Cmd {
 struct Shared {
     status: AtomicU8,
     position_frames: AtomicU64,
+    /// 设备输出采样率；0 = worker 尚未发布（启动等待以此为就绪信号）
     sample_rate: AtomicU64,
     duration_ms: AtomicU64,
     volume_bits: AtomicU32,
     track_ended: AtomicBool,
-    flush_audio: AtomicBool,
+    /// 音频世代号：每次「应丢弃已缓冲音频」（seek/切歌/显式 flush）+1。
+    /// 块带世代戳、回调只播当前世代——单布尔标志会把 flush 后新到的有效块一并冲掉
+    audio_gen: AtomicU64,
+    /// 切歌确认序号：worker 处理完 Next/Prev 后 +1，engine 据此同步等待后再返回
+    switch_seq: AtomicU64,
     play_mode: AtomicU8,
     track: Mutex<Option<TrackInfo>>,
     queue: Mutex<Vec<QueueItem>>,
@@ -72,16 +77,25 @@ struct Shared {
     error: Mutex<Option<String>>,
 }
 
+/// 锁中毒恢复：音频回调/worker 里 panic 过也不至于连环炸，错误信息照样能写
+fn set_error(shared: &Shared, msg: Option<String>) {
+    match shared.error.lock() {
+        Ok(mut g) => *g = msg,
+        Err(p) => *p.into_inner() = msg,
+    }
+}
+
 impl Shared {
     fn new() -> Self {
         Self {
             status: AtomicU8::new(STATUS_STOPPED),
             position_frames: AtomicU64::new(0),
-            sample_rate: AtomicU64::new(48_000),
+            sample_rate: AtomicU64::new(0),
             duration_ms: AtomicU64::new(0),
             volume_bits: AtomicU32::new(0.8f32.to_bits()),
             track_ended: AtomicBool::new(false),
-            flush_audio: AtomicBool::new(false),
+            audio_gen: AtomicU64::new(0),
+            switch_seq: AtomicU64::new(0),
             play_mode: AtomicU8::new(MODE_SEQUENTIAL),
             track: Mutex::new(None),
             queue: Mutex::new(Vec::new()),
@@ -124,7 +138,7 @@ impl Shared {
     }
 
     fn request_flush(&self) {
-        self.flush_audio.store(true, Ordering::SeqCst);
+        self.audio_gen.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -146,23 +160,12 @@ impl SymphoniaPlayer {
             .spawn(move || worker_main(cmd_rx, worker_shared))
             .context("启动播放线程失败")?;
 
-        for _ in 0..80 {
-            if shared.error.lock().map(|e| e.is_some()).unwrap_or(false) {
+        // 等 worker 发布真实设备采样率（初始 0，非 0 即就绪）或启动报错；超时兜底继续
+        for _ in 0..500 {
+            if shared.error.lock().map(|e| e.is_some()).unwrap_or(true) {
                 break;
             }
-            if shared.sample_rate.load(Ordering::SeqCst) != 48_000
-                || shared.sample_rate.load(Ordering::SeqCst) > 0
-            {
-                // wait until worker publishes device rate (starts at 48000; real value overwrites)
-                if shared
-                    .error
-                    .lock()
-                    .map(|e| e.is_some())
-                    .unwrap_or(false)
-                {
-                    break;
-                }
-                // break once worker has run a moment — sample_rate always > 0
+            if shared.sample_rate.load(Ordering::SeqCst) != 0 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -250,7 +253,7 @@ impl SymphoniaPlayer {
         if let Ok(mut q) = self.shared.queue.lock() {
             q.extend(items);
         }
-        self.shared.request_flush();
+        // 不动音频缓冲：flush 会把当前曲目已解码的队尾冲掉，造成可闻断音
     }
 
     /// 启动恢复上次播放列表：写入队列/当前曲/进度，状态为暂停（不自动播）。
@@ -317,13 +320,28 @@ impl SymphoniaPlayer {
         Ok(info)
     }
 
+    /// 发切歌指令并等 worker 真正切完（switch_seq 确认），返回的是**新曲**信息；
+    /// 超时（解码打开慢，~0.6s）则返回现状，调用方快照/轮询兜底。
+    fn switch_and_wait(&self, cmd: Cmd) {
+        let before = self.shared.switch_seq.load(Ordering::SeqCst);
+        if self.cmd_tx.send(cmd).is_err() {
+            return;
+        }
+        for _ in 0..120 {
+            if self.shared.switch_seq.load(Ordering::SeqCst) != before {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     pub fn next(&mut self) -> Result<Option<TrackInfo>> {
-        let _ = self.cmd_tx.send(Cmd::Next);
+        self.switch_and_wait(Cmd::Next);
         Ok(self.current_track())
     }
 
     pub fn prev(&mut self) -> Result<Option<TrackInfo>> {
-        let _ = self.cmd_tx.send(Cmd::Prev);
+        self.switch_and_wait(Cmd::Prev);
         Ok(self.current_track())
     }
 
@@ -450,28 +468,34 @@ struct DecoderState {
     track_id: u32,
     duration_ms: u64,
     src_sample_rate: u32,
+    /// 源声道数（展示用；输出端统一转立体声再按设备映射）
+    src_channels: u16,
     end: bool,
 }
 
 fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
-        *shared.error.lock().unwrap() = Some("无默认音频输出设备".into());
+        set_error(&shared, Some("无默认音频输出设备".into()));
         return;
     };
     let Ok(default_config) = device.default_output_config() else {
-        *shared.error.lock().unwrap() = Some("读取输出配置失败".into());
+        set_error(&shared, Some("读取输出配置失败".into()));
         return;
     };
     let out_rate = default_config.sample_rate().0;
+    let out_channels = usize::from(default_config.channels()).max(1);
     shared.sample_rate.store(out_rate as u64, Ordering::SeqCst);
 
-    let (block_tx, block_rx) = bounded::<Vec<f32>>(BLOCK_QUEUE);
+    // 块 = (世代号, 段起点锚[帧], 立体声交错样本)；世代过滤过期块，锚点校准进度
+    let (block_tx, block_rx) = bounded::<(u64, Option<u64>, Vec<f32>)>(BLOCK_QUEUE);
     let mut audio = AudioOut {
         cur: Vec::new(),
         pos: 0,
         block_rx,
         shared: Arc::clone(&shared),
+        cur_gen: 0,
+        out_channels,
     };
 
     let stream = match default_config.sample_format() {
@@ -514,7 +538,7 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
             )
         }
         _ => {
-            *shared.error.lock().unwrap() = Some("不支持的采样格式".into());
+            set_error(&shared, Some("不支持的采样格式".into()));
             return;
         }
     };
@@ -522,12 +546,12 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
     let stream = match stream {
         Ok(s) => s,
         Err(e) => {
-            *shared.error.lock().unwrap() = Some(format!("打开音频输出失败: {e}"));
+            set_error(&shared, Some(format!("打开音频输出失败: {e}")));
             return;
         }
     };
     if let Err(e) = stream.play() {
-        *shared.error.lock().unwrap() = Some(format!("启动音频输出失败: {e}"));
+        set_error(&shared, Some(format!("启动音频输出失败: {e}")));
         return;
     }
 
@@ -539,39 +563,81 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
 struct AudioOut {
     cur: Vec<f32>,
     pos: usize,
-    block_rx: Receiver<Vec<f32>>,
+    block_rx: Receiver<(u64, Option<u64>, Vec<f32>)>,
     shared: Arc<Shared>,
+    /// 已消费到的音频世代；与 shared.audio_gen 不同即先清空手上缓冲
+    cur_gen: u64,
+    /// 设备声道数（解码端统一出立体声，这里按设备映射：单声道混音、多声道补零）
+    out_channels: usize,
 }
 
 impl AudioOut {
+    /// 拉下一块：丢弃过期世代的块；段起点块（新曲/seek 后首块）用锚点校准进度
+    fn pull_next(&mut self) {
+        loop {
+            match self.block_rx.try_recv() {
+                Ok((gen, anchor, block)) => {
+                    if gen < self.cur_gen {
+                        continue;
+                    }
+                    self.cur = block;
+                    self.pos = 0;
+                    if let Some(frames) = anchor {
+                        self.shared.position_frames.store(frames, Ordering::SeqCst);
+                    }
+                    return;
+                }
+                Err(_) => {
+                    self.cur.clear();
+                    self.pos = 0;
+                    return;
+                }
+            }
+        }
+    }
+
     fn fill(&mut self, data: &mut [f32]) {
-        if self.shared.flush_audio.swap(false, Ordering::SeqCst) {
+        let gen = self.shared.audio_gen.load(Ordering::SeqCst);
+        if gen != self.cur_gen {
+            self.cur_gen = gen;
             self.cur.clear();
             self.pos = 0;
-            while self.block_rx.try_recv().is_ok() {}
         }
         let vol = self.shared.volume();
         let paused = self.shared.status.load(Ordering::SeqCst) != STATUS_PLAYING;
-        let n = data.len();
+        let ch = self.out_channels;
+        let frames = data.len() / ch;
         let mut frames_written = 0u64;
 
-        for i in 0..n {
+        for f in 0..frames {
+            let o = f * ch;
             if paused {
-                data[i] = 0.0;
+                data[o..o + ch].fill(0.0);
                 continue;
             }
             if self.pos >= self.cur.len() {
-                self.cur = self.block_rx.try_recv().unwrap_or_default();
-                self.pos = 0;
+                self.pull_next();
             }
-            if self.pos < self.cur.len() {
-                data[i] = self.cur[self.pos] * vol;
-                self.pos += 1;
-                if i % 2 == 0 {
-                    frames_written += 1;
+            if self.pos + 1 < self.cur.len() {
+                // 源固定立体声交错；按设备声道数映射
+                let l = self.cur[self.pos] * vol;
+                let r = self.cur[self.pos + 1] * vol;
+                self.pos += 2;
+                match ch {
+                    1 => data[o] = (l + r) * 0.5,
+                    2 => {
+                        data[o] = l;
+                        data[o + 1] = r;
+                    }
+                    _ => {
+                        data[o] = l;
+                        data[o + 1] = r;
+                        data[o + 2..o + ch].fill(0.0);
+                    }
                 }
+                frames_written += 1;
             } else {
-                data[i] = 0.0;
+                data[o..o + ch].fill(0.0);
             }
         }
         if frames_written > 0 {
@@ -618,6 +684,7 @@ fn open_decoder(path: &Path) -> Result<DecoderState> {
         _ => 0,
     };
     let src_sample_rate = params.sample_rate.unwrap_or(44_100).max(1);
+    let src_channels = params.channels.map(|c| c.count() as u16).unwrap_or(2);
     let decoder = symphonia::default::get_codecs()
         .make(&params, &DecoderOptions::default())
         .context("不支持的编解码器")?;
@@ -627,18 +694,25 @@ fn open_decoder(path: &Path) -> Result<DecoderState> {
         track_id,
         duration_ms,
         src_sample_rate,
+        src_channels,
         end: false,
     })
 }
 
+/// `flush`：是否丢弃已缓冲音频。显式切歌/seek 要；EOF 自动连播不要（保留队尾，无缝衔接）。
 fn open_track_full(
     shared: &Shared,
     path: &Path,
     index: Option<usize>,
     queue_item: Option<&QueueItem>,
+    flush: bool,
 ) -> Option<DecoderState2> {
-    shared.request_flush();
-    shared.position_frames.store(0, Ordering::SeqCst);
+    if flush {
+        shared.request_flush();
+        shared.position_frames.store(0, Ordering::SeqCst);
+    }
+    // EOF 连播（flush=false）：缓冲队尾继续播、进度不归零，
+    // 由新曲首块的锚点在队尾播完那一刻校准（gapless）
     shared.track_ended.store(false, Ordering::SeqCst);
 
     match open_decoder(path) {
@@ -658,7 +732,7 @@ fn open_track_full(
                     .duration_ms
                     .max(queue_item.map(|q| q.duration_ms).unwrap_or(0)),
                 sample_rate: st.src_sample_rate,
-                channels: 2,
+                channels: st.src_channels,
             };
             shared
                 .duration_ms
@@ -669,7 +743,7 @@ fn open_track_full(
             if let Ok(mut qi) = shared.queue_index.lock() {
                 *qi = index;
             }
-            *shared.error.lock().unwrap() = None;
+            set_error(shared, None);
             Some(DecoderState2 {
                 inner: st,
                 pending: Vec::new(),
@@ -677,7 +751,7 @@ fn open_track_full(
             })
         }
         Err(err) => {
-            *shared.error.lock().unwrap() = Some(format!("{err:#}"));
+            set_error(shared, Some(format!("{err:#}")));
             if let Ok(mut t) = shared.track.lock() {
                 *t = None;
             }
@@ -868,20 +942,17 @@ fn shuffle_pick(len: usize, current: Option<usize>) -> Option<usize> {
 fn decode_loop(
     cmd_rx: Receiver<Cmd>,
     shared: Arc<Shared>,
-    block_tx: Sender<Vec<f32>>,
+    block_tx: Sender<(u64, Option<u64>, Vec<f32>)>,
     out_rate: u32,
 ) {
     let mut dec: Option<DecoderState2> = None;
     let mut playing = false;
     let mut queue: Vec<QueueItem> = Vec::new();
     let mut queue_index: Option<usize> = None;
-    let mut pending_block: Option<Vec<f32>> = None;
+    let mut pending_block: Option<(u64, Option<u64>, Vec<f32>)> = None;
     let mut history: Vec<usize> = Vec::new();
-
-    // drop leftover blocks helper
-    let flush = || {
-        shared.request_flush();
-    };
+    // 段起点锚（设备帧）：新曲 = 0，seek = 目标位置；由段内首块带上，回调播到它时校准进度
+    let mut seg_anchor: Option<u64> = None;
 
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -896,26 +967,27 @@ fn decode_loop(
                     if let Ok(mut qi) = shared.queue_index.lock() {
                         *qi = Some(start);
                     }
-                    flush();
                     pending_block = None;
                     if let Some(item) = queue.get(start).cloned() {
                         let path = PathBuf::from(&item.path);
-                        dec = open_track_full(&shared, &path, Some(start), Some(&item));
+                        dec = open_track_full(&shared, &path, Some(start), Some(&item), true);
                         playing = dec.is_some();
+                        seg_anchor = if playing { Some(0) } else { None };
                         if playing {
                             shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
                         }
                     } else {
                         dec = None;
                         playing = false;
+                        seg_anchor = None;
                         shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                     }
                 }
                 Cmd::Open { path, index } => {
-                    flush();
                     pending_block = None;
                     let item = index.and_then(|i| queue.get(i).cloned());
-                    dec = open_track_full(&shared, &path, index, item.as_ref());
+                    dec = open_track_full(&shared, &path, index, item.as_ref(), true);
+                    seg_anchor = if dec.is_some() { Some(0) } else { None };
                 }
                 Cmd::Play => {
                     playing = true;
@@ -930,11 +1002,12 @@ fn decode_loop(
                         if seek_decoder(&mut d.inner, ms).is_ok() {
                             d.pending.clear();
                             d.resample_pos = 0.0;
-                            flush();
+                            shared.request_flush();
+                            pending_block = None;
                             let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
-                            shared
-                                .position_frames
-                                .store(ms * rate / 1000, Ordering::SeqCst);
+                            let frames = ms.saturating_mul(rate) / 1000;
+                            shared.position_frames.store(frames, Ordering::SeqCst);
+                            seg_anchor = Some(frames);
                         }
                     }
                 }
@@ -966,19 +1039,18 @@ fn decode_loop(
                     if let Ok(mut qi) = shared.queue_index.lock() {
                         *qi = queue_index;
                     }
-                    flush();
                     pending_block = None;
                     if let Some(item) = queue.get(start).cloned() {
                         let path = PathBuf::from(&item.path);
-                        dec = open_track_full(&shared, &path, Some(start), Some(&item));
+                        dec = open_track_full(&shared, &path, Some(start), Some(&item), true);
                         if let Some(d) = dec.as_mut() {
                             if seek_decoder(&mut d.inner, position_ms).is_ok() {
                                 d.pending.clear();
                                 d.resample_pos = 0.0;
                                 let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
-                                shared
-                                    .position_frames
-                                    .store(position_ms * rate / 1000, Ordering::SeqCst);
+                                let frames = position_ms.saturating_mul(rate) / 1000;
+                                shared.position_frames.store(frames, Ordering::SeqCst);
+                                seg_anchor = Some(frames);
                             }
                         }
                         playing = false;
@@ -986,6 +1058,7 @@ fn decode_loop(
                     } else {
                         dec = None;
                         playing = false;
+                        seg_anchor = None;
                         shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                     }
                 }
@@ -1019,19 +1092,21 @@ fn decode_loop(
                                 }
                             }
                             let path = PathBuf::from(&item.path);
-                            flush();
                             pending_block = None;
                             queue_index = Some(target);
                             if let Ok(mut qi) = shared.queue_index.lock() {
                                 *qi = Some(target);
                             }
-                            dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                            dec = open_track_full(&shared, &path, queue_index, Some(&item), true);
                             if dec.is_some() {
                                 playing = true;
+                                seg_anchor = Some(0);
                                 shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
                             }
                         }
                     }
+                    // 确认序号：engine 侧的 next() 在等这个信号再返回新曲目
+                    shared.switch_seq.fetch_add(1, Ordering::SeqCst);
                 }
                 Cmd::Prev => {
                     // 播过 3s 先重头；否则按模式回退
@@ -1040,11 +1115,11 @@ fn decode_loop(
                         if let Some(idx) = queue_index {
                             if let Some(item) = queue.get(idx).cloned() {
                                 let path = PathBuf::from(&item.path);
-                                flush();
                                 pending_block = None;
-                                dec = open_track_full(&shared, &path, Some(idx), Some(&item));
+                                dec = open_track_full(&shared, &path, Some(idx), Some(&item), true);
                                 if dec.is_some() {
                                     playing = true;
+                                    seg_anchor = Some(0);
                                     shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
                                 }
                             }
@@ -1062,25 +1137,28 @@ fn decode_loop(
                         if let Some(target) = target {
                             if let Some(item) = queue.get(target).cloned() {
                                 let path = PathBuf::from(&item.path);
-                                flush();
                                 pending_block = None;
                                 queue_index = Some(target);
                                 if let Ok(mut qi) = shared.queue_index.lock() {
                                     *qi = Some(target);
                                 }
-                                dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                                dec = open_track_full(&shared, &path, queue_index, Some(&item), true);
                                 if dec.is_some() {
                                     playing = true;
+                                    seg_anchor = Some(0);
                                     shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
                                 }
                             }
                         }
                     }
+                    shared.switch_seq.fetch_add(1, Ordering::SeqCst);
                 }
                 Cmd::Stop => {
                     dec = None;
                     playing = false;
-                    flush();
+                    pending_block = None;
+                    seg_anchor = None;
+                    shared.request_flush();
                     shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                     if let Ok(mut t) = shared.track.lock() {
                         *t = None;
@@ -1092,7 +1170,9 @@ fn decode_loop(
         if playing {
             if let Some(d) = dec.as_mut() {
                 if pending_block.is_none() {
-                    pending_block = fill_block(d, out_rate);
+                    // 世代戳在解码前打：解码期间发生的 flush 会让本块过期被丢弃
+                    let gen = shared.audio_gen.load(Ordering::SeqCst);
+                    pending_block = fill_block(d, out_rate).map(|b| (gen, seg_anchor.take(), b));
                 }
                 match pending_block.take() {
                     Some(block) => {
@@ -1109,7 +1189,8 @@ fn decode_loop(
                         }
                     }
                     None => {
-                        // EOF — wait until output drains (blocks already in queue)
+                        // EOF：不 flush——已入通道的队尾继续播完（gapless），
+                        // 新曲首块带锚点 0，播到它时进度归零；自动切歌只在这里发生（单一入口）
                         shared.track_ended.store(true, Ordering::SeqCst);
                         let mode = shared.play_mode_raw();
                         let mut advanced = false;
@@ -1130,20 +1211,23 @@ fn decode_loop(
                             if let Some(target) = target {
                                 if let Some(item) = queue.get(target).cloned() {
                                     let path = PathBuf::from(&item.path);
-                                    flush();
                                     pending_block = None;
                                     queue_index = Some(target);
                                     if let Ok(mut qi) = shared.queue_index.lock() {
                                         *qi = Some(target);
                                     }
-                                    dec = open_track_full(&shared, &path, queue_index, Some(&item));
+                                    dec = open_track_full(&shared, &path, queue_index, Some(&item), false);
                                     advanced = dec.is_some();
+                                    if advanced {
+                                        seg_anchor = Some(0);
+                                    }
                                 }
                             }
                         }
                         if !advanced {
                             dec = None;
                             playing = false;
+                            seg_anchor = None;
                             shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                         }
                     }

@@ -29,6 +29,9 @@ pub struct TrackRow {
     pub album_artist: String,
     pub year: String,
     pub track_no: Option<i64>,
+    /// 碟号（多碟发行；无碟号标签为 None，按 1 处理）
+    #[serde(default)]
+    pub disc_no: Option<i64>,
     pub duration_ms: i64,
     pub format: String,
     pub sample_rate: Option<i64>,
@@ -124,8 +127,8 @@ pub struct TrackFilter {
     pub sort: Option<String>,
 }
 
-pub fn now_iso() -> String {
-    // Local ISO-ish timestamp without extra chrono dependency
+/// Unix 秒时间戳（存 TEXT 列，省 chrono 依赖）。名实相符：不是 ISO 串。
+pub fn now_unix_secs() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -135,7 +138,8 @@ pub fn now_iso() -> String {
 }
 
 /// Shared column list for SELECTs mapped by [`map_track`].
-/// 列顺序即 map_track 的读取下标顺序。catalog_* 为关联子查询列（tracks.catalog_id 命中时
+/// 列顺序即 map_track 的读取下标顺序；新增列一律**追加在末尾**（catalog_* 关联子查询列之后），
+/// 中间的顺序改动会让所有下标错位。catalog_* 为关联子查询列（tracks.catalog_id 命中时
 /// 非 NULL），不改 FROM 即可被全部查询复用。
 const TRACK_COLS: &str = "id, path, filename, title, artist, album, album_artist, year, track_no,
         duration_ms, format, sample_rate, bit_rate,
@@ -145,7 +149,8 @@ const TRACK_COLS: &str = "id, path, filename, title, artist, album, album_artist
         (SELECT c.artist FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_artist,
         (SELECT c.album FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_album,
         (SELECT c.year FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_year,
-        (SELECT c.track_no FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_track_no";
+        (SELECT c.track_no FROM catalog c WHERE c.id = tracks.catalog_id) AS catalog_track_no,
+        disc_no";
 
 impl LibraryDb {
     /// Open the working DB at an explicit path (usually `<library>/axmusic.db`).
@@ -249,6 +254,9 @@ impl LibraryDb {
             "ALTER TABLE tracks ADD COLUMN mb_release_mbid TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE tracks ADD COLUMN has_lrc INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE catalog ADD COLUMN release_type TEXT NOT NULL DEFAULT ''",
+            // 多碟发行的碟号（P1：多碟曲号配对/排序用；NULL = 无碟号信息，按 1 处理）
+            "ALTER TABLE tracks ADD COLUMN disc_no INTEGER",
+            "ALTER TABLE catalog ADD COLUMN disc_no INTEGER",
         ] {
             let _ = self.conn.execute(ddl, []);
         }
@@ -317,7 +325,7 @@ impl LibraryDb {
 
     pub fn set_library_root(&self, path: &Path) -> Result<LibraryRoot> {
         let path_str = path.to_string_lossy().to_string();
-        let ts = now_iso();
+        let ts = now_unix_secs();
         // 两条语句进同一事务：崩溃不会留下多行 root 的半状态
         let tx = self.transaction()?;
         tx.execute(
@@ -356,9 +364,9 @@ impl LibraryDb {
                 duration_ms, format, sample_rate, bit_rate,
                 has_cover, has_lyrics, has_lrc, has_year, has_mb_id, tag_status, missing,
                 file_size, mtime, is_deleted,
-                release_type, mb_recording_mbid, mb_release_mbid, updated_at
+                release_type, mb_recording_mbid, mb_release_mbid, updated_at, disc_no
             ) VALUES (
-                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0,?22,?23,?24,?25
+                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0,?22,?23,?24,?25,?26
             )
             ON CONFLICT(path) DO UPDATE SET
                 filename=excluded.filename,
@@ -368,6 +376,7 @@ impl LibraryDb {
                 album_artist=excluded.album_artist,
                 year=excluded.year,
                 track_no=excluded.track_no,
+                disc_no=excluded.disc_no,
                 duration_ms=excluded.duration_ms,
                 format=excluded.format,
                 sample_rate=excluded.sample_rate,
@@ -412,7 +421,8 @@ impl LibraryDb {
                 t.release_type,
                 t.mb_recording_mbid,
                 t.mb_release_mbid,
-                now_iso(),
+                now_unix_secs(),
+                t.disc_no,
             ],
         )?;
         // Re-apply any known catalog link (upsert keeps catalog_id on conflict).
@@ -458,9 +468,9 @@ impl LibraryDb {
             where_conds.push("(catalog_id IS NULL OR catalog_id = 0)");
         }
         let order = match filter.sort.as_deref() {
-            Some("title") => "title, album_artist, album, track_no, filename",
-            Some("artist") => "artist, album, track_no, filename",
-            _ => "album_artist, album, track_no, filename",
+            Some("title") => "title, album_artist, album, COALESCE(disc_no, 1), track_no, filename",
+            Some("artist") => "artist, album, COALESCE(disc_no, 1), track_no, filename",
+            _ => "album_artist, album, COALESCE(disc_no, 1), track_no, filename",
         };
         let sql = format!(
             "SELECT {TRACK_COLS}
@@ -578,7 +588,7 @@ impl LibraryDb {
                      WHEN ?2 = 'Unknown Album Artist' THEN album_artist = ''
                      ELSE album_artist = ?2 OR (album_artist = '' AND artist = ?2) END
                    )
-                 ORDER BY track_no, filename"
+                 ORDER BY COALESCE(disc_no, 1), track_no, filename"
             ))?
             .query_map(params![album, album_artist], map_track)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -692,7 +702,7 @@ impl LibraryDb {
             "SELECT {TRACK_COLS}
              FROM tracks
              WHERE is_deleted = 0 AND ({})
-             ORDER BY album, track_no, filename",
+             ORDER BY album, COALESCE(disc_no, 1), track_no, filename",
             Self::artist_match_sql()
         );
         let rows = self
@@ -744,13 +754,15 @@ impl LibraryDb {
                 )
                 .optional()?
         } else if !c.release_mbid.is_empty() {
-            // 无 recording MBID 的行按 (source, release_mbid, track_no) 去重：
-            // 各源 id 命名空间独立，必须带 source 谓词避免跨源误判重行
+            // 无 recording MBID 的行按 (source, release_mbid, disc, track_no) 去重：
+            // 各源 id 命名空间独立，必须带 source 谓词避免跨源误判重行；
+            // 多碟发行同一 track_no 在不同碟各出现一次，disc_no 必须进键
             self.conn
                 .query_row(
-                    "SELECT id FROM catalog WHERE mbid = '' AND source = ?1 AND release_mbid = ?2 AND track_no IS ?3
+                    "SELECT id FROM catalog WHERE mbid = '' AND source = ?1 AND release_mbid = ?2
+                       AND track_no IS ?3 AND disc_no IS ?4
                      ORDER BY id LIMIT 1",
-                    params![c.source, c.release_mbid, c.track_no],
+                    params![c.source, c.release_mbid, c.track_no, c.disc_no],
                     |r| r.get(0),
                 )
                 .optional()?
@@ -762,7 +774,7 @@ impl LibraryDb {
                 "UPDATE catalog SET
                     source=?1, kind=?2, release_mbid=?3, title=?4, artist=?5,
                     album=?6, album_artist=?7, year=?8, track_no=?9,
-                    release_type=?10, cover_path=COALESCE(?11, cover_path)
+                    release_type=?10, cover_path=COALESCE(?11, cover_path), disc_no=?13
                  WHERE id=?12",
                 params![
                     c.source,
@@ -777,6 +789,7 @@ impl LibraryDb {
                     c.release_type,
                     c.cover_path,
                     id,
+                    c.disc_no,
                 ],
             )?;
             return Ok(id);
@@ -784,8 +797,8 @@ impl LibraryDb {
         self.conn.execute(
             "INSERT INTO catalog (
                 source, kind, mbid, release_mbid, title, artist, album,
-                album_artist, year, track_no, release_type, cover_path, created_at
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                album_artist, year, track_no, release_type, cover_path, created_at, disc_no
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 c.source,
                 c.kind,
@@ -799,7 +812,8 @@ impl LibraryDb {
                 c.track_no,
                 c.release_type,
                 c.cover_path,
-                now_iso(),
+                now_unix_secs(),
+                c.disc_no,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -840,7 +854,7 @@ impl LibraryDb {
             .conn
             .query_row(
                 "SELECT id, source, kind, mbid, release_mbid, title, artist, album,
-                        album_artist, year, track_no, release_type, cover_path, created_at
+                        album_artist, year, track_no, release_type, cover_path, created_at, disc_no
                  FROM catalog WHERE id = ?1",
                 params![id],
                 map_catalog,
@@ -852,7 +866,7 @@ impl LibraryDb {
     /// Match local track → catalog by fields: MBID → title+artist+album → title+artist.
     pub fn find_catalog_fuzzy(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
         const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
-                        album_artist, year, track_no, release_type, cover_path, created_at";
+                        album_artist, year, track_no, release_type, cover_path, created_at, disc_no";
         // 1. MBID (recording, else release) — strongest key.
         if !t.mb_recording_mbid.is_empty() {
             let row = self
@@ -871,15 +885,17 @@ impl LibraryDb {
             }
         }
         if !t.mb_release_mbid.is_empty() && t.track_no.is_some() {
+            // 多碟发行同一 track_no 每碟一行：本地有碟号时要求碟号一致（catalog 缺碟号则放行）
             let row = self
                 .conn
                 .query_row(
                     &format!(
                         "SELECT {COLS} FROM catalog
                          WHERE release_mbid = ?1 AND track_no = ?2
+                           AND (?3 IS NULL OR disc_no IS NULL OR disc_no = ?3)
                          ORDER BY id DESC LIMIT 1"
                     ),
-                    params![t.mb_release_mbid, t.track_no],
+                    params![t.mb_release_mbid, t.track_no, t.disc_no],
                     map_catalog,
                 )
                 .optional()?;
@@ -975,6 +991,9 @@ pub struct CatalogRow {
     pub album_artist: String,
     pub year: String,
     pub track_no: Option<i64>,
+    /// 碟号（多碟发行；单碟/无信息为 None）
+    #[serde(default)]
+    pub disc_no: Option<i64>,
     pub release_type: String,
     pub cover_path: Option<String>,
     pub created_at: String,
@@ -996,6 +1015,7 @@ fn map_catalog(r: &rusqlite::Row<'_>) -> rusqlite::Result<CatalogRow> {
         release_type: r.get(11)?,
         cover_path: r.get(12)?,
         created_at: r.get(13)?,
+        disc_no: r.get(14)?,
     })
 }
 
@@ -1032,6 +1052,7 @@ fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
         catalog_album: r.get(28)?,
         catalog_year: r.get(29)?,
         catalog_track_no: r.get(30)?,
+        disc_no: r.get(31)?,
     })
 }
 

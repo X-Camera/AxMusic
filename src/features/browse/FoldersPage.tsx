@@ -597,6 +597,10 @@ export function FoldersPage() {
             <div className="folders-list-wrap" ref={listWrapRef}>
               {loading && files.length === 0 ? (
                 <div className="empty-state">加载中…</div>
+              ) : error && files.length === 0 ? (
+                <div className="empty-state">
+                  <p className="muted">读取文件夹失败：{error}</p>
+                </div>
               ) : files.length === 0 ? (
                 <div className="empty-state">
                   <p className="muted">

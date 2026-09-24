@@ -32,7 +32,9 @@ export function parseLrc(raw: string | null | undefined): LrcLine[] {
       out.push({ timeMs: mm * 60000 + ss * 1000 + fracMs, text });
     }
   }
-  out.sort((a, b) => a.timeMs - b.timeMs || a.text.localeCompare(b.text));
+  // 同一时间戳的多行（原文/译文）必须保持文件书写顺序：JS sort 稳定，
+  // 只按时间戳排即可；再按文本排会让 mergeBilingual 把主句/译文搞反
+  out.sort((a, b) => a.timeMs - b.timeMs);
   return withEndTimes(mergeBilingual(out));
 }
 
@@ -101,7 +103,8 @@ export function pickLyrics(
   const text = (prefer === "embed" ? embedded || sidecar : sidecar || embedded) || "";
   const plain = text
     .split(/\r?\n/)
-    .map((s) => s.replace(/\[[\d:.]+\]/g, "").trim())
+    // 与解析共用同一时间戳正则：剥的集合 = 能解析的集合，不多不少
+    .map((s) => s.replace(TIME_RE, "").trim())
     .filter((s) => s.length > 0);
   return { lines: [], plain, synced: false };
 }

@@ -28,7 +28,12 @@ function solveSpring(
 ): (t: Seconds) => number {
   const { mass, damping, stiffness, soft } = params;
   const delta = to - from;
-  // 过阻尼（或 soft 强制）：指数衰减无振荡
+  // 参数守卫：mass/stiffness 必须为正（mass=0 会让 sqrt(k/m) 炸出 NaN 并扩散到渲染层）
+  if (!(mass > 0) || !(stiffness > 0)) {
+    console.warn("[spring] 非法参数（mass/stiffness 必须为正），直接贴目标", params);
+    return (t) => (t < 0 ? from : to);
+  }
+  // 过阻尼（或 soft 强制）：临界阻尼解析式，指数衰减无振荡（与参考实现一致）
   if (soft || 1 <= damping / (2 * Math.sqrt(stiffness * mass))) {
     const angularFrequency = -Math.sqrt(stiffness / mass);
     const leftover = -angularFrequency * delta - velocity;

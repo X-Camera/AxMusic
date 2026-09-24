@@ -209,10 +209,15 @@ export const api = {
   /** 追加条目（已在歌单里的自动跳过） */
   playlistAddTracks: (name: string, items: PlaylistAddItem[]) =>
     invoke<PlaylistDetail>("playlist_add_tracks", { name, items }),
-  playlistRemoveTrack: (name: string, index: number) =>
-    invoke<PlaylistDetail>("playlist_remove_track", { name, index }),
-  playlistMoveTrack: (name: string, fromIndex: number, toIndex: number) =>
-    invoke<PlaylistDetail>("playlist_move_track", { name, fromIndex, toIndex }),
+  /** 移除条目（按 rel_path 定位，连续点击不怕列表错位） */
+  playlistRemoveTrack: (name: string, relPath: string) =>
+    invoke<PlaylistDetail>("playlist_remove_track", { name, relPath }),
+  /** 条目上移/下移一格（delta = ±1，按 rel_path 定位） */
+  playlistMoveTrack: (name: string, relPath: string, delta: number) =>
+    invoke<PlaylistDetail>("playlist_move_track", { name, relPath, delta }),
+  /** 批量清理失效条目（一次读写），返回清理后的歌单 */
+  playlistCleanMissing: (name: string) =>
+    invoke<PlaylistDetail>("playlist_clean_missing", { name }),
   // ── 喜爱（系统歌单「喜爱」的快捷读写）──────────────────────────
   favoritePaths: () => invoke<string[]>("favorite_paths"),
   favoriteToggle: (item: PlaylistAddItem) =>
@@ -222,9 +227,12 @@ export const api = {
 export function formatTime(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;
   const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const ss = s.toString().padStart(2, "0");
+  // 超过一小时补小时位，避免 75:00 这种读法
+  return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
 export function trackRowToQueueItem(t: TrackRow): QueueItem {

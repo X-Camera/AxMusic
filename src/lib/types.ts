@@ -42,6 +42,8 @@ export interface TrackRow {
   album_artist: string;
   year: string;
   track_no: number | null;
+  /** 碟号（多碟发行；无碟号信息为 null） */
+  disc_no: number | null;
   duration_ms: number;
   format: string;
   sample_rate: number | null;
@@ -228,6 +230,8 @@ export interface CatalogTrackDraft {
   album_artist: string;
   year: string;
   track_no: number | null;
+  /** 碟号（多碟发行；单碟/无信息为 null） */
+  disc_no: number | null;
   release_type: string;
 }
 
@@ -263,6 +267,8 @@ export interface CatalogRow {
   album_artist: string;
   year: string;
   track_no: number | null;
+  /** 碟号（多碟发行；单碟/无信息为 null） */
+  disc_no: number | null;
   release_type: string;
   cover_path: string | null;
   created_at: string;

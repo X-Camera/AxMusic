@@ -20,6 +20,7 @@ export function ArtistsPage() {
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   /** 加载序号，丢弃过期的详情响应 */
@@ -27,11 +28,13 @@ export function ArtistsPage() {
 
   const reload = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const list = await api.getArtists();
       setArtists(list);
-    } catch {
-      setArtists([]);
+    } catch (e) {
+      // 失败保留旧数据，错误态与空态分开
+      setError(String(e));
     } finally {
       setLoading(false);
     }
@@ -255,6 +258,16 @@ export function ArtistsPage() {
           </div>
         ) : loading && artists.length === 0 ? (
           <div className="empty-state">加载中…</div>
+        ) : error && artists.length === 0 ? (
+          <div className="empty-state">
+            <div className="display" style={{ fontSize: 20 }}>
+              加载失败
+            </div>
+            <p className="muted">{error}</p>
+            <button className="btn" onClick={() => void reload()}>
+              重试
+            </button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="empty-state">
             <div className="display" style={{ fontSize: 20 }}>

@@ -262,6 +262,7 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "dirs 5.0.1",
+ "encoding_rs",
  "image",
  "lofty",
  "reqwest 0.12.28",

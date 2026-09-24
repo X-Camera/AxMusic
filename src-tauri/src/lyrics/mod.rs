@@ -101,7 +101,8 @@ pub fn write_sidecar(audio_path: &Path, text: &str, overwrite: bool) -> Result<P
 
 pub fn read_sidecar(audio_path: &Path) -> Result<String> {
     let p = sidecar_lrc_path(audio_path);
-    std::fs::read_to_string(&p).with_context(|| format!("读取失败 {}", p.display()))
+    // GBK/ANSI 的 .lrc 在中文 Windows 曲库里很常见：UTF-8 失败回退 GB18030，而不是报错
+    crate::paths::read_text_lossy(&p).with_context(|| format!("读取失败 {}", p.display()))
 }
 
 // ── embedded lyrics (via lofty) ────────────────────────────────────

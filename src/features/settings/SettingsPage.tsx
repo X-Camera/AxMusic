@@ -319,7 +319,9 @@ export function SettingsPage() {
                   value={settings.play_mode}
                   options={PLAY_MODES}
                   onChange={(v) => {
-                    void patch({ play_mode: v });
+                    // 单一写路径：player_set_play_mode 落引擎+落盘并发 settings://changed，
+                    // 本页的 settings://changed 监听负责回同步，不再双写
+                    setSettings((s) => (s ? { ...s, play_mode: v } : s));
                     void useApp.getState().setPlayMode(v);
                   }}
                 />
@@ -355,20 +357,30 @@ export function SettingsPage() {
                       ["netease", "网易云"],
                       ["qq", "QQ音乐"],
                     ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="set-check">
-                      <input
-                        type="checkbox"
-                        checked={src[key]}
-                        onChange={(e) =>
-                          void patch({
-                            lyrics_sources: { ...src, [key]: e.target.checked },
-                          })
-                        }
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
+                  ).map(([key, label]) => {
+                    // 最后一个开着的源不可取消（后端也会拒收全关，但前端先拦住更明确）
+                    const enabledCount = [src.lrclib, src.netease, src.qq].filter(Boolean).length;
+                    const lastOne = src[key] && enabledCount === 1;
+                    return (
+                      <label
+                        key={key}
+                        className="set-check"
+                        title={lastOne ? "至少保留一个在线源" : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={src[key]}
+                          disabled={lastOne}
+                          onChange={(e) =>
+                            void patch({
+                              lyrics_sources: { ...src, [key]: e.target.checked },
+                            })
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </Row>
             </Section>
