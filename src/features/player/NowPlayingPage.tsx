@@ -7,15 +7,18 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  SlidersHorizontal,
   Volume1,
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, formatTime } from "../../lib/api";
+import { lyricsDisplayVars } from "../../lib/lyricsDisplay";
+import type { LyricsFont } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import {
   clockNow,
@@ -28,6 +31,7 @@ import { WindowControls } from "../../components/WindowControls";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { useApp } from "../../state/useApp";
 import { useAmllLyrics } from "./amll/useAmllLyrics";
+import { LyricsStyleDialog } from "./LyricsStyleDialog";
 import { pickLyrics, type LrcLine } from "./lrc";
 import "./NowPlayingPage.css";
 
@@ -70,8 +74,12 @@ export function NowPlayingPage() {
   const [seekMs, setSeekMs] = useState(0);
   const [closing, setClosing] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [styleOpen, setStyleOpen] = useState(false);
   const [flashIdx, setFlashIdx] = useState(-1);
+  /** 曲目代数：切歌 / 单曲循环重播时 +1，强制歌词 DOM 与引擎整表重建 */
+  const [trackGen, setTrackGen] = useState(0);
   const flashTimerRef = useRef(0);
+  const lastPosForGenRef = useRef(0);
   /** 播放中用基准时间外推，填补 500ms 轮询间隙 */
   const clockRef = useRef<PlayClock>(createPlayClock());
   const seekFillRef = useRef<HTMLDivElement>(null);
@@ -113,9 +121,8 @@ export function NowPlayingPage() {
     await openLyricsWindow({ id, path, title, artist, filename });
   }
 
-  /** 播放界面全局右键：搜索歌词（有则替换，无则直接搜） */
+  /** 播放界面全局右键：搜索歌词 / 歌词样式 */
   function onLyricsContextMenu(e: React.MouseEvent) {
-    if (!track) return;
     e.preventDefault();
     setCtxMenu({ x: e.clientX, y: e.clientY });
   }
@@ -132,10 +139,22 @@ export function NowPlayingPage() {
   }, [ctxMenu]);
 
   const [lyricsPrefer, setLyricsPrefer] = useState<"sidecar" | "embed">("sidecar");
+  /** 满窗歌词显示参数（设置页「满窗歌词」） */
+  const [lyricsDisp, setLyricsDisp] = useState({
+    fontScale: 1,
+    font: "display" as LyricsFont,
+    lineHeight: 1.25,
+  });
   useEffect(() => {
     let cancelled = false;
     void api.getSettings().then((s) => {
-      if (!cancelled) setLyricsPrefer(s.lyrics_prefer);
+      if (cancelled) return;
+      setLyricsPrefer(s.lyrics_prefer);
+      setLyricsDisp({
+        fontScale: s.lyrics_font_scale ?? 1,
+        font: s.lyrics_font ?? "display",
+        lineHeight: s.lyrics_line_height ?? 1.25,
+      });
     });
     return () => {
       cancelled = true;
@@ -230,15 +249,44 @@ export function NowPlayingPage() {
   } = useAmllLyrics({
     lines,
     synced,
-    playing,
     getTimeMs: currentTimeMs,
     onSeekLine: (i, ms) => seekToLine(i, ms),
+    layoutKey: `${lyricsDisp.fontScale}|${lyricsDisp.font}|${lyricsDisp.lineHeight}`,
+    rebuildKey: `${path}|${trackGen}`,
   });
 
-  // 切歌清空行状态
+  const lyricsStyle = lyricsDisplayVars(lyricsDisp);
+
+  /** 弹窗调参：先套到歌词（实时预览），再落盘 */
+  function patchLyricsDisp(next: Partial<typeof lyricsDisp>) {
+    const merged = { ...lyricsDisp, ...next };
+    setLyricsDisp(merged);
+    void api
+      .updateSettings({
+        lyrics_font_scale: merged.fontScale,
+        lyrics_font: merged.font,
+        lyrics_line_height: merged.lineHeight,
+      })
+      .catch(() => void 0);
+  }
+
+  // 切歌清空行状态 + 升代（强制歌词整表重建）
   useEffect(() => {
     setFlashIdx(-1);
+    setTrackGen((g) => g + 1);
+    lastPosForGenRef.current = 0;
   }, [path]);
+
+  // 单曲循环重播 / 点「下一首」回到自己：path 不变但进度归零，也要升代
+  useEffect(() => {
+    const prev = lastPosForGenRef.current;
+    lastPosForGenRef.current = pos;
+    if (seeking) return;
+    const jumpedBack = prev > 2000 && pos < 800;
+    if (jumpedBack) {
+      setTrackGen((g) => g + 1);
+    }
+  }, [pos, seeking]);
 
   useEffect(
     () => () => {
@@ -455,6 +503,7 @@ export function NowPlayingPage() {
           <div
             className={`np-lyrics${synced ? " amll" : ""}`}
             ref={lyricsRef}
+            style={lyricsStyle}
           >
             {!track && (
               <div className="np-lyrics-empty tertiary">从专辑或管理表挑一首开始</div>
@@ -476,38 +525,40 @@ export function NowPlayingPage() {
               <div className="np-lines">
                 <div className="np-line-spacer" aria-hidden />
                 {plain.map((t, i) => (
-                  <div key={i} className="np-line plain">
+                  <div key={`${path}-p${i}`} className="np-line plain">
                     <div className="np-main">{t}</div>
                   </div>
                 ))}
                 <div className="np-line-spacer" aria-hidden />
               </div>
             )}
-            {synced &&
-              lines.map((l: LrcLine, i) => {
-                const on = i === activeIdx;
-                const state = on ? "on" : i < activeIdx ? "past" : "next";
-                return (
-                  <div
-                    key={`${l.timeMs}-${i}`}
-                    data-i={i}
-                    className={["np-line", state, flashIdx === i ? "flash" : ""]
-                      .filter(Boolean)
-                      .join(" ")}
-                  >
-                    <div className="np-line-inner">
-                      <div className="np-main">{l.text || "⋯"}</div>
-                      {l.trans ? <div className="np-trans">{l.trans}</div> : null}
+            {synced && (
+              <Fragment key={`${path}-${trackGen}`}>
+                {lines.map((l: LrcLine, i) => {
+                  const on = i === activeIdx;
+                  const state = on ? "on" : i < activeIdx ? "past" : "next";
+                  return (
+                    <div
+                      key={`${path}-${l.timeMs}-${i}`}
+                      data-i={i}
+                      className={["np-line", state, flashIdx === i ? "flash" : ""]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      <div className="np-line-inner">
+                        <div className="np-main">{l.text || "⋯"}</div>
+                        {l.trans ? <div className="np-trans">{l.trans}</div> : null}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </Fragment>
+            )}
           </div>
         </section>
       </div>
 
       {ctxMenu &&
-        track &&
         createPortal(
           <div
             className="np-ctx-menu"
@@ -515,18 +566,41 @@ export function NowPlayingPage() {
             role="menu"
             onClick={(e) => e.stopPropagation()}
           >
+            {track && (
+              <button
+                className="np-ctx-item"
+                role="menuitem"
+                onClick={() => {
+                  setCtxMenu(null);
+                  void openLyricsSearch();
+                }}
+              >
+                <Search size={14} />
+                搜索歌词
+              </button>
+            )}
             <button
               className="np-ctx-item"
               role="menuitem"
               onClick={() => {
                 setCtxMenu(null);
-                void openLyricsSearch();
+                setStyleOpen(true);
               }}
             >
-              <Search size={14} />
-              搜索歌词
+              <SlidersHorizontal size={14} />
+              歌词样式
             </button>
           </div>,
+          document.body,
+        )}
+
+      {styleOpen &&
+        createPortal(
+          <LyricsStyleDialog
+            value={lyricsDisp}
+            onChange={patchLyricsDisp}
+            onClose={() => setStyleOpen(false)}
+          />,
           document.body,
         )}
     </div>

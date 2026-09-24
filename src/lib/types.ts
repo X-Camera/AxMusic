@@ -165,6 +165,15 @@ export interface LyricsSources {
   qq: boolean;
 }
 
+/** 满窗歌词字体 */
+export type LyricsFont =
+  | "display"
+  | "yahei"
+  | "dengxian"
+  | "kaiti"
+  | "songti"
+  | "heiti";
+
 export interface AppSettings {
   library_root: string | null;
   volume: number;
@@ -173,6 +182,11 @@ export interface AppSettings {
   lyrics_save_mode: LyricsSaveMode;
   lyrics_prefer: LyricsPrefer;
   lyrics_sources: LyricsSources;
+  /** 满窗歌词字号缩放 0.75–1.5 */
+  lyrics_font_scale: number;
+  lyrics_font: LyricsFont;
+  /** 满窗歌词行间距（主句 line-height） */
+  lyrics_line_height: number;
   songs_view: SongsView;
   close_behavior: CloseBehavior;
   theme_mode: ThemeMode;

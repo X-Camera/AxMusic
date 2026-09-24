@@ -160,7 +160,9 @@
   object-fit: cover;
   display: block;
   border-radius: clamp(12px, 1.2vw, 18px);
-  transition: transform 400ms var(--ease-out);
+  /* 常驻呼吸动画，暂停只冻结不卸掉——避免播放/暂停时 scale 突变 */
+  animation: np-float 5.5s ease-in-out infinite;
+  animation-play-state: paused;
 }
 
 .np-cover-empty {
@@ -172,7 +174,7 @@
 }
 
 .np-page.playing .np-cover {
-  animation: np-float 5.5s ease-in-out infinite;
+  animation-play-state: running;
 }
 
 @keyframes np-float {
@@ -369,6 +371,10 @@
   overflow: auto;
   scrollbar-width: none;
   user-select: none;
+  /* 设置页「满窗歌词」可调：字号缩放 / 字体 / 行距 */
+  --lyrics-scale: 1;
+  --lyrics-lh: 1.25;
+  --lyrics-font: var(--font-display);
   /* 边界溶进背景：上下更长的软渐隐 */
   mask-image: linear-gradient(
     180deg,
@@ -480,12 +486,148 @@
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* ── 歌词样式弹窗（满窗右键）：深色玻璃，参数实时套到背后歌词 ── */
+.np-style-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.np-style-panel {
+  width: min(340px, calc(100vw - 48px));
+  padding: 18px 18px 14px;
+  border-radius: 16px;
+  background: rgba(24, 27, 35, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(22px) saturate(1.3);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.94);
+  /* 拖动偏移（相对初始居中位） */
+  will-change: transform;
+}
+
+.np-style-title {
+  margin: 0 0 14px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.np-style-title:active {
+  cursor: grabbing;
+}
+
+.np-style-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+
+.np-style-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.np-style-ctrl {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.np-style-ctrl input[type="range"] {
+  flex: 1;
+  height: 5px;
+  border: none;
+  padding: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.9) 0%,
+    rgba(255, 255, 255, 0.9) var(--pct, 50%),
+    rgba(255, 255, 255, 0.22) var(--pct, 50%)
+  );
+  border-radius: 999px;
+  appearance: none;
+  outline: none;
+}
+
+.np-style-ctrl input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.np-style-val {
+  width: 42px;
+  text-align: right;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.np-style-select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.np-style-select option {
+  background: #181b23;
+  color: #f2f4f8;
+}
+
+.np-style-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.np-style-done {
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.np-style-done:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 /* 纯文本回退（无时间戳）：普通滚动列表 */
 .np-lines {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: clamp(18px, 2vh, 28px);
+  gap: calc(clamp(18px, 2vh, 28px) * var(--lyrics-lh) / 1.25);
   padding: 0 12px;
 }
 
@@ -497,8 +639,10 @@
 }
 
 .np-line.plain .np-main {
-  font-size: clamp(16px, 1.6vw, 24px);
+  font-family: var(--lyrics-font);
+  font-size: calc(clamp(16px, 1.6vw, 24px) * var(--lyrics-scale));
   font-weight: 500;
+  line-height: var(--lyrics-lh);
   text-align: center;
   color: rgba(255, 255, 255, 0.55);
 }
@@ -510,12 +654,18 @@
   /* 纵向手势交给引擎（拖拽浏览歌词），横向保留 */
   touch-action: pan-x;
   /* 行内 em 基准：行 padding/副行字号都随主句字号缩放；
-     AMLL 同款 max(5vh, 2.5vw) 视口比例公式，不封顶——4K 下歌词一样大 */
-  font-size: max(max(5vh, 2.5vw), 20px);
+     AMLL 同款 max(5vh, 2.5vw) 视口比例公式 × 设置缩放，不封顶——4K 下歌词一样大 */
+  font-size: calc(max(max(5vh, 2.5vw), 20px) * var(--lyrics-scale));
 }
 
 .np-lyrics.amll.grabbing {
   cursor: grabbing;
+}
+
+/* 引擎测量完成前先藏行：避免无 transform 的行叠在 top:0，和旧歌词残影搅在一起 */
+.np-lyrics.amll:not([data-lyrics-ready="1"]) > .np-line {
+  opacity: 0 !important;
+  filter: none !important;
 }
 
 .np-lyrics.amll .np-line {
@@ -524,7 +674,8 @@
   left: 0;
   width: 100%;
   box-sizing: border-box;
-  padding: 0.35em var(--space-4);
+  /* 行盒上下留白随行距参数松紧 */
+  padding: calc(0.28em * var(--lyrics-lh)) var(--space-4);
   border-radius: 12px;
   text-align: left;
   cursor: pointer;
@@ -562,10 +713,10 @@
 }
 
 .np-lyrics.amll .np-main {
-  font-family: var(--font-display);
+  font-family: var(--lyrics-font);
   font-size: 1em;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: var(--lyrics-lh);
   letter-spacing: 0.01em;
   color: rgba(255, 255, 255, 0.92);
 }
@@ -576,6 +727,7 @@
 
 .np-lyrics.amll .np-trans {
   margin-top: 0.35em;
+  font-family: var(--lyrics-font);
   font-size: 0.5em;
   font-weight: 500;
   line-height: 1.4;
@@ -618,7 +770,7 @@
 
   /* 窄窗歌词列矮，字号改成随宽度走，避免只剩两三行 */
   .np-lyrics.amll {
-    font-size: clamp(20px, 5vw, 32px);
+    font-size: calc(clamp(20px, 5vw, 32px) * var(--lyrics-scale));
   }
 }
 
@@ -636,7 +788,7 @@
     animation: none;
   }
 
-  .np-page.playing .np-cover {
+  .np-cover {
     animation: none;
   }
 

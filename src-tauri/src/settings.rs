@@ -77,6 +77,25 @@ pub enum ThemeMode {
     Light,
 }
 
+/// 满窗歌词字体（Windows 常见中文字体）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricsFont {
+    /// 跟随应用显示字体
+    #[default]
+    Display,
+    /// 微软雅黑
+    Yahei,
+    /// 等线
+    Dengxian,
+    /// 楷体
+    Kaiti,
+    /// 宋体
+    Songti,
+    /// 黑体
+    Heiti,
+}
+
 /// 歌词在线源开关
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricsSources {
@@ -117,6 +136,15 @@ pub struct AppSettings {
     /// 在线歌词源开关
     #[serde(default)]
     pub lyrics_sources: LyricsSources,
+    /// 满窗歌词字号缩放（0.75..=1.5）
+    #[serde(default = "default_lyrics_font_scale")]
+    pub lyrics_font_scale: f32,
+    /// 满窗歌词字体
+    #[serde(default)]
+    pub lyrics_font: LyricsFont,
+    /// 满窗歌词行间距（主句 line-height，1.0..=2.0）
+    #[serde(default = "default_lyrics_line_height")]
+    pub lyrics_line_height: f32,
     /// 歌曲页默认视图
     #[serde(default)]
     pub songs_view: SongsView,
@@ -139,6 +167,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_lyrics_font_scale() -> f32 {
+    1.0
+}
+
+fn default_lyrics_line_height() -> f32 {
+    1.25
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -149,6 +185,9 @@ impl Default for AppSettings {
             lyrics_save_mode: LyricsSaveMode::default(),
             lyrics_prefer: LyricsPrefer::default(),
             lyrics_sources: LyricsSources::default(),
+            lyrics_font_scale: default_lyrics_font_scale(),
+            lyrics_font: LyricsFont::default(),
+            lyrics_line_height: default_lyrics_line_height(),
             songs_view: SongsView::default(),
             close_behavior: CloseBehavior::default(),
             theme_mode: ThemeMode::default(),

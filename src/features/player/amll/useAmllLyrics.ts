@@ -83,11 +83,14 @@ function freshState(): EngineState {
 export interface UseAmllLyricsOpts {
   lines: LrcLine[];
   synced: boolean;
-  playing: boolean;
   /** 播放时钟（含 scrub 预览与轮询间隙外推），由父组件提供 */
   getTimeMs: () => number;
   /** 点击某句（未拖动）时回调 */
   onSeekLine: (index: number, ms: number) => void;
+  /** 字号/字体/行距等排版参数变化时重测行高（不触发载入飞入） */
+  layoutKey?: string;
+  /** 切歌/单曲循环重播：即使 lines 引用未变也整表重建，避免旧 DOM 残影叠加 */
+  rebuildKey?: string;
 }
 
 export function useAmllLyrics(opts: UseAmllLyricsOpts) {
@@ -106,8 +109,13 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
     const box = containerRef.current;
     if (!box) return false;
     const st = stRef.current;
-    const els = Array.from(box.querySelectorAll<HTMLElement>("[data-i]"));
-    if (els.length !== linesKey.length || linesKey.length === 0) return false;
+    // 只要直接子级，按 data-i 排序——防止残留/嵌套节点混进缓存
+    const els = Array.from(box.querySelectorAll<HTMLElement>(":scope > [data-i]"));
+    els.sort((a, b) => Number(a.dataset.i) - Number(b.dataset.i));
+    if (els.length !== linesKey.length || linesKey.length === 0) {
+      box.setAttribute("data-lyrics-ready", "0");
+      return false;
+    }
     const h: number[] = [];
     const prefix: number[] = [0];
     els.forEach((el, i) => {
@@ -120,6 +128,7 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
     st.prefix = prefix;
     st.boxH = box.clientHeight;
     st.measured = true;
+    box.setAttribute("data-lyrics-ready", "1");
     return true;
   }
 
@@ -178,7 +187,18 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
     st.suspended = false;
     st.interacting = "none";
     st.lastIdx = -1;
+    // 先丢掉旧元素缓存：切歌后 React 已换 DOM，继续写旧节点会叠出双份歌词
+    st.els = [];
+    st.inners = [];
+    st.springs = [];
+    st.scaleSprings = [];
+    st.heights = [];
+    st.prefix = [0];
+    st.lastY = [];
+    st.lastScale = [];
+    st.lastBlur = [];
     st.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    containerRef.current?.setAttribute("data-lyrics-ready", "0");
     setActiveIdx(-1);
     if (!optsRef.current.synced || linesKey.length === 0) return;
     if (!measure()) return;
@@ -203,7 +223,20 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
     st.lastScale = linesKey.map(() => 1);
     st.lastBlur = linesKey.map(() => Number.NaN);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linesKey, opts.synced]);
+  }, [linesKey, opts.synced, opts.rebuildKey]);
+
+  // 排版参数（字号/字体/行距）变化：只重测行高与前缀和，不重放载入动效
+  useLayoutEffect(() => {
+    const st = stRef.current;
+    if (!opts.synced || linesKey.length === 0 || !st.measured) return;
+    if (!measure()) return;
+    st.offset = clampOffset(
+      st,
+      st.offset,
+      st.suspended ? st.frozenFocus : Math.max(0, st.lastIdx),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.layoutKey]);
 
   // 容器尺寸变化：重测量（换行高度会变）+ 重新钳制 offset
   useEffect(() => {
@@ -362,9 +395,10 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
       const box = containerRef.current;
       if (!box) return;
 
-      const { getTimeMs, playing } = optsRef.current;
+      const { getTimeMs } = optsRef.current;
       const lines = optsRef.current.lines;
-      const n = lines.length;
+      // 以已测量缓存为准，防止 lines 与 st.els 短暂不一致时写到残留节点
+      const n = st.els.length;
       const ms = getTimeMs();
       const idx = findLrcIndex(lines, ms);
       if (idx !== st.lastIdx) {
@@ -419,9 +453,9 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
           el.style.transform = `translateY(${y.toFixed(1)}px)`;
         }
 
-        // 缩放：当前句 1 / 其余 0.97（暂停时全部 1）
+        // 缩放：仅看是否当前句。暂停不再整表回 1，避免播放/暂停时行尺寸跳动
         const scaleSpring = st.scaleSprings[i];
-        const targetScale = i === idx || !playing ? 1 : 0.97;
+        const targetScale = i === idx ? 1 : 0.97;
         if (st.reducedMotion) scaleSpring.setPosition(targetScale);
         else if (Math.abs(scaleSpring.getTargetPosition() - targetScale) >= 1e-4)
           scaleSpring.setTarget(targetScale);

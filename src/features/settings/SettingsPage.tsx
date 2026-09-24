@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
 import { COLOR_SCHEMES, THEME_MODES, applyColorScheme, applyThemeMode } from "../../lib/colorScheme";
+import { LYRICS_FONTS } from "../../lib/lyricsDisplay";
 import type {
   AppSettings,
   CloseBehavior,
+  LyricsFont,
   LyricsPrefer,
   LyricsSaveMode,
   PathsInfo,
@@ -121,6 +123,42 @@ function Row({
         {hint && <div className="set-row-hint tertiary">{hint}</div>}
       </div>
       <div className="set-row-ctrl">{children}</div>
+    </div>
+  );
+}
+
+/** 滑杆 + 数值（默认音量 / 满窗歌词字号、行距共用） */
+function RangeCtrl({
+  min,
+  max,
+  step,
+  value,
+  label,
+  format,
+  onChange,
+}: {
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  label: string;
+  format: (v: number) => string;
+  onChange: (v: number) => void;
+}) {
+  const pct = ((value - min) / (max - min)) * 100;
+  return (
+    <div className="set-vol">
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        aria-label={label}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ ["--pct" as string]: `${pct}%` }}
+      />
+      <span className="set-vol-val mono">{format(value)}</span>
     </div>
   );
 }
@@ -382,6 +420,45 @@ export function SettingsPage() {
                     );
                   })}
                 </div>
+              </Row>
+            </Section>
+
+            <Section title="满窗歌词">
+              <Row label="字号" hint="相对默认大小缩放；满窗右键「歌词样式」可边看边调">
+                <RangeCtrl
+                  min={0.75}
+                  max={1.5}
+                  step={0.05}
+                  value={settings.lyrics_font_scale ?? 1}
+                  label="字号"
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => void patch({ lyrics_font_scale: v })}
+                />
+              </Row>
+              <Row label="字体" hint="主句与译文共用；「默认」跟随应用显示字体">
+                <select
+                  className="set-select"
+                  aria-label="歌词字体"
+                  value={settings.lyrics_font ?? "display"}
+                  onChange={(e) => void patch({ lyrics_font: e.target.value as LyricsFont })}
+                >
+                  {LYRICS_FONTS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+              <Row label="行距" hint="行与行之间松紧，主句 line-height">
+                <RangeCtrl
+                  min={1}
+                  max={2}
+                  step={0.05}
+                  value={settings.lyrics_line_height ?? 1.25}
+                  label="行距"
+                  format={(v) => v.toFixed(2)}
+                  onChange={(v) => void patch({ lyrics_line_height: v })}
+                />
               </Row>
             </Section>
 

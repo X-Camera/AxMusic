@@ -445,6 +445,28 @@
   color: var(--text-secondary);
 }
 
+/* 字体下拉：贴合 set-seg 控件密度 */
+.set-select {
+  height: 32px;
+  min-width: 120px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.set-select:hover {
+  background: var(--bg-hover);
+}
+
+.set-select:focus-visible {
+  border-color: var(--accent);
+}
+
 @media (max-width: 980px) {
   .set-shell {
     flex-direction: column;
