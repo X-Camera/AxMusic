@@ -193,6 +193,8 @@ export type RouteId =
 export interface ScrapeCandidate {
   id: string;
   kind: string;
+  /** 来源：musicbrainz / itunes / netease / qq */
+  source: string;
   title: string;
   artist: string;
   year: string;
@@ -232,11 +234,21 @@ export interface CatalogTrackDraft {
 export interface ApplyPlan {
   candidate_id: string;
   release_id: string;
+  /** 来源（写入 catalog.source） */
+  source: string;
   candidate_label: string;
   tracks: TrackPlan[];
   /** 采纳后存入本地 catalog 的完整曲目表（专辑模式为整张） */
   catalog_tracks: CatalogTrackDraft[];
   unmatched: string[];
+}
+
+/** 刮削搜索流式批次（scrape://batch 事件载荷） */
+export interface ScrapeBatch {
+  searchId: number;
+  source: string;
+  items: ScrapeCandidate[];
+  error?: string;
 }
 
 export interface CatalogRow {

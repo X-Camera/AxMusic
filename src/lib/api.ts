@@ -14,7 +14,6 @@ import type {
   PlaylistSummary,
   QueueItem,
   ScanResult,
-  ScrapeCandidate,
   SettingsPatch,
   TrackFilter,
   TrackInfo,
@@ -106,19 +105,25 @@ export const api = {
   folderMetaRead: (paths: string[]) =>
     invoke<import("./types").FolderMeta[]>("folder_meta_read", { paths }),
 
-  scrapeSearchAlbum: (album: string, artist: string) =>
-    invoke<ScrapeCandidate[]>("scrape_search_album", { album, artist }),
-  scrapeSearchTrack: (title: string, artist: string) =>
-    invoke<ScrapeCandidate[]>("scrape_search_track", { title, artist }),
+  /** 专辑刮削：四源并发，结果经 scrape://batch/{searchId,source,items} 流式返回 */
+  scrapeSearchAlbum: (searchId: number, album: string, artist: string) =>
+    invoke<void>("scrape_search_album", { searchId, album, artist }),
+  /** 单曲刮削：同上，按曲名 */
+  scrapeSearchTrack: (searchId: number, title: string, artist: string) =>
+    invoke<void>("scrape_search_track", { searchId, title, artist }),
   scrapeBuildPlan: (
+    source: string,
     releaseMbid: string,
     trackIds: number[],
     mode: "album" | "track",
+    forceTrackNo?: number,
   ) =>
     invoke<ApplyPlan>("scrape_build_plan", {
+      source,
       releaseMbid,
       trackIds,
       mode,
+      ...(forceTrackNo != null ? { forceTrackNo } : {}),
     }),
   /** 采纳刮削结果 → 本地 catalog（只存文字，封面另走 catalogFetchCover） */
   catalogSave: (plan: ApplyPlan) => invoke<number[]>("catalog_save", { plan }),

@@ -744,11 +744,13 @@ impl LibraryDb {
                 )
                 .optional()?
         } else if !c.release_mbid.is_empty() {
+            // 无 recording MBID 的行按 (source, release_mbid, track_no) 去重：
+            // 各源 id 命名空间独立，必须带 source 谓词避免跨源误判重行
             self.conn
                 .query_row(
-                    "SELECT id FROM catalog WHERE mbid = '' AND release_mbid = ?1 AND track_no IS ?2
+                    "SELECT id FROM catalog WHERE mbid = '' AND source = ?1 AND release_mbid = ?2 AND track_no IS ?3
                      ORDER BY id LIMIT 1",
-                    params![c.release_mbid, c.track_no],
+                    params![c.source, c.release_mbid, c.track_no],
                     |r| r.get(0),
                 )
                 .optional()?
@@ -812,13 +814,14 @@ impl LibraryDb {
     }
 
     /// 更新同一发行下全部 catalog 行的封面引用（单独刮封面后调用）。
-    pub fn set_catalog_cover(&self, release_mbid: &str, cover_path: &str) -> Result<()> {
-        // 空串会命中所有无发行 MBID 的行，批量覆盖封面引用——直接拒绝
+    /// 按 (source, release_mbid) 定位：各源 id 命名空间独立，可能撞值。
+    pub fn set_catalog_cover(&self, source: &str, release_mbid: &str, cover_path: &str) -> Result<()> {
+        // 空串会命中所有无发行 id 的行，批量覆盖封面引用——直接拒绝
         anyhow::ensure!(!release_mbid.is_empty(), "release_mbid 不能为空");
         anyhow::ensure!(!cover_path.is_empty(), "cover_path 不能为空");
         self.conn.execute(
-            "UPDATE catalog SET cover_path = ?1 WHERE release_mbid = ?2",
-            params![cover_path, release_mbid],
+            "UPDATE catalog SET cover_path = ?1 WHERE release_mbid = ?2 AND source = ?3",
+            params![cover_path, release_mbid, source],
         )?;
         Ok(())
     }
@@ -1045,3 +1048,4 @@ pub fn create_library_dir(parent: &Path, name: &str) -> Result<PathBuf> {
         .with_context(|| format!("无法创建目录 {}", dir.display()))?;
     Ok(dir)
 }
+

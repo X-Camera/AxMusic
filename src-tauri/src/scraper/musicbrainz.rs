@@ -6,7 +6,10 @@ use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{rate_limit_wait, user_agent, ScrapeCandidate};
+use super::{rate_limit_wait, user_agent, ScrapeCandidate, SRC_MB};
+
+/// 通用结构在 scraper/mod.rs 定义，此处 re-export 保持旧路径可用
+pub use super::{ReleaseDetail, ReleaseTrack};
 
 const MB_ROOT: &str = "https://musicbrainz.org/ws/2";
 
@@ -153,6 +156,7 @@ pub fn search_releases(album: &str, artist: &str) -> Result<Vec<ScrapeCandidate>
                     .and_then(|g| g.id.clone())
                     .unwrap_or_else(|| id.clone()),
                 kind: "release".into(),
+                source: SRC_MB.into(),
                 title: rel.title.unwrap_or_default(),
                 artist: credit_name(&rel.artist_credit),
                 year: year_of_any(
@@ -195,6 +199,7 @@ pub fn search_recordings(title: &str, artist: &str) -> Result<Vec<ScrapeCandidat
             out.push(ScrapeCandidate {
                 id: id.clone(),
                 kind: "recording".into(),
+                source: SRC_MB.into(),
                 title: rec.title.unwrap_or_default(),
                 artist: credit_name(&rec.artist_credit),
                 year: String::new(),
@@ -224,26 +229,6 @@ pub fn fetch_recording(recording_id: &str) -> Result<RecordingDetail> {
         title: rec.title.unwrap_or_default(),
         artist: credit_name(&rec.artist_credit),
     })
-}
-
-/// One track in a release tracklist.
-pub struct ReleaseTrack {
-    pub position: i64,
-    pub title: String,
-    pub artist: String,
-    pub recording_id: String,
-}
-
-/// Release detail: artist, year, tracklist.
-pub struct ReleaseDetail {
-    pub release_id: String,
-    pub title: String,
-    pub artist: String,
-    pub album_artist: String,
-    pub year: String,
-    /// Release-group primary type (Album / EP / Single …)
-    pub release_type: String,
-    pub tracks: Vec<ReleaseTrack>,
 }
 
 /// Fetch release + recordings + artist-credit.

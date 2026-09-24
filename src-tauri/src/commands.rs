@@ -1427,41 +1427,111 @@ pub fn lyrics_current(
 
 use crate::scraper::{self, ApplyPlan, CatalogTrackDraft, FieldChange, ScrapeCandidate, TrackPlan};
 
-/// Album scrape: search MusicBrainz releases.
+/// 专辑刮削搜索：四源（MB / iTunes / 网易云 / QQ）并发。
+/// 立即返回；各源结果经 `scrape://batch`（{searchId, source, items, error?}）流式推送，
+/// 全部结束后发 `scrape://done`（{searchId}）。`search_id` 由前端生成用于过滤过期批次。
 #[tauri::command]
 pub async fn scrape_search_album(
+    app: AppHandle,
+    search_id: i64,
     album: String,
     artist: String,
-) -> Result<Vec<ScrapeCandidate>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        scraper::search_releases(&album, &artist).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+) -> Result<(), String> {
+    scrape_search_fanout(app, search_id, "album", album, artist);
+    Ok(())
 }
 
-/// Single-track scrape: search MusicBrainz recordings.
+/// 单曲刮削搜索：同上，按曲名。
 #[tauri::command]
 pub async fn scrape_search_track(
+    app: AppHandle,
+    search_id: i64,
     title: String,
     artist: String,
-) -> Result<Vec<ScrapeCandidate>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        scraper::search_recordings(&title, &artist).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+) -> Result<(), String> {
+    scrape_search_fanout(app, search_id, "track", title, artist);
+    Ok(())
+}
+
+fn scrape_search_fanout(
+    app: AppHandle,
+    search_id: i64,
+    mode: &'static str,
+    query: String,
+    artist: String,
+) {
+    std::thread::spawn(move || {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel::<(&'static str, Result<Vec<ScrapeCandidate>, String>)>();
+        let mut in_flight = 0usize;
+
+        macro_rules! spawn_source {
+            ($name:expr, $call:expr) => {{
+                let tx = tx.clone();
+                let (q, a) = (query.clone(), artist.clone());
+                std::thread::spawn(move || {
+                    let r = $call(&q, &a).map_err(|e| e.to_string());
+                    let _ = tx.send(($name, r));
+                });
+                in_flight += 1;
+            }};
+        }
+
+        if mode == "album" {
+            spawn_source!(scraper::SRC_MB, scraper::search_releases);
+            spawn_source!(scraper::SRC_ITUNES, scraper::itunes::search_albums);
+            spawn_source!(scraper::SRC_NETEASE, scraper::netease::search_albums);
+            spawn_source!(scraper::SRC_QQ, scraper::qqmusic::search_albums);
+        } else {
+            spawn_source!(scraper::SRC_MB, scraper::search_recordings);
+            spawn_source!(scraper::SRC_ITUNES, scraper::itunes::search_tracks);
+            spawn_source!(scraper::SRC_NETEASE, scraper::netease::search_tracks);
+            spawn_source!(scraper::SRC_QQ, scraper::qqmusic::search_tracks);
+        }
+        drop(tx);
+
+        for _ in 0..in_flight {
+            if let Ok((source, result)) = rx.recv() {
+                match result {
+                    Ok(items) => {
+                        let _ = app.emit(
+                            "scrape://batch",
+                            serde_json::json!({
+                                "searchId": search_id,
+                                "source": source,
+                                "items": items,
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = app.emit(
+                            "scrape://batch",
+                            serde_json::json!({
+                                "searchId": search_id,
+                                "source": source,
+                                "items": [],
+                                "error": e,
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+        let _ = app.emit("scrape://done", serde_json::json!({ "searchId": search_id }));
+    });
 }
 
 /// Build field-diff plan: local track_ids vs chosen release/recording.
-/// `release_mbid` is ScrapeCandidate.release_id (for album) or recording id.
-/// `mode` = "album" | "track"
+/// `source` = 候选来源（musicbrainz/itunes/netease/qq）；`release_mbid` 为该源原始 id。
+/// `mode` = "album" | "track"；`force_track_no` = 用户手动指定的专辑轨号（自动匹配失败兜底）。
 #[tauri::command]
 pub async fn scrape_build_plan(
     state: State<'_, AppState>,
+    source: String,
     release_mbid: String,
     track_ids: Vec<i64>,
     mode: String,
+    force_track_no: Option<i64>,
 ) -> Result<ApplyPlan, String> {
     let mut locals = Vec::new();
     {
@@ -1478,18 +1548,20 @@ pub async fn scrape_build_plan(
 
         // blocking network on purpose (rate-limited)
     tauri::async_runtime::spawn_blocking(move || {
-        build_plan_inner(release_mbid, locals, mode).map_err(|e| e.to_string())
+        build_plan_inner(source, release_mbid, locals, mode, force_track_no).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 fn build_plan_inner(
+    source: String,
     release_mbid: String,
     locals: Vec<TrackRow>,
     mode: String,
+    force_track_no: Option<i64>,
 ) -> anyhow::Result<ApplyPlan> {
-    use crate::scraper::musicbrainz::{fetch_recording, fetch_release, title_similarity};
+    use crate::scraper::fetch_release_by_source;
 
     fn field(field: &str, old: &str, new: &str) -> FieldChange {
         FieldChange {
@@ -1501,16 +1573,19 @@ fn build_plan_inner(
 
     let mut unmatched = Vec::new();
     let mut tracks_plans = Vec::new();
+    let is_mb = source == scraper::SRC_MB;
 
     if mode == "track" {
-        let rec_id = release_mbid.clone();
-        let rec = fetch_recording(&rec_id)?;
+        let rec = scraper::fetch_track_by_source(&source, &release_mbid)?;
         for t in locals {
-            let changes = vec![
+            let mut changes = vec![
                 field("title", &t.title, &rec.title),
                 field("artist", &t.artist, &rec.artist),
-                field("musicbrainz_recording", "", &rec.id),
             ];
+            // MBID 只认 MusicBrainz 来源；其它源的 id 不写进 MB 字段
+            if is_mb {
+                changes.push(field("musicbrainz_recording", "", &rec.id));
+            }
             tracks_plans.push(TrackPlan {
                 track_id: t.id,
                 path: t.path.clone(),
@@ -1522,16 +1597,17 @@ fn build_plan_inner(
         return Ok(ApplyPlan {
             candidate_id: rec.id.clone(),
             release_id: rec.id.clone(),
+            source,
             candidate_label: format!("{} — {}", rec.artist, rec.title),
             tracks: tracks_plans,
             catalog_tracks: vec![CatalogTrackDraft {
-                mbid: rec.id.clone(),
+                mbid: if is_mb { rec.id.clone() } else { String::new() },
                 release_mbid: String::new(),
                 title: rec.title.clone(),
                 artist: rec.artist.clone(),
-                album: String::new(),
+                album: rec.album.clone(),
                 album_artist: String::new(),
-                year: String::new(),
+                year: rec.year.clone(),
                 track_no: None,
                 release_type: String::new(),
             }],
@@ -1540,43 +1616,15 @@ fn build_plan_inner(
     }
 
     // album mode
-    let detail = fetch_release(&release_mbid)?;
-    let mut used = vec![false; detail.tracks.len()];
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
-
-    for (li, local) in locals.iter().enumerate() {
-        let mut best: Option<(usize, f64)> = None;
-        for (ri, remote) in detail.tracks.iter().enumerate() {
-            if used.get(ri).copied().unwrap_or(true) {
-                continue;
-            }
-            let mut score = title_similarity(&local.title, &remote.title);
-            if let Some(no) = local.track_no {
-                if no == remote.position {
-                    score += 0.5;
-                }
-            }
-            if best.map(|(_, s)| score > s).unwrap_or(true) {
-                best = Some((ri, score));
-            }
-        }
-        if let Some((ri, score)) = best {
-            if score >= 0.35 {
-                used[ri] = true;
-                pairs.push((li, ri));
-            } else {
-                unmatched.push(local.title.clone());
-            }
-        } else {
-            unmatched.push(local.title.clone());
-        }
-    }
+    let detail = fetch_release_by_source(&source, &release_mbid)?;
+    let (pairs, unmatched_titles) = match_album_tracks(&locals, &detail.tracks, force_track_no);
+    unmatched.extend(unmatched_titles);
 
     for (li, ri) in pairs {
         let local = &locals[li];
         let remote = &detail.tracks[ri];
         // Always list every field (old → new) so the user can review before apply.
-        let changes = vec![
+        let mut changes = vec![
             field("title", &local.title, &remote.title),
             field("artist", &local.artist, &remote.artist),
             field("album", &local.album, &detail.title),
@@ -1588,9 +1636,12 @@ fn build_plan_inner(
                 &local.track_no.map(|n| n.to_string()).unwrap_or_default(),
                 &remote.position.to_string(),
             ),
-            field("musicbrainz_recording", "", &remote.recording_id),
-            field("musicbrainz_release", "", &detail.release_id),
         ];
+        // MBID 只认 MusicBrainz 来源；其它源的 id 不混进 MB 字段
+        if is_mb {
+            changes.push(field("musicbrainz_recording", "", &remote.recording_id));
+            changes.push(field("musicbrainz_release", "", &detail.release_id));
+        }
 
         tracks_plans.push(TrackPlan {
             track_id: local.id,
@@ -1607,7 +1658,7 @@ fn build_plan_inner(
         .tracks
         .iter()
         .map(|t| CatalogTrackDraft {
-            mbid: t.recording_id.clone(),
+            mbid: if is_mb { t.recording_id.clone() } else { String::new() },
             release_mbid: detail.release_id.clone(),
             title: t.title.clone(),
             artist: t.artist.clone(),
@@ -1622,11 +1673,75 @@ fn build_plan_inner(
     Ok(ApplyPlan {
         candidate_id: detail.release_id.clone(),
         release_id: detail.release_id,
+        source,
         candidate_label: format!("{} — {}", detail.artist, detail.title),
         tracks: tracks_plans,
         catalog_tracks,
         unmatched,
     })
+}
+
+/// 专辑模式曲目配对（纯函数，便于测试）。优先级：
+/// 0. 用户手动指定轨号（自动匹配失败的兜底，跳过相似度判定）；
+/// 1. 已有录音 MBID 直配（文档：MBID 匹配优先；不受简繁/译名差异影响）；
+/// 2. 曲名相似度 + 轨号一致加权 0.5，阈值 0.35。
+/// 返回 (配对(本地序号, 远端序号), 未匹配曲名)。
+fn match_album_tracks(
+    locals: &[TrackRow],
+    remote: &[crate::scraper::ReleaseTrack],
+    force_track_no: Option<i64>,
+) -> (Vec<(usize, usize)>, Vec<String>) {
+    use crate::scraper::musicbrainz::title_similarity;
+
+    let mut used = vec![false; remote.len()];
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut unmatched = Vec::new();
+
+    for (li, local) in locals.iter().enumerate() {
+        if let Some(no) = force_track_no {
+            if let Some((ri, _)) = remote
+                .iter()
+                .enumerate()
+                .find(|(ri, r)| !used[*ri] && r.position == no)
+            {
+                used[ri] = true;
+                pairs.push((li, ri));
+                continue;
+            }
+        }
+        if !local.mb_recording_mbid.is_empty() {
+            if let Some((ri, _)) = remote
+                .iter()
+                .enumerate()
+                .find(|(ri, r)| !used[*ri] && r.recording_id == local.mb_recording_mbid)
+            {
+                used[ri] = true;
+                pairs.push((li, ri));
+                continue;
+            }
+        }
+        let mut best: Option<(usize, f64)> = None;
+        for (ri, r) in remote.iter().enumerate() {
+            if used[ri] {
+                continue;
+            }
+            let mut score = title_similarity(&local.title, &r.title);
+            if local.track_no == Some(r.position) {
+                score += 0.5;
+            }
+            if best.map(|(_, s)| score > s).unwrap_or(true) {
+                best = Some((ri, score));
+            }
+        }
+        match best {
+            Some((ri, score)) if score >= 0.35 => {
+                used[ri] = true;
+                pairs.push((li, ri));
+            }
+            _ => unmatched.push(local.title.clone()),
+        }
+    }
+    (pairs, unmatched)
 }
 
 /// Save scrape result into local catalog — does NOT touch audio files. Text only;
@@ -1653,7 +1768,7 @@ pub async fn catalog_save(
         for ct in &plan.catalog_tracks {
             let row = crate::library::CatalogRow {
                 id: 0,
-                source: "musicbrainz".into(),
+                source: plan.source.clone(),
                 kind: "track".into(),
                 mbid: ct.mbid.clone(),
                 release_mbid: ct.release_mbid.clone(),
@@ -1823,7 +1938,9 @@ pub async fn cover_search(
                 } else {
                     track.album_artist.clone()
                 };
-                (c.release_mbid, album, artist)
+                // CAA 只认 MB 发行 id；其它源的 id 发过去只会 404，置空跳过
+                let mbid = if c.source == crate::scraper::SRC_MB { c.release_mbid } else { String::new() };
+                (mbid, album, artist)
             }
             None => (track.mb_release_mbid.clone(), track.album.clone(), track.artist.clone()),
         }
@@ -1844,7 +1961,7 @@ pub async fn cover_apply(
     track_id: i64,
     url: String,
 ) -> Result<String, String> {
-    let (catalog_id, release_mbid, library_root) = {
+    let (catalog_id, release_mbid, source, library_root) = {
         let guard = require_db(&state)?;
         let db = db_ref(&guard)?;
         let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
@@ -1857,13 +1974,19 @@ pub async fn cover_apply(
             .ok_or("尚未初始化库目录")?;
         (
             cat.as_ref().map(|c| c.id),
-            cat.map(|c| c.release_mbid).unwrap_or_default(),
+            cat.as_ref().map(|c| c.release_mbid.clone()).unwrap_or_default(),
+            cat.map(|c| c.source).unwrap_or_default(),
             PathBuf::from(root),
         )
     };
 
+    // MB 沿用 `{mbid}.jpg`（兼容存量封面文件）；其它源 id 可能跨源撞名，加源前缀
     let filename = if !release_mbid.is_empty() {
-        format!("{release_mbid}.jpg")
+        if source.is_empty() || source == crate::scraper::SRC_MB {
+            format!("{release_mbid}.jpg")
+        } else {
+            format!("{source}-{release_mbid}.jpg")
+        }
     } else if let Some(id) = catalog_id {
         format!("cat-{id}.jpg")
     } else {
@@ -1890,7 +2013,7 @@ pub async fn cover_apply(
                 .map_err(|e| e.to_string())?;
         }
         if !release_mbid.is_empty() {
-            db.set_catalog_cover(&release_mbid, &path_str)
+            db.set_catalog_cover(&source, &release_mbid, &path_str)
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -2221,4 +2344,109 @@ pub fn playlist_move_track(
     let root = require_library_root(&state)?;
     playlists::move_track(Path::new(&root), &name, from_index, to_index)?;
     playlist_detail_of(&root, &name, &state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scraper::musicbrainz::ReleaseTrack;
+
+    fn local(title: &str, track_no: Option<i64>, mbid: &str) -> TrackRow {
+        TrackRow {
+            id: 1,
+            path: format!("/music/{title}.flac"),
+            filename: format!("{title}.flac"),
+            title: title.into(),
+            artist: "周杰伦".into(),
+            album: "叶惠美".into(),
+            album_artist: String::new(),
+            year: String::new(),
+            track_no,
+            duration_ms: 0,
+            format: "flac".into(),
+            sample_rate: None,
+            bit_rate: None,
+            has_cover: false,
+            has_lyrics: false,
+            has_lrc: false,
+            has_year: false,
+            has_mb_id: false,
+            tag_status: "unmatched".into(),
+            missing: String::new(),
+            release_type: String::new(),
+            mb_recording_mbid: mbid.into(),
+            mb_release_mbid: String::new(),
+            catalog_id: None,
+            mtime: 0,
+            file_size: 0,
+            catalog_title: None,
+            catalog_artist: None,
+            catalog_album: None,
+            catalog_year: None,
+            catalog_track_no: None,
+        }
+    }
+
+    fn rt(position: i64, title: &str, recording_id: &str) -> ReleaseTrack {
+        ReleaseTrack {
+            position,
+            title: title.into(),
+            artist: "周杰倫".into(),
+            recording_id: recording_id.into(),
+        }
+    }
+
+    #[test]
+    fn exact_title_matches() {
+        let locals = [local("晴天", None, "")];
+        let remote = vec![rt(1, "以父之名", "r1"), rt(2, "晴天", "r2")];
+        let (pairs, unmatched) = match_album_tracks(&locals, &remote, None);
+        assert_eq!(pairs, vec![(0, 1)]);
+        assert!(unmatched.is_empty());
+    }
+
+    #[test]
+    fn script_mismatch_without_track_no_fails() {
+        // 简体本地 vs 繁体远端、无轨号：相似度 0 → 未匹配（交给前端手动挑）
+        let locals = [local("东风破", None, "")];
+        let remote = vec![rt(1, "以父之名", "r1"), rt(2, "東風破", "r2")];
+        let (pairs, unmatched) = match_album_tracks(&locals, &remote, None);
+        assert!(pairs.is_empty());
+        assert_eq!(unmatched, vec!["东风破".to_string()]);
+    }
+
+    #[test]
+    fn track_no_bonus_bridges_script_mismatch() {
+        // 同一对简繁标题带轨号：0 + 0.5 ≥ 0.35 命中
+        let locals = [local("东风破", Some(2), "")];
+        let remote = vec![rt(1, "以父之名", "r1"), rt(2, "東風破", "r2")];
+        let (pairs, _) = match_album_tracks(&locals, &remote, None);
+        assert_eq!(pairs, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn mbid_wins_over_title_language() {
+        let locals = [local("Qing Tian", None, "rec-42")];
+        let remote = vec![rt(1, "以父之名", "r1"), rt(2, "晴天", "rec-42")];
+        let (pairs, _) = match_album_tracks(&locals, &remote, None);
+        assert_eq!(pairs, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn force_track_no_picks_exact() {
+        let locals = [local("东风破", None, "")];
+        let remote = vec![rt(1, "以父之名", "r1"), rt(2, "東風破", "r2")];
+        let (pairs, unmatched) = match_album_tracks(&locals, &remote, Some(2));
+        assert_eq!(pairs, vec![(0, 1)]);
+        assert!(unmatched.is_empty());
+    }
+
+    #[test]
+    fn force_track_no_missing_falls_through() {
+        // 指定轨号不存在时不误配，继续走相似度
+        let locals = [local("晴天", None, "")];
+        let remote = vec![rt(1, "晴天", "r1")];
+        let (pairs, _) = match_album_tracks(&locals, &remote, Some(9));
+        assert_eq!(pairs, vec![(0, 0)]);
+    }
 }

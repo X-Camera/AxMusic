@@ -1,9 +1,18 @@
+import { listen } from "@tauri-apps/api/event";
 import { Loader2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
-import type { ApplyPlan, ScrapeCandidate, TrackRow } from "../../lib/types";
+import type { ApplyPlan, ScrapeBatch, ScrapeCandidate, TrackRow } from "../../lib/types";
 import "./ScrapeWizard.css";
+
+/** 刮削源展示名 */
+const SOURCE_LABEL: Record<string, string> = {
+  musicbrainz: "MB",
+  itunes: "iTunes",
+  netease: "网易云",
+  qq: "QQ",
+};
 
 const FIELD_LABEL: Record<string, string> = {
   title: "曲名",
@@ -19,6 +28,15 @@ const FIELD_LABEL: Record<string, string> = {
   musicbrainz_artist: "MB 艺人",
 };
 
+/** 页脚提示文案：未选候选 / 未匹配本地曲目 / 差异统计三态（避免嵌套三元）。 */
+function footHint(plan: ApplyPlan | null, realChanges: number, changeCount: number): string {
+  if (!plan) return "选中候选即可存入本地 catalog（不改音频文件）";
+  if (plan.tracks.length === 0) {
+    return "未匹配到本地曲目——可在曲目列挑一首，或直接整张存入 catalog";
+  }
+  return `与文件差异 ${realChanges} 处 · 共核对 ${changeCount} 行`;
+}
+
 /** 单曲刮削：拉取云端字段存入本地 catalog（不改音频文件）。 */
 export function ScrapeWizard({
   track,
@@ -29,7 +47,7 @@ export function ScrapeWizard({
   onClose: () => void;
   onApplied: () => void;
 }) {
-  const [mode, setMode] = useState<"album" | "track">("track");
+  const [mode, setMode] = useState<"album" | "track">("album");
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<ScrapeCandidate[]>([]);
   const [selectedCand, setSelectedCand] = useState<ScrapeCandidate | null>(null);
@@ -38,6 +56,10 @@ export function ScrapeWizard({
   const [savedCount, setSavedCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [onlyChanged, setOnlyChanged] = useState(false);
+  /** 各源错误（source → 错误信息），不打断其它源 */
+  const [sourceErrs, setSourceErrs] = useState<Record<string, string>>({});
+  /** 搜索代次：每次搜索 +1，事件按它过滤过期批次 */
+  const searchIdRef = useRef(0);
 
   const seedAlbum = useMemo(
     () => ({ album: track.album || "", artist: track.album_artist || track.artist || "" }),
@@ -60,35 +82,100 @@ export function ScrapeWizard({
     setTrackA(seedTrack.artist);
   }, [seedAlbum, seedTrack]);
 
+  // 四源流式结果：挂载期间常驻监听，按 searchId 只收当前搜索的批次
+  useEffect(() => {
+    let cancelled = false;
+    let unBatch: (() => void) | undefined;
+    let unDone: (() => void) | undefined;
+    void (async () => {
+      unBatch = await listen<ScrapeBatch>("scrape://batch", (e) => {
+        if (cancelled || e.payload.searchId !== searchIdRef.current) return;
+        if (e.payload.error) {
+          setSourceErrs((m) => ({ ...m, [e.payload.source]: e.payload.error ?? "" }));
+          return;
+        }
+        if (e.payload.items.length > 0) {
+          setCandidates((prev) => [...prev, ...e.payload.items]);
+        }
+      });
+      unDone = await listen<{ searchId: number }>("scrape://done", (e) => {
+        if (cancelled || e.payload.searchId !== searchIdRef.current) return;
+        setLoading(false);
+      });
+    })();
+    return () => {
+      cancelled = true;
+      unBatch?.();
+      unDone?.();
+    };
+  }, []);
+
+  /** 切换模式：候选/计划/已存标记全部作废，避免跨模式残留误导。 */
+  function switchMode(m: "album" | "track") {
+    if (m === mode) return;
+    setMode(m);
+    setCandidates([]);
+    setPlan(null);
+    setSelectedCand(null);
+    setSavedCount(null);
+    setError(null);
+    setSourceErrs({});
+  }
+
   async function doSearch() {
+    searchIdRef.current += 1;
+    const sid = searchIdRef.current;
     setLoading(true);
     setError(null);
     setPlan(null);
     setSelectedCand(null);
+    setSavedCount(null);
+    setSourceErrs({});
+    setCandidates([]);
     try {
-      const list =
-        mode === "album"
-          ? await api.scrapeSearchAlbum(albumQ, albumA)
-          : await api.scrapeSearchTrack(trackQ, trackA);
-      setCandidates(list);
-      if (list.length === 0) setError("无候选。可改关键词后重试（MusicBrainz 免费，约 1 次/秒）。");
+      if (mode === "album") {
+        await api.scrapeSearchAlbum(sid, albumQ, albumA);
+      } else {
+        await api.scrapeSearchTrack(sid, trackQ, trackA);
+      }
     } catch (e) {
-      setCandidates([]);
       setError(String(e));
-    } finally {
       setLoading(false);
     }
   }
 
   async function pickCandidate(c: ScrapeCandidate) {
     setSelectedCand(c);
+    setPlan(null);
+    setSavedCount(null);
     setLoading(true);
     setError(null);
     try {
-      const p = await api.scrapeBuildPlan(c.release_id, [track.id], mode);
+      const p = await api.scrapeBuildPlan(c.source, c.release_id, [track.id], mode);
       setPlan(p);
     } catch (e) {
       setPlan(null);
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** 自动匹配失败/匹配不对时，从专辑曲目列表手动指定本地曲目对应的一首。 */
+  async function pickRemoteTrack(trackNo: number) {
+    if (!selectedCand) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const p = await api.scrapeBuildPlan(
+        selectedCand.source,
+        selectedCand.release_id,
+        [track.id],
+        mode,
+        trackNo,
+      );
+      setPlan(p);
+    } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
@@ -124,6 +211,25 @@ export function ScrapeWizard({
       : localPlan.changes
     : [];
 
+  /** 专辑模式中间列：整张曲目表（按轨号排序） */
+  const albumTracks = useMemo(
+    () => [...(plan?.catalog_tracks ?? [])].sort((a, b) => (a.track_no ?? 0) - (b.track_no ?? 0)),
+    [plan],
+  );
+  /** 本地曲目当前配对到的远端（自动或手动）：MB 用录音 MBID，其它源用轨号——中间列高亮 */
+  const matchedRef = useMemo(() => {
+    const chs = plan?.tracks[0]?.changes;
+    if (!chs) return null;
+    const mb = chs.find((c) => c.field === "musicbrainz_recording")?.new;
+    if (mb) return { mbid: mb, trackNo: null as number | null };
+    const raw = chs.find((c) => c.field === "track_no")?.new ?? "";
+    const n = parseInt(raw, 10);
+    return { mbid: null as string | null, trackNo: Number.isFinite(n) ? n : null };
+  }, [plan]);
+  const isMatchedTrack = (mbid: string, trackNo: number | null) =>
+    (matchedRef?.mbid != null && mbid !== "" && mbid === matchedRef.mbid) ||
+    (matchedRef?.mbid == null && matchedRef?.trackNo != null && trackNo === matchedRef.trackNo);
+
   return (
     <div className="scrape-overlay" role="dialog" aria-label="刮削向导">
       <div className="scrape-panel">
@@ -131,7 +237,7 @@ export function ScrapeWizard({
           <div>
             <h2>刮削</h2>
             <p className="tertiary">
-              单曲拉取云端字段存入本地 catalog（不改音频）· MusicBrainz · 封面在边栏单独刮取
+              整张专辑拉取云端曲目表存入本地 catalog（不改音频）· MusicBrainz · 封面在边栏单独刮取
             </p>
             <p className="scrape-track-line">
               本地曲目：<strong>{track.title || track.filename}</strong>
@@ -148,16 +254,16 @@ export function ScrapeWizard({
         <div className="scrape-search">
           <div className="scrape-tabs">
             <button
-              className={`chip${mode === "track" ? " active" : ""}`}
-              onClick={() => setMode("track")}
-            >
-              按曲名
-            </button>
-            <button
               className={`chip${mode === "album" ? " active" : ""}`}
-              onClick={() => setMode("album")}
+              onClick={() => switchMode("album")}
             >
               按专辑
+            </button>
+            <button
+              className={`chip${mode === "track" ? " active" : ""}`}
+              onClick={() => switchMode("track")}
+            >
+              按曲名
             </button>
           </div>
           {mode === "album" ? (
@@ -194,23 +300,43 @@ export function ScrapeWizard({
         </div>
 
         {error && <div className="error-line scrape-error">{error}</div>}
+        {Object.keys(sourceErrs).length > 0 && (
+          <div className="scrape-src-errs tertiary">
+            {Object.entries(sourceErrs).map(([s, e]) => (
+              <span key={s}>
+                {SOURCE_LABEL[s] ?? s}源：{e}
+              </span>
+            ))}
+          </div>
+        )}
 
-        <div className="scrape-body two-col">
+        <div className={`scrape-body${mode === "track" ? " two-col" : ""}`}>
           <section className="scrape-col">
-            <h3>候选</h3>
+            <h3>候选{loading && candidates.length > 0 ? "（陆续到达…）" : ""}</h3>
             <div className="scrape-list">
               {candidates.length === 0 && !loading && (
-                <div className="tertiary scrape-empty">搜索后显示 MusicBrainz 候选</div>
+                <div className="tertiary scrape-empty">
+                  {searchIdRef.current > 0
+                    ? "无候选。可改关键词后重试（四源聚合，MusicBrainz 限速约 1 次/秒）。"
+                    : "搜索后显示四个来源的候选"}
+                </div>
               )}
-              {candidates.map((c) => (
+              {candidates.map((c, i) => (
                 <button
-                  key={c.id + c.release_id}
+                  key={`${c.source}:${c.id}:${c.release_id}:${i}`}
                   className={`scrape-item cand${
-                    selectedCand?.release_id === c.release_id ? " active" : ""
+                    selectedCand?.release_id === c.release_id && selectedCand?.source === c.source
+                      ? " active"
+                      : ""
                   }`}
                   onClick={() => void pickCandidate(c)}
                 >
-                  <span className="ellipsis">{c.title}</span>
+                  <span className="ellipsis">
+                    <span className={`scrape-src src-${c.source}`}>
+                      {SOURCE_LABEL[c.source] ?? c.source}
+                    </span>
+                    {c.title}
+                  </span>
                   <span className="tertiary ellipsis">
                     {c.artist}
                     {c.year ? ` · ${c.year}` : ""}
@@ -224,6 +350,37 @@ export function ScrapeWizard({
               ))}
             </div>
           </section>
+
+          {mode === "album" && (
+            <section className="scrape-col">
+              <h3>专辑曲目{plan ? `（${albumTracks.length} 首）` : ""}</h3>
+              <div className="scrape-list">
+                {!plan && (
+                  <div className="tertiary scrape-empty">
+                    点击左侧候选后显示整张曲目；点某一首可手动指定它就是本地曲目
+                  </div>
+                )}
+                {albumTracks.map((ct) => {
+                  const matched = isMatchedTrack(ct.mbid, ct.track_no ?? null);
+                  return (
+                    <button
+                      key={ct.mbid || ct.track_no || ct.title}
+                      className={`scrape-item${matched ? " active" : ""}`}
+                      disabled={loading || matched}
+                      title="点选 = 本地曲目对应这一首"
+                      onClick={() => ct.track_no != null && void pickRemoteTrack(ct.track_no)}
+                    >
+                      <span className="ellipsis">
+                        {ct.track_no != null ? `${ct.track_no}. ` : ""}
+                        {ct.title}
+                      </span>
+                      {ct.artist && <span className="tertiary ellipsis">{ct.artist}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           <section className="scrape-col wide">
             <div className="scrape-col-head">
@@ -244,10 +401,23 @@ export function ScrapeWizard({
                   catalog，不改音频文件。
                 </div>
               )}
+              {plan && !localPlan && (
+                <div className="tertiary scrape-empty">
+                  候选「{plan.candidate_label}」没能自动匹配到本地曲目
+                  {plan.unmatched.length > 0 ? `（${plan.unmatched.join("、")}）` : ""}
+                  {mode === "album"
+                    ? "——简繁/译名差异时常见。在中间「专辑曲目」列挑一首即可核对字段；不挑也可以直接「存入本地 catalog」，整张曲目表会备档。"
+                    : "。可换候选重试。"}
+                </div>
+              )}
               {plan && localPlan && (
                 <>
                   <div className="scrape-plan-label">
-                    采纳对象：<strong>{plan.candidate_label}</strong>
+                    采纳对象：
+                    <span className={`scrape-src src-${plan.source}`}>
+                      {SOURCE_LABEL[plan.source] ?? plan.source}
+                    </span>
+                    <strong>{plan.candidate_label}</strong>
                     {plan.catalog_tracks.length > 1
                       ? ` · 整张 ${plan.catalog_tracks.length} 首存入 catalog`
                       : ""}
@@ -287,11 +457,6 @@ export function ScrapeWizard({
                       </tbody>
                     </table>
                   </div>
-                  {plan.tracks.length === 0 && (
-                    <div className="tertiary scrape-unmatched">
-                      云端未匹配到这首曲目。可换候选，或用「按曲名」再搜。
-                    </div>
-                  )}
                 </>
               )}
             </div>
@@ -308,11 +473,7 @@ export function ScrapeWizard({
               。音频文件未改动，可在边栏逐字段写入。
             </span>
           ) : (
-            <span className="muted">
-              {plan
-                ? `与文件差异 ${realChanges} 处 · 共核对 ${changeCount} 行`
-                : "选择候选后核对字段，采纳后仅存入本地 catalog"}
-            </span>
+            <span className="muted">{footHint(plan, realChanges, changeCount)}</span>
           )}
           <div className="scrape-foot-actions">
             <button className="btn" onClick={onClose}>
@@ -320,7 +481,8 @@ export function ScrapeWizard({
             </button>
             <button
               className="btn btn-primary"
-              disabled={!plan || plan.tracks.length === 0 || applying || savedCount != null}
+              disabled={!plan || applying || savedCount != null}
+              title={plan && plan.tracks.length === 0 ? "整张曲目表存入 catalog，不绑定本地曲目" : ""}
               onClick={() => void apply()}
             >
               {applying ? <Loader2 size={15} className="spin" /> : null}
