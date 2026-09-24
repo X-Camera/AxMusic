@@ -33,7 +33,9 @@ pub fn save(session: &PlaySession) {
     let Ok(text) = serde_json::to_string_pretty(session) else {
         return;
     };
-    let _ = fs::write(&path, text);
+    if let Err(e) = crate::paths::write_atomic(&path, text.as_bytes()) {
+        eprintln!("[AxMusic] 播放会话落盘失败 {}: {e}", path.display());
+    }
 }
 
 /// 从播放器快照记忆：队列 + 当前曲（不含进度）。

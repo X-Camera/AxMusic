@@ -458,7 +458,8 @@ fn cover_image_blocking(
                 .map_err(|e| e.to_string())?;
             let b = buf.into_inner();
             if let Some(p) = &cache_path {
-                std::fs::write(p, &b).ok();
+                // 原子写：截断的缓存缩略图会被长期复用（裂图）
+                crate::paths::write_atomic(p, &b).ok();
             }
             b
         }
@@ -1643,6 +1644,8 @@ pub async fn catalog_save(
         let Some(db) = guard.as_ref() else {
             return Err("尚未初始化库目录".into());
         };
+        // 整张专辑落库 + 绑定 + 自动匹配进同一事务：崩溃不留半张专辑的半状态
+        let tx = db.transaction().map_err(|e| e.to_string())?;
 
         // 1. store every catalog track of the adopted release/recording
         let mut id_by_mbid: std::collections::HashMap<String, i64> =
@@ -1687,6 +1690,8 @@ pub async fn catalog_save(
 
         // 3. field-match the rest of the library against what's now in catalog
         let _ = db.auto_match_unlinked();
+
+        tx.commit().map_err(|e| e.to_string())?;
     }
     Ok(ids)
 }
@@ -1870,7 +1875,8 @@ pub async fn cover_apply(
         let dir = library_root.join("covers");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(filename);
-        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        // 原子写：catalog.cover_path 引用此文件，写一半即永久裂图
+        crate::paths::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
         Ok::<_, String>((bytes, path.to_string_lossy().to_string()))
     })
     .await
@@ -2108,7 +2114,7 @@ fn require_library_root(state: &State<'_, AppState>) -> Result<String, String> {
 /// 歌单详情（带 DB 富化；无 DB 也能出列表，仅展示字段退化）。
 fn playlist_detail_of(root: &str, name: &str, state: &State<'_, AppState>) -> Result<PlaylistDetail, String> {
     let parsed = if playlists::is_favorites_id(name) {
-        playlists::read_favorites(Path::new(root))
+        playlists::read_favorites(Path::new(root))?
     } else {
         playlists::read_playlist(Path::new(root), name)?
     };
@@ -2127,7 +2133,7 @@ pub fn playlist_list(state: State<'_, AppState>) -> Result<Vec<PlaylistSummary>,
 #[tauri::command]
 pub fn favorite_paths(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let root = require_library_root(&state)?;
-    Ok(playlists::favorite_paths(Path::new(&root)))
+    playlists::favorite_paths(Path::new(&root))
 }
 
 /// 切换单曲喜爱状态；返回切换后是否已喜爱及喜爱总数。

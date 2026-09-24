@@ -9,12 +9,14 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 const PORTABLE_INI: &str = "AxMusic-portable.ini";
 const DATA_DIR: &str = "data";
 
 static DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Resolve (once) and cache the portable data root.
 pub fn data_root() -> &'static Path {
@@ -63,6 +65,41 @@ fn appdata_root() -> PathBuf {
 /// Library working DB lives **inside the library root** (next to the audio).
 pub fn library_db_path(library_root: &Path) -> PathBuf {
     library_root.join("axmusic.db")
+}
+
+/// 同目录唯一临时文件路径（pid + 毫秒 + 自增计数），供「写临时文件 + rename」用。
+/// 点前缀 + `.axtmp-*` 后缀：scanner 只认音频扩展名、歌单只认 .m3u8，不会被误扫。
+pub fn temp_path_for(target: &Path) -> PathBuf {
+    let pid = std::process::id();
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let name = target
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "tmp".into());
+    target.with_file_name(format!(".{name}.axtmp-{pid}-{millis}-{seq}"))
+}
+
+/// 原子写文件：先写同目录唯一临时文件（flush + sync），再 rename 覆盖目标
+///（Windows 下 `fs::rename` 即 MoveFileEx MOVEFILE_REPLACE_EXISTING，可覆盖已存在目标）。
+/// 任何一步失败都清理临时文件，目标保持原样。
+pub fn write_atomic(target: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = temp_path_for(target);
+    let result = (|| {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, target)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// True when running in portable mode (data next to exe / marked by ini).

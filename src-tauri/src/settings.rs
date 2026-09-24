@@ -175,6 +175,7 @@ pub fn save(settings: &AppSettings) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let text = serde_json::to_string_pretty(settings)?;
-    std::fs::write(&path, text).with_context(|| format!("写设置失败 {}", path.display()))?;
+    crate::paths::write_atomic(&path, text.as_bytes())
+        .with_context(|| format!("写设置失败 {}", path.display()))?;
     Ok(())
 }

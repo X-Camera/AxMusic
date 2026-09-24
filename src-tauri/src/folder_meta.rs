@@ -41,8 +41,11 @@ fn open() -> rusqlite::Result<Connection> {
         let _ = std::fs::create_dir_all(parent);
     }
     let conn = Connection::open(path)?;
+    // 每次调用都新开连接，并发命令会撞锁：留等待窗口避免立刻 SQLITE_BUSY
+    conn.busy_timeout(std::time::Duration::from_millis(3_000))?;
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS folder_tags (
+        "PRAGMA journal_mode = WAL;
+         CREATE TABLE IF NOT EXISTS folder_tags (
             path TEXT PRIMARY KEY,
             mtime INTEGER NOT NULL,
             file_size INTEGER NOT NULL,
@@ -130,26 +133,40 @@ pub fn read_and_cache(paths: &[String]) -> anyhow::Result<Vec<FolderMeta>> {
             }
         }
 
-        let (title, artist, duration_ms) = read_brief_tags(p);
-        conn.execute(
-            "INSERT INTO folder_tags (path, mtime, file_size, title, artist, duration_ms, cached_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(path) DO UPDATE SET
-               mtime = excluded.mtime,
-               file_size = excluded.file_size,
-               title = excluded.title,
-               artist = excluded.artist,
-               duration_ms = excluded.duration_ms,
-               cached_at = excluded.cached_at",
-            params![path, mtime, size, title, artist, duration_ms as i64, now_secs()],
-        )?;
-        out.push(row_meta(path, title, artist, duration_ms as i64));
+        match read_brief_tags(p) {
+            Some((title, artist, duration_ms)) => {
+                // 单条缓存写失败（BUSY/磁盘满）只跳过该条缓存，不丢已收集结果
+                if let Err(e) = conn.execute(
+                    "INSERT INTO folder_tags (path, mtime, file_size, title, artist, duration_ms, cached_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(path) DO UPDATE SET
+                       mtime = excluded.mtime,
+                       file_size = excluded.file_size,
+                       title = excluded.title,
+                       artist = excluded.artist,
+                       duration_ms = excluded.duration_ms,
+                       cached_at = excluded.cached_at",
+                    params![path, mtime, size, title, artist, duration_ms as i64, now_secs()],
+                ) {
+                    eprintln!("[AxMusic] 标签缓存写入跳过 {path}: {e}");
+                }
+                out.push(row_meta(path, title, artist, duration_ms as i64));
+            }
+            None => {
+                // 探测失败（文件占用/损坏）：文件名兜底展示但不写缓存，下次打开重试
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                out.push(row_meta(path, stem, String::new(), 0));
+            }
+        }
     }
     Ok(out)
 }
 
-/// 轻量读标签：失败退回文件名。
-fn read_brief_tags(p: &Path) -> (String, String, u64) {
+/// 轻量读标签：探测失败返回 None（调用方不得缓存）；无标签时按文件名兜底。
+fn read_brief_tags(p: &Path) -> Option<(String, String, u64)> {
     use lofty::file::{AudioFile, TaggedFileExt};
     use lofty::prelude::Accessor;
     use lofty::probe::Probe;
@@ -160,21 +177,19 @@ fn read_brief_tags(p: &Path) -> (String, String, u64) {
         .unwrap_or_default();
     let mut title = stem;
     let mut artist = String::new();
-    let mut duration_ms = 0u64;
 
-    if let Ok(tagged) = Probe::open(p).and_then(|x| x.read()) {
-        duration_ms = tagged.properties().duration().as_millis() as u64;
-        if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
-            if let Some(t) = tag.title() {
-                let t = t.to_string();
-                if !t.trim().is_empty() {
-                    title = t;
-                }
-            }
-            if let Some(a) = tag.artist() {
-                artist = a.to_string();
+    let tagged = Probe::open(p).and_then(|x| x.read()).ok()?;
+    let duration_ms = tagged.properties().duration().as_millis() as u64;
+    if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+        if let Some(t) = tag.title() {
+            let t = t.to_string();
+            if !t.trim().is_empty() {
+                title = t;
             }
         }
+        if let Some(a) = tag.artist() {
+            artist = a.to_string();
+        }
     }
-    (title, artist, duration_ms)
+    Some((title, artist, duration_ms))
 }

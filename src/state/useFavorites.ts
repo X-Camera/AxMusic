@@ -44,13 +44,16 @@ export const useFavorites = create<FavState>((set, get) => ({
         // 首次加载不 bump，避免歌单页挂载时白刷一轮
         rev: wasLoaded ? get().rev + 1 : get().rev,
       });
-    } catch {
-      // 尚未初始化库根等：空集即可，避免反复打后端
-      set({
-        keys: new Set<string>(),
-        loaded: true,
-        rev: wasLoaded ? get().rev + 1 : get().rev,
-      });
+    } catch (e) {
+      // 「尚未初始化库根」是合法空态（库外浏览也会挂心形）：空集即可，避免反复打后端；
+      // 其余为真 IO 故障——失败即清空会误伤（瞬时故障被当成「没有喜爱」），
+      // 保留旧 keys；首载失败不标 loaded，下次 ensure 自动重试。调用方均为 void 调用，不上抛。
+      if (String(e).includes("尚未初始化")) {
+        set({ keys: new Set<string>(), loaded: true });
+      } else {
+        console.error("[favorites] 加载喜爱列表失败：", e);
+        if (!wasLoaded) set({ loaded: false });
+      }
     } finally {
       set({ loading: false });
     }

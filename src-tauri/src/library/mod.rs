@@ -155,6 +155,8 @@ impl LibraryDb {
         }
         let conn = Connection::open(path)
             .with_context(|| format!("open database {}", path.display()))?;
+        // 扫描线程持有第二条连接：写锁竞争时留等待窗口，避免立刻 SQLITE_BUSY
+        conn.busy_timeout(std::time::Duration::from_millis(3_000))?;
         let db = Self { conn };
         db.migrate()?;
         Ok(db)
@@ -250,11 +252,51 @@ impl LibraryDb {
         ] {
             let _ = self.conn.execute(ddl, []);
         }
+        // catalog.mbid 部分唯一索引（空 mbid 不参与）。先收敛历史重复行：
+        // 每组保留最小 id，tracks.catalog_id 重指后删多余行；任何一步失败只记录不致命。
+        if let Err(e) = self.dedupe_catalog_mbid() {
+            eprintln!("[AxMusic] catalog 去重跳过: {e}");
+        }
+        if let Err(e) = self.conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_mbid ON catalog(mbid) WHERE mbid != '';",
+        ) {
+            eprintln!("[AxMusic] catalog.mbid 唯一索引未建立: {e}");
+        }
         Ok(())
+    }
+
+    /// 合并 catalog 里 mbid 重复的行（保留最小 id，重指 tracks.catalog_id）。
+    fn dedupe_catalog_mbid(&self) -> Result<()> {
+        let dupes: Vec<(String, i64)> = self
+            .conn
+            .prepare(
+                "SELECT mbid, MIN(id) FROM catalog WHERE mbid != '' GROUP BY mbid HAVING COUNT(*) > 1",
+            )?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (mbid, keep) in dupes {
+            self.conn.execute(
+                "UPDATE tracks SET catalog_id = ?1
+                 WHERE catalog_id IN (SELECT id FROM catalog WHERE mbid = ?2 AND id != ?1)",
+                params![keep, mbid],
+            )?;
+            self.conn.execute(
+                "DELETE FROM catalog WHERE mbid = ?1 AND id != ?2",
+                params![mbid, keep],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 事务边界（`unchecked_transaction`：`&self` 即可，同连接的 `&self` 方法都在事务内）。
+    /// 注意不可嵌套；Drop 未 commit 自动回滚。
+    pub fn transaction(&self) -> Result<rusqlite::Transaction<'_>> {
+        Ok(self.conn.unchecked_transaction()?)
     }
 
     // ── library roots ──────────────────────────────────────────────
 
+    #[allow(dead_code)] // 预留：读取当前库根（初始化页/调试）
     pub fn get_library_root(&self) -> Result<Option<LibraryRoot>> {
         let row = self
             .conn
@@ -276,18 +318,32 @@ impl LibraryDb {
     pub fn set_library_root(&self, path: &Path) -> Result<LibraryRoot> {
         let path_str = path.to_string_lossy().to_string();
         let ts = now_iso();
-        self.conn.execute(
+        // 两条语句进同一事务：崩溃不会留下多行 root 的半状态
+        let tx = self.transaction()?;
+        tx.execute(
             "INSERT INTO library_roots (path, initialized_at) VALUES (?1, ?2)
              ON CONFLICT(path) DO UPDATE SET initialized_at = excluded.initialized_at",
             params![path_str, ts],
         )?;
         // MVP: single root — drop others
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM library_roots WHERE path != ?1",
             params![path_str],
         )?;
-        self.get_library_root()?
-            .context("library root missing after write")
+        // 直接读回本次写入的行（而非按 id 升序猜第一行）
+        let row = tx.query_row(
+            "SELECT id, path, initialized_at FROM library_roots WHERE path = ?1",
+            params![path_str],
+            |r| {
+                Ok(LibraryRoot {
+                    id: r.get(0)?,
+                    path: r.get(1)?,
+                    initialized_at: r.get(2)?,
+                })
+            },
+        )?;
+        tx.commit()?;
+        Ok(row)
     }
 
     // ── tracks ─────────────────────────────────────────────────────
@@ -363,10 +419,11 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// 全量置删 + 分块回置进同一事务：中途崩溃/失败不会把全库残留在 is_deleted=1。
+    /// 返回扫描后仍标记为缺失的行数。
     pub fn mark_missing_paths(&self, present: &[String]) -> Result<usize> {
-        // Mark rows not in `present` as deleted (incremental scan).
-        // For large sets, chunk; MVP uses a temporary approach via SQL.
-        self.conn.execute("UPDATE tracks SET is_deleted = 1", [])?;
+        let tx = self.transaction()?;
+        tx.execute("UPDATE tracks SET is_deleted = 1", [])?;
         for chunk in present.chunks(500) {
             let mut sql = String::from("UPDATE tracks SET is_deleted = 0 WHERE path IN (");
             let mut args: Vec<&dyn rusqlite::ToSql> = Vec::new();
@@ -378,9 +435,15 @@ impl LibraryDb {
                 args.push(p);
             }
             sql.push(')');
-            self.conn.execute(&sql, args.as_slice())?;
+            tx.execute(&sql, args.as_slice())?;
         }
-        Ok(0)
+        let n: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM tracks WHERE is_deleted = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        tx.commit()?;
+        Ok(n as usize)
     }
 
     pub fn list_tracks(&self, filter: &TrackFilter) -> Result<Vec<TrackRow>> {
@@ -669,40 +732,52 @@ impl LibraryDb {
 
     /// Insert catalog row (online-metadata subset). Re-scraping the same recording
     /// updates the existing row instead of duplicating it.
+    /// 去重键：recording MBID；无 MBID 时按 (release_mbid, track_no) 去重，避免重刮重行。
+    /// 事务边界由调用方持有（catalog_save 批量落库）；唯一索引 idx_catalog_mbid 兜底并发。
     pub fn insert_catalog(&self, c: &CatalogRow) -> Result<i64> {
-        if !c.mbid.is_empty() {
-            let existing: Option<i64> = self
-                .conn
+        let existing: Option<i64> = if !c.mbid.is_empty() {
+            self.conn
                 .query_row(
                     "SELECT id FROM catalog WHERE mbid = ?1 ORDER BY id LIMIT 1",
                     params![c.mbid],
                     |r| r.get(0),
                 )
-                .optional()?;
-            if let Some(id) = existing {
-                self.conn.execute(
-                    "UPDATE catalog SET
-                        source=?1, kind=?2, release_mbid=?3, title=?4, artist=?5,
-                        album=?6, album_artist=?7, year=?8, track_no=?9,
-                        release_type=?10, cover_path=COALESCE(?11, cover_path)
-                     WHERE id=?12",
-                    params![
-                        c.source,
-                        c.kind,
-                        c.release_mbid,
-                        c.title,
-                        c.artist,
-                        c.album,
-                        c.album_artist,
-                        c.year,
-                        c.track_no,
-                        c.release_type,
-                        c.cover_path,
-                        id,
-                    ],
-                )?;
-                return Ok(id);
-            }
+                .optional()?
+        } else if !c.release_mbid.is_empty() {
+            self.conn
+                .query_row(
+                    "SELECT id FROM catalog WHERE mbid = '' AND release_mbid = ?1 AND track_no IS ?2
+                     ORDER BY id LIMIT 1",
+                    params![c.release_mbid, c.track_no],
+                    |r| r.get(0),
+                )
+                .optional()?
+        } else {
+            None
+        };
+        if let Some(id) = existing {
+            self.conn.execute(
+                "UPDATE catalog SET
+                    source=?1, kind=?2, release_mbid=?3, title=?4, artist=?5,
+                    album=?6, album_artist=?7, year=?8, track_no=?9,
+                    release_type=?10, cover_path=COALESCE(?11, cover_path)
+                 WHERE id=?12",
+                params![
+                    c.source,
+                    c.kind,
+                    c.release_mbid,
+                    c.title,
+                    c.artist,
+                    c.album,
+                    c.album_artist,
+                    c.year,
+                    c.track_no,
+                    c.release_type,
+                    c.cover_path,
+                    id,
+                ],
+            )?;
+            return Ok(id);
         }
         self.conn.execute(
             "INSERT INTO catalog (
@@ -738,6 +813,9 @@ impl LibraryDb {
 
     /// 更新同一发行下全部 catalog 行的封面引用（单独刮封面后调用）。
     pub fn set_catalog_cover(&self, release_mbid: &str, cover_path: &str) -> Result<()> {
+        // 空串会命中所有无发行 MBID 的行，批量覆盖封面引用——直接拒绝
+        anyhow::ensure!(!release_mbid.is_empty(), "release_mbid 不能为空");
+        anyhow::ensure!(!cover_path.is_empty(), "cover_path 不能为空");
         self.conn.execute(
             "UPDATE catalog SET cover_path = ?1 WHERE release_mbid = ?2",
             params![cover_path, release_mbid],

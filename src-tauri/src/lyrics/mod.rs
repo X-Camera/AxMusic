@@ -93,7 +93,9 @@ pub fn write_sidecar(audio_path: &Path, text: &str, overwrite: bool) -> Result<P
     if dest.exists() && !overwrite {
         return Err(anyhow!("外挂歌词已存在: {}", dest.display()));
     }
-    std::fs::write(&dest, text).with_context(|| format!("写入失败 {}", dest.display()))?;
+    // 原子写：先写同目录临时文件再 rename，写入中途失败不会毁掉已有歌词
+    crate::paths::write_atomic(&dest, text.as_bytes())
+        .with_context(|| format!("写入失败 {}", dest.display()))?;
     Ok(dest)
 }
 

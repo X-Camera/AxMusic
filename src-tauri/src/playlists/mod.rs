@@ -281,13 +281,25 @@ pub fn parse_m3u8(text: &str) -> Vec<ParsedEntry> {
 
 pub fn read_playlist(root: &Path, name: &str) -> Result<Vec<ParsedEntry>, String> {
     let path = file_path(root, name)?;
-    let text = std::fs::read_to_string(&path).map_err(|_| "歌单不存在".to_string())?;
+    // 区分「不存在」与真 IO 故障（占用/编码失败等）：折叠成不存在会让调用方按空歌单整写回
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "歌单不存在".to_string()
+        } else {
+            format!("读取歌单失败：{e}")
+        }
+    })?;
     Ok(parse_m3u8(&text))
 }
 
-/// 读取喜爱歌单；文件不存在时视为空（喜爱始终可写）。
-pub fn read_favorites(root: &Path) -> Vec<ParsedEntry> {
-    read_playlist(root, FAVORITES_FILE).unwrap_or_default()
+/// 读取喜爱歌单；文件不存在时视为空（喜爱始终可写），读取故障如实报错。
+pub fn read_favorites(root: &Path) -> Result<Vec<ParsedEntry>, String> {
+    let path = file_path(root, FAVORITES_FILE)?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(parse_m3u8(&text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("读取喜爱歌单失败：{e}")),
+    }
 }
 
 /// 展示名：喜爱 →「喜爱」，其余为文件名。
@@ -299,7 +311,7 @@ pub fn display_name(name: &str) -> String {
     }
 }
 
-/// 规范写出（`#EXTM3U` + `#EXTINF` + 相对路径行），`.tmp` + rename 原子替换。
+/// 规范写出（`#EXTM3U` + `#EXTINF` + 相对路径行），同目录唯一临时文件 + rename 原子替换。
 fn write_playlist(root: &Path, name: &str, entries: &[ParsedEntry]) -> Result<(), String> {
     let path = file_path(root, name)?;
     let dir = playlists_dir(root);
@@ -313,9 +325,7 @@ fn write_playlist(root: &Path, name: &str, entries: &[ParsedEntry]) -> Result<()
         };
         text.push_str(&format!("#EXTINF:{},{}\n{}\n", secs, e.display, e.rel));
     }
-    let tmp = path.with_extension("m3u8.tmp");
-    std::fs::write(&tmp, &text).map_err(|e| format!("写歌单失败：{e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("写歌单失败：{e}"))?;
+    crate::paths::write_atomic(&path, text.as_bytes()).map_err(|e| format!("写歌单失败：{e}"))?;
     Ok(())
 }
 
@@ -339,7 +349,14 @@ pub fn list_playlists(root: &Path) -> Result<Vec<PlaylistSummary>, String> {
             if is_favorites_id(&name) {
                 continue;
             }
-            let parsed = read_playlist(root, &name)?;
+            // 单首读取失败（占用/编码）跳过并记录，不拖垮整个列表；文件仍在磁盘上
+            let parsed = match read_playlist(root, &name) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[AxMusic] 跳过无法读取的歌单 {name}: {e}");
+                    continue;
+                }
+            };
             out.push(PlaylistSummary {
                 track_count: parsed.len(),
                 total_ms: parsed.iter().map(|x| x.duration_ms).sum(),
@@ -349,7 +366,7 @@ pub fn list_playlists(root: &Path) -> Result<Vec<PlaylistSummary>, String> {
         }
     }
     out.sort_by_key(|s| s.name.to_lowercase());
-    let fav = read_favorites(root);
+    let fav = read_favorites(root)?;
     out.insert(
         0,
         PlaylistSummary {
@@ -454,10 +471,10 @@ pub fn delete(root: &Path, name: &str) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|e| format!("删除失败：{e}"))
 }
 
-/// 变更前读取：喜爱文件可不存在（视为空），普通歌单缺失报错。
+/// 变更前读取：喜爱文件可不存在（视为空），普通歌单缺失报错；读取故障如实上抛，不按空歌单整写回。
 fn read_for_update(root: &Path, name: &str) -> Result<Vec<ParsedEntry>, String> {
     if is_favorites_id(name) {
-        Ok(read_favorites(root))
+        read_favorites(root)
     } else {
         read_playlist(root, name)
     }
@@ -506,12 +523,12 @@ pub fn move_track(root: &Path, name: &str, from_index: usize, to_index: usize) -
 }
 
 /// 喜爱歌单里各条目的绝对路径（原样）。
-pub fn favorite_paths(root: &Path) -> Vec<String> {
+pub fn favorite_paths(root: &Path) -> Result<Vec<String>, String> {
     let dir = playlists_dir(root);
-    read_favorites(root)
+    Ok(read_favorites(root)?
         .iter()
         .map(|e| abs_from(&dir, &e.rel).to_string_lossy().to_string())
-        .collect()
+        .collect())
 }
 
 fn path_key(root: &Path, abs: &Path) -> String {
@@ -522,7 +539,7 @@ fn path_key(root: &Path, abs: &Path) -> String {
 
 /// 切换喜爱：已存在则移除，否则追加。返回切换后状态与条目数。
 pub fn favorite_toggle(root: &Path, item: &PlaylistAddItem) -> Result<FavoriteToggleResult, String> {
-    let mut entries = read_favorites(root);
+    let mut entries = read_favorites(root)?;
     let abs = PathBuf::from(&item.path);
     let key = path_key(root, &abs);
     let dir = playlists_dir(root);

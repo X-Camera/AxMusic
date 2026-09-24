@@ -57,6 +57,8 @@ pub struct ScanStats {
 
 /// Full incremental scan of `root` into `db`.
 /// `on_progress` is invoked every file.
+/// upsert 分块进事务（崩溃不留半提交行，且避免逐行 autocommit 的开销）；
+/// 块大小有意取小：WAL 单写者，事务过长会阻塞用户写入（写标签/刮削落库）。
 pub fn scan_library<F>(
     db: &LibraryDb,
     root: &Path,
@@ -65,6 +67,8 @@ pub fn scan_library<F>(
 where
     F: FnMut(&ScanProgress),
 {
+    const TX_CHUNK: usize = 500;
+
     let files = collect_audio_files(root);
     let total = files.len() as u64;
     let mut present = Vec::with_capacity(files.len());
@@ -72,6 +76,7 @@ where
     let mut updated = 0u64;
     let mut errors = 0u64;
 
+    let mut tx = db.transaction()?;
     for (i, path) in files.iter().enumerate() {
         let path_str = path.to_string_lossy().to_string();
         let name = path
@@ -103,7 +108,15 @@ where
             }
             Err(_) => {
                 errors += 1;
+                // 文件存在但本次解析失败（占用/损坏）：仍计入 present，
+                // 否则 mark_missing 会把库内旧行误标为已删除
+                present.push(path_str.clone());
             }
+        }
+
+        if (i + 1) % TX_CHUNK == 0 {
+            tx.commit()?;
+            tx = db.transaction()?;
         }
 
         on_progress(&ScanProgress {
@@ -115,6 +128,7 @@ where
             current: name,
         });
     }
+    tx.commit()?;
 
     db.mark_missing_paths(&present)?;
 
