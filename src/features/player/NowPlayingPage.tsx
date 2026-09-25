@@ -14,10 +14,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, formatTime } from "../../lib/api";
 import { lyricsDisplayVars } from "../../lib/lyricsDisplay";
+import { exitTrueFullscreen, toggleTrueFullscreen } from "../../lib/trueFullscreen";
 import { nextRepeat, REPEAT_TITLE } from "../../lib/playMode";
 import type { LyricsFont } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
@@ -35,8 +35,6 @@ import { LyricsView, type LyricsViewHandle } from "./LyricsView";
 import { LyricsStyleDialog } from "./LyricsStyleDialog";
 import { pickLyrics } from "./lrc";
 import "./NowPlayingPage.css";
-
-const appWindow = getCurrentWindow();
 
 interface MediaInfo {
   path: string;
@@ -242,9 +240,7 @@ export function NowPlayingPage() {
     if (closing) return;
     setClosing(true);
     // 真全屏是播放页专属状态，缩回主界面时一并退出（主界面没有退出入口）
-    void appWindow.isFullscreen().then((f) => {
-      if (f) void appWindow.setFullscreen(false);
-    });
+    void exitTrueFullscreen();
     window.setTimeout(() => setFullPlayer(false), 280);
   }
 
@@ -252,16 +248,14 @@ export function NowPlayingPage() {
   function onStageDoubleClick(e: React.MouseEvent) {
     const t = e.target as HTMLElement;
     if (t.closest("button, input, .np-lyrics, .np-seek, .np-window-controls")) return;
-    void appWindow.isFullscreen().then((f) => void appWindow.setFullscreen(!f));
+    void toggleTrueFullscreen();
   }
 
   // Esc 退出真全屏（惯例，与浏览器/播放器一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      void appWindow.isFullscreen().then((f) => {
-        if (f) void appWindow.setFullscreen(false);
-      });
+      void exitTrueFullscreen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

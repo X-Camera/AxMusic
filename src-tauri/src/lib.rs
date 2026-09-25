@@ -123,6 +123,8 @@ pub fn run() {
             commands::update_settings,
             commands::open_path,
             commands::resolve_window_close,
+            commands::enter_true_fullscreen,
+            commands::exit_true_fullscreen,
             commands::get_library_root,
             commands::init_library,
             commands::get_tracks,

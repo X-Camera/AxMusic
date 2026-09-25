@@ -313,6 +313,123 @@ pub fn resolve_window_close(
     }
 }
 
+/// 临时关闭/恢复本窗口的 DWM 过渡动画。
+/// 最大化/还原的“缩小放大”缩放动画由 DWM 异步播放，不关的话
+/// 复合窗口操作即使同帧完成也照样看到动画。失败仅降级为保留动画。
+#[cfg(target_os = "windows")]
+fn set_window_transitions_disabled(window: &tauri::Window, disabled: bool) {
+    use windows::Win32::Foundation::{BOOL, HWND};
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
+    };
+    let Ok(raw) = window.hwnd() else { return };
+    let hwnd = HWND(raw.0 as _);
+    let value = BOOL(disabled as i32);
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            &value as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<BOOL>() as u32,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_window_transitions_disabled(_window: &tauri::Window, _disabled: bool) {}
+
+/// 原位解除最大化：窗口几何完全不动（始终盖满工作区），只清状态。
+/// 不能用 ShowWindow(SW_RESTORE)：它会先把窗口缩回浮动矩形，
+/// 中间态被 DWM 呈现一帧 → 闪桌面。这里分三步：
+/// 1. 直接清 WS_MAXIMIZE 样式位 —— 解除全屏 SetWindowPos 被钳在工作区的限制；
+/// 2. 补发 WM_SIZE(SIZE_RESTORED) —— 同步 tao 内部的 MAXIMIZED 标记，
+///    否则 tao 进全屏重建样式时会把 WS_MAXIMIZE 加回去（黑条 bug 的根源）；
+/// 3. 把还原位置钉在当前窗口矩形 —— 退出全屏时 tao 按存档还原到工作区大小，
+///    进出全程不存在小于工作区的中间态，桌面无从露出。
+#[cfg(target_os = "windows")]
+fn demaximize_in_place(window: &tauri::Window) -> Result<(), String> {
+    use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowLongPtrW, GetWindowRect, SendMessageW, SetWindowLongPtrW,
+        SetWindowPlacement, GWL_STYLE, SIZE_RESTORED, SW_SHOWNORMAL, WINDOWPLACEMENT,
+        WM_SIZE, WS_MAXIMIZE,
+    };
+    let hwnd = HWND(window.hwnd().map_err(|e| e.to_string())?.0 as _);
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_MAXIMIZE.0 as isize));
+
+        let mut client = RECT::default();
+        let _ = GetClientRect(hwnd, &mut client);
+        let (w, h) = (client.right - client.left, client.bottom - client.top);
+        SendMessageW(
+            hwnd,
+            WM_SIZE,
+            WPARAM(SIZE_RESTORED as usize),
+            LPARAM(((h as isize) << 16) | ((w as isize) & 0xFFFF)),
+        );
+
+        let mut rc = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut rc);
+        let wp = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            showCmd: SW_SHOWNORMAL.0 as u32,
+            rcNormalPosition: rc,
+            ..Default::default()
+        };
+        let _ = SetWindowPlacement(hwnd, &wp);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn demaximize_in_place(window: &tauri::Window) -> Result<(), String> {
+    window.unmaximize().map_err(|e| e.to_string())
+}
+
+/// 进真全屏。最大化窗口直接 set_fullscreen 会留任务栏黑条（tao 上游 bug：
+/// 内部 MAXIMIZED 标记未清，重建样式时 WS_MAXIMIZE 被加回，窗口钳在工作区）。
+/// 这里原位解除最大化（几何不动），再进全屏只是从工作区“长出”任务栏一条；
+/// 全程关 DWM 过渡动画。返回进入前是否最大化，供退出时还原。
+#[tauri::command]
+pub fn enter_true_fullscreen(window: tauri::Window) -> Result<bool, String> {
+    if window.is_fullscreen().map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    let was_maximized = window.is_maximized().map_err(|e| e.to_string())?;
+    set_window_transitions_disabled(&window, true);
+    let result = (|| -> Result<(), String> {
+        if was_maximized {
+            demaximize_in_place(&window)?;
+        }
+        window.set_fullscreen(true).map_err(|e| e.to_string())
+    })();
+    set_window_transitions_disabled(&window, false);
+    result?;
+    Ok(was_maximized)
+}
+
+/// 退真全屏；restore_maximized=true 时同帧还原最大化（同样关过渡动画）。
+#[tauri::command]
+pub fn exit_true_fullscreen(
+    window: tauri::Window,
+    restore_maximized: bool,
+) -> Result<(), String> {
+    if !window.is_fullscreen().map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    set_window_transitions_disabled(&window, true);
+    let result = (|| -> Result<(), String> {
+        window.set_fullscreen(false).map_err(|e| e.to_string())?;
+        if restore_maximized {
+            window.maximize().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })();
+    set_window_transitions_disabled(&window, false);
+    result
+}
+
 // ── library ───────────────────────────────────────────────────────
 
 #[tauri::command]
