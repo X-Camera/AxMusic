@@ -42,12 +42,96 @@
   color: var(--accent);
 }
 
+/* 歌词区浮层：动效开关 / 效果切换条 */
+.side-viz-switcher {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+}
+
+.side-viz-fab,
+.side-viz-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.side-viz-fab:hover,
+.side-viz-chip:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg) 88%, var(--text) 6%);
+}
+
+.side-viz-fab.on,
+.side-viz-chip.on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+}
+
+.side-viz-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+.side-viz-row .side-viz-chip {
+  border-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.side-viz-tune {
+  margin-left: 2px;
+  border-left: 1px solid var(--border) !important;
+  border-radius: 0 8px 8px 0 !important;
+}
+
 .side-lyrics-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* 背景动效层：垫在歌词下，不挡交互 */
+.side-viz-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease-out);
+}
+
+.side-lyrics-stage > .side-lyrics-body,
+.side-lyrics-stage > .np-lyrics {
+  position: relative;
+  z-index: 1;
 }
 
 .side-lyrics-body {

@@ -1,9 +1,16 @@
+import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import { Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
-import type { LyricsCurrent, LyricsFont, LyricsPrefer } from "../lib/types";
+import type {
+  AppSettings,
+  LyricsCurrent,
+  LyricsFont,
+  LyricsPrefer,
+  SideVizSettings,
+} from "../lib/types";
 import {
   clockNow,
   clockReanchor,
@@ -17,6 +24,10 @@ import { useApp } from "../state/useApp";
 import { LyricsStyleDialog } from "../features/player/LyricsStyleDialog";
 import { LyricsView, type LyricsViewHandle } from "../features/player/LyricsView";
 import { pickLyrics } from "../features/player/lrc";
+import { VisualizerLayer } from "../features/visualizer/VisualizerLayer";
+import { VisualizerSettingsDialog } from "../features/visualizer/VisualizerSettingsDialog";
+import { SideVizSwitcher } from "../features/visualizer/SideVizSwitcher";
+import { clampViz, SIDE_VIZ_DEFAULT } from "../features/visualizer/sideViz";
 import "./SideLyrics.css";
 
 /** 主页歌词格：与满窗共用 LyricsView；居中排版，样式/右键/搜索独立设置 */
@@ -45,6 +56,9 @@ export function SideLyrics() {
   const [trackGen, setTrackGen] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [styleOpen, setStyleOpen] = useState(false);
+  const [vizOpen, setVizOpen] = useState(false);
+  /** 歌词区背景动效（默认关，保持界面素净） */
+  const [viz, setViz] = useState<SideVizSettings>(SIDE_VIZ_DEFAULT);
   const lastPathRef = useRef("");
   const lastPosRef = useRef(0);
   /** 进度回跳检测（gapless 连播校准 / 单曲重播） */
@@ -66,10 +80,28 @@ export function SideLyrics() {
           font: s.side_lyrics_font ?? "display",
           lineHeight: s.side_lyrics_line_height ?? 1.25,
         });
+        if (s.side_viz) setViz(clampViz(s.side_viz));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // 设置页/其它入口改了 side_viz 时同步到本格
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<AppSettings>("settings://changed", (e) => {
+      if (cancelled) return;
+      if (e.payload.side_viz) setViz(clampViz(e.payload.side_viz));
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 
@@ -210,6 +242,13 @@ export function SideLyrics() {
       .catch(() => void 0);
   }
 
+  /** 右键「背景动效」：实时预览 + 落盘 side_viz */
+  function patchViz(next: Partial<SideVizSettings>) {
+    const merged = clampViz({ ...viz, ...next });
+    setViz(merged);
+    void api.updateSettings({ side_viz: merged }).catch(() => void 0);
+  }
+
   const { lines, plain, synced } = useMemo(
     () => pickLyrics(info?.embedded ?? null, info?.sidecar ?? null, prefer),
     [info, prefer],
@@ -234,6 +273,12 @@ export function SideLyrics() {
         </div>
       </div>
       <div className="side-lyrics-stage" onContextMenu={onContextMenu}>
+        <VisualizerLayer settings={viz} playing={playing} />
+        <SideVizSwitcher
+          value={viz}
+          onChange={patchViz}
+          onOpenSettings={() => setVizOpen(true)}
+        />
         <LyricsView
           key={path || "idle"}
           ref={lyricsViewRef}
@@ -299,6 +344,17 @@ export function SideLyrics() {
               <SlidersHorizontal size={14} />
               歌词样式
             </button>
+            <button
+              className="np-ctx-item"
+              role="menuitem"
+              onClick={() => {
+                setCtxMenu(null);
+                setVizOpen(true);
+              }}
+            >
+              <Sparkles size={14} />
+              背景动效{viz.enabled ? "" : "（关）"}
+            </button>
           </div>,
           document.body,
         )}
@@ -309,6 +365,16 @@ export function SideLyrics() {
             value={disp}
             onChange={patchDisp}
             onClose={() => setStyleOpen(false)}
+          />,
+          document.body,
+        )}
+
+      {vizOpen &&
+        createPortal(
+          <VisualizerSettingsDialog
+            value={viz}
+            onChange={patchViz}
+            onClose={() => setVizOpen(false)}
           />,
           document.body,
         )}

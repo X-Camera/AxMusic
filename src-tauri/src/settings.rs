@@ -105,6 +105,95 @@ pub enum LyricsFont {
     Heiti,
 }
 
+/// 主界面歌词区背景动效类型（可热切换）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SideVizKind {
+    /// 柔和光晕流动（默认，偏素）
+    #[default]
+    Aurora,
+    /// 轻量频谱柱
+    Spectrum,
+    /// 漂浮粒子
+    Particles,
+}
+
+/// 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SideVizPalette {
+    /// 单色白/灰，最素
+    Mono,
+    /// 柔和单强调色
+    #[default]
+    Soft,
+    /// 多彩渐变，最炫
+    Vivid,
+}
+
+/// 主界面歌词区背景动效设置（默认关闭，保持界面素净）
+/// 字段全部 `default`，旧 settings.json 缺字段也不致整份配置解析失败。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SideVizSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub kind: SideVizKind,
+    #[serde(default)]
+    pub palette: SideVizPalette,
+    /// 主色 hex（如 #82aaff）
+    #[serde(default = "default_viz_color")]
+    pub color: String,
+    /// 强度 0.0..=1.0
+    #[serde(default = "default_viz_intensity")]
+    pub intensity: f32,
+    /// 图层不透明度 0.0..=1.0
+    #[serde(default = "default_viz_opacity")]
+    pub opacity: f32,
+    /// 动画速度 0.2..=2.0
+    #[serde(default = "default_viz_speed")]
+    pub speed: f32,
+}
+
+fn default_viz_color() -> String {
+    "#82aaff".into()
+}
+
+fn default_viz_intensity() -> f32 {
+    0.45
+}
+
+fn default_viz_opacity() -> f32 {
+    0.42
+}
+
+fn default_viz_speed() -> f32 {
+    1.0
+}
+
+/// `#rgb` / `#rrggbb`（大小写均可）
+pub fn is_hex_color(s: &str) -> bool {
+    let s = s.strip_prefix('#').unwrap_or(s);
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+    matches!(s.len(), 3 | 6)
+}
+
+impl Default for SideVizSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            kind: SideVizKind::default(),
+            palette: SideVizPalette::default(),
+            color: default_viz_color(),
+            intensity: default_viz_intensity(),
+            opacity: default_viz_opacity(),
+            speed: default_viz_speed(),
+        }
+    }
+}
+
 /// 歌词在线源开关
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricsSources {
@@ -169,6 +258,9 @@ pub struct AppSettings {
     /// 主界面歌词行间距（1.0..=2.0）
     #[serde(default = "default_lyrics_line_height")]
     pub side_lyrics_line_height: f32,
+    /// 主界面歌词区背景动效（默认关）
+    #[serde(default)]
+    pub side_viz: SideVizSettings,
     /// 歌曲页默认视图
     #[serde(default)]
     pub songs_view: SongsView,
@@ -217,6 +309,7 @@ impl Default for AppSettings {
             side_lyrics_font_scale: default_lyrics_font_scale(),
             side_lyrics_font: LyricsFont::default(),
             side_lyrics_line_height: default_lyrics_line_height(),
+            side_viz: SideVizSettings::default(),
             songs_view: SongsView::default(),
             close_behavior: CloseBehavior::default(),
             theme_mode: ThemeMode::default(),
@@ -234,7 +327,22 @@ pub fn load() -> AppSettings {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return AppSettings::default();
     };
-    let mut s: AppSettings = serde_json::from_str(&text).unwrap_or_default();
+    // 解析失败时绝不整份丢弃：至少保留 library_root，避免下次 save 把库指针冲成 null
+    let mut s: AppSettings = match serde_json::from_str(&text) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("[settings] 解析失败，已尽量保留关键字段: {err}");
+            let mut fallback = AppSettings::default();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(lr) = v.get("library_root").and_then(|x| x.as_str()) {
+                    if !lr.is_empty() {
+                        fallback.library_root = Some(lr.to_string());
+                    }
+                }
+            }
+            fallback
+        }
+    };
     // 旧版 play_mode → shuffle + repeat
     if let Some(legacy) = s.play_mode.take() {
         match legacy {

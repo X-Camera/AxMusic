@@ -195,10 +195,31 @@ export interface AppSettings {
   side_lyrics_font: LyricsFont;
   /** 主界面歌词行间距 */
   side_lyrics_line_height: number;
+  /** 主界面歌词区背景动效 */
+  side_viz: SideVizSettings;
   songs_view: SongsView;
   close_behavior: CloseBehavior;
   theme_mode: ThemeMode;
   color_scheme: ColorScheme;
+}
+
+export type SideVizKind = "aurora" | "spectrum" | "particles";
+
+/** 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变） */
+export type SideVizPalette = "mono" | "soft" | "vivid";
+
+export interface SideVizSettings {
+  enabled: boolean;
+  kind: SideVizKind;
+  palette: SideVizPalette;
+  /** 主色（hex，如 #82aaff）；mono 下几乎不显色 */
+  color: string;
+  /** 0–1 强度 */
+  intensity: number;
+  /** 0–1 图层不透明度 */
+  opacity: number;
+  /** 0.2–2 动画速度 */
+  speed: number;
 }
 
 export type SettingsPatch = Partial<

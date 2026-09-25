@@ -171,6 +171,8 @@ pub struct SettingsPatch {
     pub side_lyrics_font_scale: Option<f32>,
     pub side_lyrics_font: Option<crate::settings::LyricsFont>,
     pub side_lyrics_line_height: Option<f32>,
+    /// 主界面歌词区背景动效（整组覆盖）
+    pub side_viz: Option<crate::settings::SideVizSettings>,
     pub songs_view: Option<crate::settings::SongsView>,
     pub close_behavior: Option<crate::settings::CloseBehavior>,
     pub theme_mode: Option<crate::settings::ThemeMode>,
@@ -238,6 +240,18 @@ pub fn update_settings(
     }
     if let Some(v) = patch.side_lyrics_line_height {
         guard.side_lyrics_line_height = v.clamp(1.0, 2.0);
+    }
+    if let Some(v) = patch.side_viz {
+        guard.side_viz.enabled = v.enabled;
+        guard.side_viz.kind = v.kind;
+        guard.side_viz.palette = v.palette;
+        let color = v.color.trim();
+        if crate::settings::is_hex_color(color) {
+            guard.side_viz.color = color.to_ascii_lowercase();
+        }
+        guard.side_viz.intensity = v.intensity.clamp(0.0, 1.0);
+        guard.side_viz.opacity = v.opacity.clamp(0.0, 1.0);
+        guard.side_viz.speed = v.speed.clamp(0.2, 2.0);
     }
     if let Some(v) = patch.songs_view {
         guard.songs_view = v;
