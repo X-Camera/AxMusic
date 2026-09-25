@@ -203,7 +203,7 @@ export interface AppSettings {
   color_scheme: ColorScheme;
 }
 
-export type SideVizKind = "aurora" | "spectrum" | "particles";
+export type SideVizKind = "aurora" | "spectrum" | "particles" | "radial-bars" | "radial-line";
 
 /** 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变） */
 export type SideVizPalette = "mono" | "soft" | "vivid";

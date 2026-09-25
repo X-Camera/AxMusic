@@ -106,8 +106,9 @@ pub enum LyricsFont {
 }
 
 /// 主界面歌词区背景动效类型（可热切换）
+/// 与前端 `SideVizKind` 一致使用 kebab-case（radial-bars / radial-line）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum SideVizKind {
     /// 柔和光晕流动（默认，偏素）
     #[default]
@@ -116,6 +117,12 @@ pub enum SideVizKind {
     Spectrum,
     /// 漂浮粒子
     Particles,
+    /// 环形频谱（柱式）
+    #[serde(alias = "radial_bars")]
+    RadialBars,
+    /// 环形频谱（线条）
+    #[serde(alias = "radial_line")]
+    RadialLine,
 }
 
 /// 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）

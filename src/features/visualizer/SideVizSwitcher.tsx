@@ -59,6 +59,37 @@ function KindIcon({ kind }: { kind: SideVizKind | "off" | "idle" }) {
       </svg>
     );
   }
+  if (kind === "radial-bars") {
+    return (
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="2.2" fill="currentColor" opacity="0.35" />
+        <g stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <path d="M8 2.2v1.6M8 12.2v1.6M2.2 8h1.6M12.2 8h1.6" />
+          <path d="M4 4l1.1 1.1M10.9 10.9L12 12M12 4l-1.1 1.1M5.1 10.9L4 12" opacity="0.75" />
+        </g>
+      </svg>
+    );
+  }
+  if (kind === "radial-line") {
+    return (
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M8 2.5c3 0 5.5 2.5 5.5 5.5S11 13.5 8 13.5 2.5 11 2.5 8 5 2.5 8 2.5z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          opacity="0.35"
+        />
+        <path
+          d="M3.2 8c.8-1.6 1.6-1.6 2.4 0s1.6 1.6 2.4 0 1.6-1.6 2.4 0 1.6 1.6 2.4 0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="4" cy="5" r="1.4" fill="currentColor" opacity="0.55" />

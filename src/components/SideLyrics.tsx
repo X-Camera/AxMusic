@@ -27,7 +27,12 @@ import { pickLyrics } from "../features/player/lrc";
 import { VisualizerLayer } from "../features/visualizer/VisualizerLayer";
 import { VisualizerSettingsDialog } from "../features/visualizer/VisualizerSettingsDialog";
 import { SideVizSwitcher } from "../features/visualizer/SideVizSwitcher";
-import { clampViz, SIDE_VIZ_DEFAULT } from "../features/visualizer/sideViz";
+import {
+  clampViz,
+  getVizCache,
+  setVizCache,
+  SIDE_VIZ_DEFAULT,
+} from "../features/visualizer/sideViz";
 import "./SideLyrics.css";
 
 /** 主页歌词格：与满窗共用 LyricsView；居中排版，样式/右键/搜索独立设置 */
@@ -57,8 +62,10 @@ export function SideLyrics() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [styleOpen, setStyleOpen] = useState(false);
   const [vizOpen, setVizOpen] = useState(false);
-  /** 歌词区背景动效（默认关，保持界面素净） */
-  const [viz, setViz] = useState<SideVizSettings>(SIDE_VIZ_DEFAULT);
+  /** 歌词区背景动效（默认关；优先进程缓存，避免面板重开被默认值顶掉） */
+  const [viz, setViz] = useState<SideVizSettings>(
+    () => getVizCache() ?? SIDE_VIZ_DEFAULT,
+  );
   const lastPathRef = useRef("");
   const lastPosRef = useRef(0);
   /** 进度回跳检测（gapless 连播校准 / 单曲重播） */
@@ -67,6 +74,20 @@ export function SideLyrics() {
   const ignoreGaplessPosRef = useRef(false);
   const clockRef = useRef<PlayClock>(createPlayClock());
   const lyricsViewRef = useRef<LyricsViewHandle>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 环形频谱圆心：固定在「当前句」槽位高度（歌词引擎 ALIGN_POS=0.42），
+   * 不跟句子 DOM 滚动漂移——换句时背景保持不动。
+   */
+  function getVizFocus() {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    return {
+      x: stage.clientWidth * 0.5,
+      y: stage.clientHeight * 0.42,
+    };
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +101,11 @@ export function SideLyrics() {
           font: s.side_lyrics_font ?? "display",
           lineHeight: s.side_lyrics_line_height ?? 1.25,
         });
-        if (s.side_viz) setViz(clampViz(s.side_viz));
+        if (s.side_viz) {
+          const next = clampViz(s.side_viz);
+          setVizCache(next);
+          setViz(next);
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -94,7 +119,11 @@ export function SideLyrics() {
     let unlisten: (() => void) | undefined;
     void listen<AppSettings>("settings://changed", (e) => {
       if (cancelled) return;
-      if (e.payload.side_viz) setViz(clampViz(e.payload.side_viz));
+      if (e.payload.side_viz) {
+        const next = clampViz(e.payload.side_viz);
+        setVizCache(next);
+        setViz(next);
+      }
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -245,6 +274,7 @@ export function SideLyrics() {
   /** 右键「背景动效」：实时预览 + 落盘 side_viz */
   function patchViz(next: Partial<SideVizSettings>) {
     const merged = clampViz({ ...viz, ...next });
+    setVizCache(merged);
     setViz(merged);
     void api.updateSettings({ side_viz: merged }).catch(() => void 0);
   }
@@ -272,8 +302,8 @@ export function SideLyrics() {
           </button>
         </div>
       </div>
-      <div className="side-lyrics-stage" onContextMenu={onContextMenu}>
-        <VisualizerLayer settings={viz} playing={playing} />
+      <div className="side-lyrics-stage" ref={stageRef} onContextMenu={onContextMenu}>
+        <VisualizerLayer settings={viz} playing={playing} getFocus={getVizFocus} />
         <SideVizSwitcher
           value={viz}
           onChange={patchViz}

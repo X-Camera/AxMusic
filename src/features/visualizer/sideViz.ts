@@ -4,6 +4,8 @@ export const SIDE_VIZ_KINDS: { id: SideVizKind; label: string; hint: string }[] 
   { id: "aurora", label: "柔光", hint: "光晕缓慢流动" },
   { id: "spectrum", label: "频谱", hint: "轻量声柱起伏" },
   { id: "particles", label: "粒子", hint: "漂浮光点" },
+  { id: "radial-bars", label: "环柱", hint: "居中环形声柱" },
+  { id: "radial-line", label: "环线", hint: "居中环形波形" },
 ];
 
 export const SIDE_VIZ_PALETTES: { id: SideVizPalette; label: string; hint: string }[] = [
@@ -23,6 +25,17 @@ export const SIDE_VIZ_DEFAULT: SideVizSettings = {
   opacity: 0.42,
   speed: 1,
 };
+
+/** 进程内缓存：歌词栏卸载重挂时立刻恢复，不闪默认、不丢已选效果 */
+let vizCache: SideVizSettings | null = null;
+
+export function getVizCache(): SideVizSettings | null {
+  return vizCache;
+}
+
+export function setVizCache(v: SideVizSettings) {
+  vizCache = clampViz(v);
+}
 
 /** 同一效果的风格预设（只改配色/强度等参数，不切换效果类型） */
 export const SIDE_VIZ_STYLES: {
@@ -59,8 +72,20 @@ export function normalizeHexColor(input: string, fallback = SIDE_VIZ_DEFAULT_COL
 }
 
 export function clampViz(v: SideVizSettings): SideVizSettings {
+  // 兼容旧 snake_case / 未知值；识别不出的 kind 回退 aurora
+  const raw = String(v.kind ?? "");
   const kind: SideVizKind =
-    v.kind === "spectrum" || v.kind === "particles" ? v.kind : "aurora";
+    raw === "radial-bars" || raw === "radial_bars"
+      ? "radial-bars"
+      : raw === "radial-line" || raw === "radial_line"
+        ? "radial-line"
+        : raw === "spectrum"
+          ? "spectrum"
+          : raw === "particles"
+            ? "particles"
+            : raw === "aurora"
+              ? "aurora"
+              : "aurora";
   const palette: SideVizPalette =
     v.palette === "mono" || v.palette === "vivid" ? v.palette : "soft";
   return {
@@ -87,6 +112,14 @@ export function hexToRgb(hex: string): Rgb {
 
 function clamp255(n: number): number {
   return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+export function lerpRgb(a: Rgb, b: Rgb, t: number): Rgb {
+  return [
+    clamp255(a[0] + (b[0] - a[0]) * t),
+    clamp255(a[1] + (b[1] - a[1]) * t),
+    clamp255(a[2] + (b[2] - a[2]) * t),
+  ];
 }
 
 function shiftHue(rgb: Rgb, deg: number): Rgb {
