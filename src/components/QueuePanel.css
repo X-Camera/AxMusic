@@ -100,7 +100,30 @@
 
 .queue-panel-fav {
   opacity: 0.55;
-  margin-right: 4px;
+  margin-right: 2px;
+}
+
+.queue-panel-remove {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  opacity: 0;
+  flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.queue-panel-item-wrap:hover .queue-panel-remove {
+  opacity: 1;
+}
+
+.queue-panel-remove:hover {
+  background: var(--bg-hover);
+  color: var(--danger, var(--text));
 }
 
 .queue-panel-item-wrap:hover .queue-panel-fav,

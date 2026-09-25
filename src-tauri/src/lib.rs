@@ -154,6 +154,7 @@ pub fn run() {
             commands::play_file,
             commands::play_queue,
             commands::player_enqueue,
+            commands::player_remove_at,
             commands::player_play,
             commands::player_pause,
             commands::player_toggle,

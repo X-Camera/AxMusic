@@ -10,6 +10,7 @@ import "./QueuePanel.css";
 export function QueuePanel() {
   const player = useApp((s) => s.player);
   const playQueue = useApp((s) => s.playQueue);
+  const removeQueueAt = useApp((s) => s.removeQueueAt);
   const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
 
   const queue = player?.queue ?? [];
@@ -89,6 +90,14 @@ export function QueuePanel() {
                 size={13}
                 className="queue-panel-fav"
               />
+              <button
+                className="queue-panel-remove"
+                title="移出队列"
+                aria-label="移出队列"
+                onClick={() => void removeQueueAt(i)}
+              >
+                <X size={13} />
+              </button>
             </div>
           ))
         )}

@@ -84,6 +84,8 @@ export function NowPlayingPage() {
   /** 曲目代数：切歌 / 单曲循环重播时 +1，强制歌词 DOM 与引擎整表重建 */
   const [trackGen, setTrackGen] = useState(0);
   const lastPosForGenRef = useRef(0);
+  /** 切歌后吞掉第一次 jumpedBack（gapless 归零），避免连弹两遍 */
+  const skipJumpGenRef = useRef(false);
   /** 播放中用基准时间外推，填补 500ms 轮询间隙 */
   const clockRef = useRef<PlayClock>(createPlayClock());
   const seekFillRef = useRef<HTMLDivElement>(null);
@@ -289,6 +291,10 @@ export function NowPlayingPage() {
   useEffect(() => {
     setTrackGen((g) => g + 1);
     lastPosForGenRef.current = 0;
+    // 仅 gapless 尾（pos 仍停在上一首末）才吞第一次 jumpedBack；
+    // 立刻从头播（pos≈0）时别吞，否则单曲重播会被误伤
+    skipJumpGenRef.current = pos > 1500;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
   // 单曲循环重播 / 点「下一首」回到自己：path 不变但进度归零，也要升代
@@ -298,7 +304,11 @@ export function NowPlayingPage() {
     if (seeking) return;
     const jumpedBack = prev > 2000 && pos < 800;
     if (jumpedBack) {
-      setTrackGen((g) => g + 1);
+      if (skipJumpGenRef.current) {
+        skipJumpGenRef.current = false;
+      } else {
+        setTrackGen((g) => g + 1);
+      }
     }
   }, [pos, seeking]);
 

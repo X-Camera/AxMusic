@@ -989,6 +989,7 @@ pub fn play_queue(
 }
 
 /// 追加到当前播放队列（排队等播放，不替换当前队列、不打断正在播的曲目）。
+/// 同 path 已在队列中的跳过，避免重复添加。
 #[tauri::command]
 pub fn player_enqueue(
     app: AppHandle,
@@ -997,6 +998,20 @@ pub fn player_enqueue(
 ) -> Result<PlayerSnapshot, String> {
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     player.enqueue(items);
+    let snap = player.snapshot();
+    emit_player_state(&app, &snap);
+    Ok(snap)
+}
+
+/// 移出播放队列第 index 首。移的是当前曲：有下一首则续播，否则停。
+#[tauri::command]
+pub fn player_remove_at(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    index: usize,
+) -> Result<PlayerSnapshot, String> {
+    let mut player = state.player.lock().map_err(|e| e.to_string())?;
+    player.remove_at(index).map_err(|e| e.to_string())?;
     let snap = player.snapshot();
     emit_player_state(&app, &snap);
     Ok(snap)

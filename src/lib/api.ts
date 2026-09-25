@@ -77,9 +77,12 @@ export const api = {
   playFile: (path: string) => invoke<PlayerSnapshot>("play_file", { path }),
   playQueue: (items: QueueItem[], start: number) =>
     invoke<PlayerSnapshot>("play_queue", { items, start }),
-  /** 追加到当前队列末尾（排队等播放） */
+  /** 追加到当前队列末尾（排队等播放；同 path 去重） */
   playerEnqueue: (items: QueueItem[]) =>
     invoke<PlayerSnapshot>("player_enqueue", { items }),
+  /** 移出队列第 index 首；若是当前曲则续播下一首或停 */
+  playerRemoveAt: (index: number) =>
+    invoke<PlayerSnapshot>("player_remove_at", { index }),
   playerPlay: () => invoke<PlayerSnapshot>("player_play"),
   playerPause: () => invoke<PlayerSnapshot>("player_pause"),
   playerToggle: () => invoke<PlayerSnapshot>("player_toggle"),

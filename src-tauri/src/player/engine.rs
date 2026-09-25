@@ -50,6 +50,10 @@ enum Cmd {
     },
     Next,
     Prev,
+    /// 移出队列第 index 项（不打断其它项；当前曲被移时 engine 侧再切歌/停）
+    RemoveAt { index: usize },
+    /// 追加队列（不打断当前曲；与 shared 同步，自动切歌/循环按完整队列走）
+    ExtendQueue { items: Vec<QueueItem> },
     #[allow(dead_code)] // 预留：停止/清理通道（gapless、换输出设备时用）
     Stop,
 }
@@ -257,14 +261,99 @@ impl SymphoniaPlayer {
     }
 
     /// 追加到当前播放队列末尾（不打断正在播的曲目；空队列时仅入队等播）。
+    /// 同 path 已在队列里的跳过，避免同一首歌重复添加。
+    /// **必须同步 worker 本地 queue**：EOF 自动切歌 / Next / 列表循环都读它，
+    /// 只写 shared 会让后来加入的曲目进不了循环。
     pub fn enqueue(&mut self, items: Vec<QueueItem>) {
         if items.is_empty() {
             return;
         }
+        let mut added: Vec<QueueItem> = Vec::new();
         if let Ok(mut q) = self.shared.queue.lock() {
-            q.extend(items);
+            for item in items {
+                if q.iter().any(|x| x.path == item.path) {
+                    continue;
+                }
+                q.push(item.clone());
+                added.push(item);
+            }
+        }
+        if added.is_empty() {
+            return;
         }
         // 不动音频缓冲：flush 会把当前曲目已解码的队尾冲掉，造成可闻断音
+        let _ = self.cmd_tx.send(Cmd::ExtendQueue { items: added });
+    }
+
+    /// 移出队列第 `index` 首。移的是当前曲：有下一首则续播，否则停。
+    pub fn remove_at(&mut self, index: usize) -> Result<()> {
+        let mut items = match self.shared.queue.lock() {
+            Ok(g) => g.clone(),
+            Err(e) => e.into_inner().clone(),
+        };
+        if index >= items.len() {
+            return Err(anyhow!("队列索引越界"));
+        }
+        items.remove(index);
+        let old_index = self.shared.queue_index();
+        let was_current = old_index == Some(index);
+        let new_index = match old_index {
+            Some(c) if c == index => {
+                if items.is_empty() {
+                    None
+                } else {
+                    Some(index.min(items.len() - 1))
+                }
+            }
+            Some(c) if c > index => Some(c - 1),
+            other => other,
+        };
+        if let Ok(mut g) = self.shared.queue.lock() {
+            *g = items.clone();
+        }
+        if let Ok(mut g) = self.shared.queue_index.lock() {
+            *g = new_index;
+        }
+        // worker 本地队列/历史下标对齐
+        let _ = self.cmd_tx.send(Cmd::RemoveAt { index });
+
+        if was_current {
+            match new_index.and_then(|i| items.get(i).cloned()) {
+                Some(item) => {
+                    let info = TrackInfo {
+                        path: item.path.clone(),
+                        title: item.title.clone(),
+                        duration_ms: item.duration_ms,
+                        sample_rate: self.output_sample_rate,
+                        channels: 2,
+                    };
+                    if let Ok(mut t) = self.shared.track.lock() {
+                        *t = Some(info);
+                    }
+                    self.shared
+                        .duration_ms
+                        .store(item.duration_ms.max(1), Ordering::SeqCst);
+                    self.shared.position_frames.store(0, Ordering::SeqCst);
+                    self.shared.track_ended.store(false, Ordering::SeqCst);
+                    self.shared.request_flush();
+                    let _ = self.cmd_tx.send(Cmd::Open {
+                        path: PathBuf::from(&item.path),
+                        index: new_index,
+                    });
+                    let _ = self.cmd_tx.send(Cmd::Play);
+                    self.shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                }
+                None => {
+                    if let Ok(mut t) = self.shared.track.lock() {
+                        *t = None;
+                    }
+                    self.shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
+                    self.shared.request_flush();
+                    let _ = self.cmd_tx.send(Cmd::Stop);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 启动恢复上次播放列表：写入队列/当前曲/进度，状态为暂停（不自动播）。
@@ -1091,6 +1180,46 @@ fn decode_loop(
                     if let Ok(mut q) = shared.queue.lock() {
                         *q = queue.clone();
                     }
+                }
+                Cmd::RemoveAt { index } => {
+                    if index < queue.len() {
+                        queue.remove(index);
+                    }
+                    queue_index = match queue_index {
+                        Some(c) if c == index => {
+                            if queue.is_empty() {
+                                None
+                            } else {
+                                Some(index.min(queue.len().saturating_sub(1)))
+                            }
+                        }
+                        Some(c) if c > index => Some(c - 1),
+                        other => other,
+                    };
+                    history.retain_mut(|h| {
+                        if *h == index {
+                            false
+                        } else {
+                            if *h > index {
+                                *h -= 1;
+                            }
+                            true
+                        }
+                    });
+                    if let Ok(mut q) = shared.queue.lock() {
+                        *q = queue.clone();
+                    }
+                    if let Ok(mut qi) = shared.queue_index.lock() {
+                        *qi = queue_index;
+                    }
+                }
+                Cmd::ExtendQueue { items } => {
+                    for item in items {
+                        if !queue.iter().any(|x| x.path == item.path) {
+                            queue.push(item);
+                        }
+                    }
+                    // shared 已由 enqueue 写过完整队列；这里不回写，避免用旧本地覆盖
                 }
                 Cmd::RestoreSession {
                     items,

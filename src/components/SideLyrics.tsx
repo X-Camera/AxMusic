@@ -47,6 +47,10 @@ export function SideLyrics() {
   const [styleOpen, setStyleOpen] = useState(false);
   const lastPathRef = useRef("");
   const lastPosRef = useRef(0);
+  /** 进度回跳检测（gapless 连播校准 / 单曲重播） */
+  const lastPosForGenRef = useRef(0);
+  /** 切歌后忽略 gapless 旧尾进度，等新歌真正开唱（pos 归零）再对齐 */
+  const ignoreGaplessPosRef = useRef(false);
   const clockRef = useRef<PlayClock>(createPlayClock());
   const lyricsViewRef = useRef<LyricsViewHandle>(null);
 
@@ -74,8 +78,16 @@ export function SideLyrics() {
     let cancelled = false;
     setLyricState({ path, info: null });
     setTrackGen((g) => g + 1);
+    // EOF 无缝连播：track 已是新歌，pos 仍停在上一首尾（open_track_full 不归零）。
+    // 仅「从另一首切过来且 pos 仍很大」才当 gapless 尾；播到一半打开面板应直接对齐。
+    const fromOtherTrack = lastPathRef.current !== "" && lastPathRef.current !== path;
+    const gaplessTail = fromOtherTrack && posMs > 1500;
+    ignoreGaplessPosRef.current = gaplessTail;
+    clockReanchor(clockRef.current, gaplessTail ? 0 : posMs, playing);
     lastPathRef.current = path;
-    lastPosRef.current = 0;
+    lastPosRef.current = posMs;
+    lastPosForGenRef.current = 0;
+    lyricsViewRef.current?.resetScroll();
     if (!path) return;
     void api
       .lyricsCurrent(null, path)
@@ -106,8 +118,32 @@ export function SideLyrics() {
     });
   }, [path]);
 
+  // 进度回跳（gapless 校准归零 / 单曲重播）：升代重建，避免弹簧从曲尾爬回开头
+  useEffect(() => {
+    const prev = lastPosForGenRef.current;
+    lastPosForGenRef.current = posMs;
+    if (prev > 2000 && posMs < 800) {
+      clockReanchor(clockRef.current, posMs, playing);
+      lyricsViewRef.current?.resetScroll();
+      // 切歌后 gapless 归零：path 效果已升代重建过，再升会连弹两遍
+      if (!ignoreGaplessPosRef.current) {
+        setTrackGen((g) => g + 1);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posMs]);
+
   // 与满窗同源播放时钟：轮询锚点 + 墙钟外推
   useEffect(() => {
+    // 切歌后：pos 若仍是上一首尾（gapless），维持 t=0；归零后再跟
+    if (ignoreGaplessPosRef.current) {
+      lastPosRef.current = posMs;
+      if (posMs < 1500) {
+        ignoreGaplessPosRef.current = false;
+        clockSyncFromSnapshot(clockRef.current, posMs, playing, { force: true });
+      }
+      return;
+    }
     const force = path !== lastPathRef.current || Math.abs(posMs - lastPosRef.current) > 2000;
     lastPathRef.current = path;
     clockSyncFromSnapshot(clockRef.current, posMs, playing, { force });

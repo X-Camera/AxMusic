@@ -23,8 +23,10 @@ interface AppState {
   refreshPlayer: () => Promise<void>;
   playPath: (path: string) => Promise<void>;
   playQueue: (items: QueueItem[], start: number) => Promise<void>;
-  /** 追加到当前播放队列（排队等播放，不打断当前曲） */
+  /** 追加到当前播放队列（排队等播放，不打断当前曲；同 path 去重） */
   enqueue: (items: QueueItem[]) => Promise<void>;
+  /** 移出队列第 index 首；若是当前曲则续播下一首或停 */
+  removeQueueAt: (index: number) => Promise<void>;
   toggle: () => Promise<void>;
   next: () => Promise<void>;
   prev: () => Promise<void>;
@@ -139,9 +141,22 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const prev = get().player;
       if (prev) {
-        set({ player: { ...prev, queue: [...prev.queue, ...items] } });
+        const paths = new Set(prev.queue.map((q) => q.path));
+        const add = items.filter((i) => !paths.has(i.path));
+        if (add.length > 0) {
+          set({ player: { ...prev, queue: [...prev.queue, ...add] } });
+        }
       }
       const p = await api.playerEnqueue(items);
+      if (rev === playerRev) set({ player: p });
+    } finally {
+      endWrite();
+    }
+  },
+  removeQueueAt: async (index) => {
+    const rev = beginWrite();
+    try {
+      const p = await api.playerRemoveAt(index);
       if (rev === playerRev) set({ player: p });
     } finally {
       endWrite();

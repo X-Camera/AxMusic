@@ -106,9 +106,14 @@ impl Player {
         self.engine.play_queue_at(items, start)
     }
 
-    /// 追加到当前队列末尾，排队等播放（不替换、不打断当前曲）。
+    /// 追加到当前队列末尾，排队等播放（不替换、不打断当前曲）。同 path 去重。
     pub fn enqueue(&mut self, items: Vec<QueueItem>) {
         self.engine.enqueue(items);
+    }
+
+    /// 移出队列第 index 首；移的是当前曲则续播下一首或停。
+    pub fn remove_at(&mut self, index: usize) -> Result<()> {
+        self.engine.remove_at(index)
     }
 
     /// 启动恢复上次播放列表（暂停在上次进度，不自动播）。
