@@ -10,13 +10,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 const PORTABLE_INI: &str = "AxMusic-portable.ini";
 const DATA_DIR: &str = "data";
 
 static DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+static LIBRARY_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 /// Resolve (once) and cache the portable data root.
 pub fn data_root() -> &'static Path {
@@ -65,6 +66,23 @@ fn appdata_root() -> PathBuf {
 /// Library working DB lives **inside the library root** (next to the audio).
 pub fn library_db_path(library_root: &Path) -> PathBuf {
     library_root.join("axmusic.db")
+}
+
+/// 当前库目录（全局单例）。歌词路径解析等无 AppState 上下文的场景使用。
+pub fn library_root() -> Option<PathBuf> {
+    LIBRARY_ROOT.read().ok().and_then(|g| g.clone())
+}
+
+/// 设置/更新库目录全局值（启动加载 settings、init_library、settings 变更时调用）。
+pub fn set_library_root(root: Option<PathBuf>) {
+    if let Ok(mut g) = LIBRARY_ROOT.write() {
+        *g = root;
+    }
+}
+
+/// 库内歌词目录：`<库根>/lrc/`
+pub fn library_lrc_dir(library_root: &Path) -> PathBuf {
+    library_root.join("lrc")
 }
 
 /// 同目录唯一临时文件路径（pid + 毫秒 + 自增计数），供「写临时文件 + rename」用。

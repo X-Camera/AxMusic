@@ -53,7 +53,7 @@ export interface TrackRow {
   has_cover: boolean;
   /** 内嵌歌词（标签内） */
   has_lyrics: boolean;
-  /** 外挂歌词（同目录同名 .lrc） */
+  /** 外挂歌词（库 lrc/ 或同目录 .lrc） */
   has_lrc: boolean;
   has_year: boolean;
   has_mb_id: boolean;
@@ -426,3 +426,20 @@ export interface FolderListing {
 
 /** 标签缓存条目（path 唯一，字段与 FolderFile 对齐） */
 export type FolderMeta = FolderFile;
+
+// ── archive (归档状态) ──────────────────────────────────────────────
+
+/** 一项归档问题 */
+export interface ArchiveIssue {
+  /** "lyrics_name" | "lyrics_location" */
+  kind: string;
+  message: string;
+  current: string;
+  expected: string;
+}
+
+/** 单曲归档状态 */
+export interface ArchiveStatus {
+  ok: boolean;
+  issues: ArchiveIssue[];
+}

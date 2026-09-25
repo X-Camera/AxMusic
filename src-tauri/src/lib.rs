@@ -5,6 +5,7 @@ mod folder_meta;
 mod library;
 mod lyrics;
 mod paths;
+mod archive;
 mod play_session;
 mod play_ui;
 mod player;
@@ -16,7 +17,7 @@ mod tagger;
 mod taskbar;
 mod tray;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
@@ -38,6 +39,14 @@ pub fn run() {
             eprintln!("[AxMusic] data_root = {}", data_root.display());
 
             let app_settings = settings::load();
+            // 全局 library_root：歌词路径解析等无 AppState 场景使用
+            paths::set_library_root(
+                app_settings
+                    .library_root
+                    .as_deref()
+                    .filter(|r| Path::new(r).is_dir())
+                    .map(PathBuf::from),
+            );
             let db = match app_settings.library_root.as_deref() {
                 Some(root) if Path::new(root).is_dir() => {
                     let db_path = paths::library_db_path(Path::new(root));
@@ -176,6 +185,8 @@ pub fn run() {
             commands::lyrics_export_sidecar,
             commands::lyrics_embed_sidecar,
             commands::lyrics_current,
+            commands::archive_check_batch,
+            commands::archive_normalize,
             commands::playlist_list,
             commands::playlist_create,
             commands::playlist_rename,

@@ -199,6 +199,14 @@ export const api = {
       path: path ?? null,
     }),
 
+  // ── archive (归档状态) ──────────────────────────────────────────
+  archiveCheckBatch: (trackIds: number[]) =>
+    invoke<Record<number, import("./types").ArchiveStatus>>("archive_check_batch", {
+      trackIds,
+    }),
+  archiveNormalize: (trackId: number) =>
+    invoke<string>("archive_normalize", { trackId }),
+
   // ── playlists (m3u8，存 <库>/playlists/) ────────────────────────
   playlistList: () => invoke<PlaylistSummary[]>("playlist_list"),
   /** 新建并一次写入条目（items 可空 = 空歌单） */

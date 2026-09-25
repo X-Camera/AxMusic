@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search } from "lucide-react";
 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
-import type { LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
+import type { ArchiveStatus, LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
@@ -40,6 +40,7 @@ export function ManagePage() {
   const [compareId, setCompareId] = useState<number | null>(null);
   const [compareVersion, setCompareVersion] = useState(0);
   const [stats, setStats] = useState<LibraryStats | null>(null);
+  const [archiveMap, setArchiveMap] = useState<Record<number, ArchiveStatus> | null>(null);
 
   const reloadRoot = useCallback(async () => {
     try {
@@ -63,6 +64,14 @@ export function ManagePage() {
       setTracks(list);
       setStats(st);
       setError(null);
+      // 归档状态（只查已关联的）
+      const linkedIds = list.filter((t) => t.catalog_id != null).map((t) => t.id);
+      if (linkedIds.length > 0) {
+        const map = await api.archiveCheckBatch(linkedIds).catch(() => null);
+        setArchiveMap(map);
+      } else {
+        setArchiveMap(null);
+      }
     } catch (e) {
       // 失败保留旧列表（避免瞬时故障把表格清空），错误条单独提示
       setError(String(e));
@@ -364,6 +373,7 @@ export function ManagePage() {
                 rows={filtered}
                 selected={selected}
                 activeId={compareId}
+                archiveMap={archiveMap}
                 onSelectedChange={setSelected}
                 onPlay={(row) => void playQueue([trackRowToQueueItem(row)], 0)}
                 onActivate={(row) =>

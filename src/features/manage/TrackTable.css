@@ -78,6 +78,14 @@
   color: var(--success);
 }
 
+/* 归档有问题 → 黄色问号 */
+.track-table td .cell-warn,
+.track-table td.cell-warn {
+  color: var(--warning);
+  cursor: help;
+  font-weight: 600;
+}
+
 /* 空值占位 — 用弱化色 */
 .track-table td.cell-empty {
   color: var(--text-tertiary);

@@ -1,7 +1,7 @@
 import { Music } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import type { TrackRow } from "../../lib/types";
+import type { ArchiveStatus, TrackRow } from "../../lib/types";
 import { trackRowToAddItem } from "../../lib/api";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { loadCover, observeCover, peekCover, unobserveCover } from "./coverCache";
@@ -75,6 +75,7 @@ export function TrackTable({
   rows,
   selected,
   activeId,
+  archiveMap,
   onSelectedChange,
   onPlay,
   onActivate,
@@ -82,6 +83,8 @@ export function TrackTable({
   rows: TrackRow[];
   selected: Set<number>;
   activeId: number | null;
+  /** 归档状态 map: track_id → ArchiveStatus */
+  archiveMap: Record<number, ArchiveStatus> | null;
   onSelectedChange: (s: Set<number>) => void;
   onPlay: (row: TrackRow, indexInView: number) => void;
   /** 单击行 → 右侧显示 catalog 字段（再次单击已激活行 → 回到统计） */
@@ -125,8 +128,11 @@ export function TrackTable({
           <th style={{ width: 72 }} title="内嵌歌词（标签内）">
             内嵌歌词
           </th>
-          <th style={{ width: 72 }} title="外挂歌词（同目录同名 .lrc）">
+          <th style={{ width: 72 }} title="外挂歌词（库 lrc/ 或同目录 .lrc）">
             外挂歌词
+          </th>
+          <th style={{ width: 56 }} title="归档状态（当前检查歌词命名与位置）">
+            归档
           </th>
         </tr>
       </thead>
@@ -191,6 +197,24 @@ export function TrackTable({
               </td>
               <td className={t.has_lrc ? "cell-ok" : "cell-empty"}>
                 {t.has_lrc ? "✓" : "—"}
+              </td>
+              <td>
+                {t.catalog_id == null ? (
+                  <span className="cell-empty">—</span>
+                ) : archiveMap && archiveMap[t.id] != null ? (
+                  archiveMap[t.id].ok ? (
+                    <span className="cell-ok" title="归档规范">✓</span>
+                  ) : (
+                    <span
+                      className="cell-warn"
+                      title={archiveMap[t.id].issues.map((i) => i.message).join("\n")}
+                    >
+                      ?
+                    </span>
+                  )
+                ) : (
+                  <span className="cell-empty">…</span>
+                )}
               </td>
             </tr>
           );

@@ -474,6 +474,8 @@ pub fn init_library(
         app_settings.library_root = Some(dir.to_string_lossy().to_string());
         settings::save(&app_settings).map_err(|e| e.to_string())?;
     }
+    // 全局 library_root：歌词路径解析等无 AppState 场景使用
+    crate::paths::set_library_root(Some(dir.clone()));
 
     // Working DB lives in the library root
     let db_path = crate::paths::library_db_path(&dir);
@@ -688,7 +690,9 @@ pub async fn track_media_info(path: String) -> Result<serde_json::Value, String>
             .unwrap_or_else(|| path.clone());
         let cover = cover_image_blocking(p, thumbs_dir.as_deref(), 640)?;
         let embedded = crate::lyrics::read_embedded(p).ok().flatten();
-        let sidecar = crate::lyrics::read_sidecar(p)
+        let artist_opt = if artist.is_empty() { None } else { Some(artist.as_str()) };
+        let title_opt = if title.is_empty() { None } else { Some(title.as_str()) };
+        let sidecar = crate::lyrics::read_sidecar(p, artist_opt, title_opt)
             .ok()
             .filter(|s| !s.trim().is_empty());
         Ok(serde_json::json!({
@@ -1411,6 +1415,30 @@ fn resolve_lyrics_target(
     Ok((None, PathBuf::from(p)))
 }
 
+/// 解析歌词目标的 artist/title（用于规范化命名查找）。
+/// 库内查 DB；库外返回 (None, None)。
+fn resolve_lyrics_meta(
+    state: &State<'_, AppState>,
+    track_id: Option<i64>,
+) -> (Option<String>, Option<String>) {
+    let Some(id) = track_id.filter(|&id| id > 0) else {
+        return (None, None);
+    };
+    let Ok(guard) = state.db.lock() else {
+        return (None, None);
+    };
+    let Some(db) = guard.as_ref() else {
+        return (None, None);
+    };
+    let Ok(Some(row)) = db.get_track_by_id(id) else {
+        return (None, None);
+    };
+    (
+        Some(row.artist).filter(|s| !s.is_empty()),
+        Some(row.title).filter(|s| !s.is_empty()),
+    )
+}
+
 /// 按绝对路径查库内曲目；无库/未入库返回 null（满窗搜索歌词前解析 id）。
 #[tauri::command]
 pub fn get_track_by_path(
@@ -1601,7 +1629,15 @@ pub async fn lyrics_save(
         "已内嵌到文件标签".to_string()
     } else {
         // 用户显式保存候选 = 替换更好的歌词，允许覆盖已有 .lrc
-        let dest = lyrics::write_sidecar(&path_buf, &text, true).map_err(|e| e.to_string())?;
+        let (a, t) = resolve_lyrics_meta(&state, track_id);
+        let dest = lyrics::write_sidecar(
+            &path_buf,
+            &text,
+            true,
+            a.as_deref(),
+            t.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
         format!("已写入外挂歌词 {}", dest.display())
     };
 
@@ -1641,7 +1677,9 @@ pub fn lyrics_export_sidecar(
     let text = lyrics::read_embedded(&path_buf)
         .map_err(|e| e.to_string())?
         .ok_or("文件里没有内嵌歌词")?;
-    let dest = lyrics::write_sidecar(&path_buf, &text, overwrite).map_err(|e| e.to_string())?;
+    let (a, t) = resolve_lyrics_meta(&state, track_id);
+    let dest = lyrics::write_sidecar(&path_buf, &text, overwrite, a.as_deref(), t.as_deref())
+        .map_err(|e| e.to_string())?;
     if let Some(id) = tid {
         rescan_track_row(&state, &path_buf);
         let _ = app.emit("library://changed", id);
@@ -1659,7 +1697,9 @@ pub fn lyrics_embed_sidecar(
     path: Option<String>,
 ) -> Result<String, String> {
     let (tid, path_buf) = resolve_lyrics_target(&state, track_id, path)?;
-    let text = lyrics::read_sidecar(&path_buf).map_err(|e| e.to_string())?;
+    let (a, t) = resolve_lyrics_meta(&state, track_id);
+    let text = lyrics::read_sidecar(&path_buf, a.as_deref(), t.as_deref())
+        .map_err(|e| e.to_string())?;
 
     crate::tagger::write_track(
         &path_buf,
@@ -1690,12 +1730,59 @@ pub fn lyrics_current(
     path: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let (_tid, path_buf) = resolve_lyrics_target(&state, track_id, path)?;
+    let (a, t) = resolve_lyrics_meta(&state, track_id);
     let embedded = lyrics::read_embedded(&path_buf).ok().flatten();
-    let sidecar = lyrics::read_sidecar(&path_buf).ok();
+    let sidecar = lyrics::read_sidecar(&path_buf, a.as_deref(), t.as_deref()).ok();
     Ok(serde_json::json!({
         "embedded": embedded,
         "sidecar": sidecar,
     }))
+}
+
+// ── archive (归档状态) ──────────────────────────────────────────────
+
+/// 批量检查归档状态。返回 map: track_id → ArchiveStatus。
+/// 只检查已关联 catalog 的曲目；无歌词不报。
+#[tauri::command]
+pub fn archive_check_batch(
+    state: State<'_, AppState>,
+    track_ids: Vec<i64>,
+) -> Result<std::collections::HashMap<i64, crate::archive::ArchiveStatus>, String> {
+    use std::collections::HashMap;
+    let root = require_library_root(&state)?;
+    let root = PathBuf::from(root);
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_ref(&guard)?;
+    let mut map = HashMap::new();
+    for id in track_ids {
+        let Ok(Some(row)) = db.get_track_by_id(id) else { continue };
+        map.insert(id, crate::archive::check_track(&root, &row));
+    }
+    Ok(map)
+}
+
+/// 规范化单曲归档（当前只处理歌词：移动到 `<库根>/lrc/{artist} - {title}.lrc`）。
+#[tauri::command]
+pub fn archive_normalize(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<String, String> {
+    let root = require_library_root(&state)?;
+    let root = PathBuf::from(root);
+    let row = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+    };
+    let dest = crate::archive::normalize_track(&root, &row).map_err(|e| e.to_string())?;
+    // 归档后 has_lrc 可能变化，重扫入库
+    rescan_track_row(&state, Path::new(&row.path));
+    let _ = app.emit("library://changed", track_id);
+    emit_lyrics_saved(&app, Some(track_id), &dest);
+    Ok(format!("已整理到 {}", dest.display()))
 }
 
 // ���� scrape (MusicBrainz / Cover Art Archive) ������������������������������������������

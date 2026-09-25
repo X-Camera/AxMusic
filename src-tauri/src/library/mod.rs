@@ -38,7 +38,7 @@ pub struct TrackRow {
     pub bit_rate: Option<i64>,
     pub has_cover: bool,
     pub has_lyrics: bool,
-    /// 外挂 .lrc（与音频同目录同名）
+    /// 外挂 .lrc（库 lrc/ 或音频旁）
     pub has_lrc: bool,
     pub has_year: bool,
     pub has_mb_id: bool,

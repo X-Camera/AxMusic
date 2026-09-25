@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileInput, ImagePlus, Loader2, Search } from "lucide-react";
+import { FileInput, FolderCheck, ImagePlus, Loader2, Search } from "lucide-react";
 import { api } from "../../lib/api";
-import type { CatalogRow, FieldChange, TrackRow } from "../../lib/types";
+import type { ArchiveStatus, CatalogRow, FieldChange, TrackRow } from "../../lib/types";
 import { CoverPicker } from "./CoverPicker";
 import "./ComparePanel.css";
 
@@ -27,6 +27,16 @@ const FIELD_ORDER = [
   "release_type",
   "musicbrainz_recording",
   "musicbrainz_release",
+];
+
+/** 紧凑排版分组：一行两个字段；剩余字段单独一行 */
+const FIELD_GROUPS: string[][] = [
+  ["title", "album"],
+  ["artist", "album_artist"],
+  ["year", "track_no"],
+  ["release_type"],
+  ["musicbrainz_recording"],
+  ["musicbrainz_release"],
 ];
 
 /** 未关联时可编辑的文件标签字段 */
@@ -62,6 +72,8 @@ export function ComparePanel({
   const [fileCover, setFileCover] = useState<string | null>(null);
   const [catalogCover, setCatalogCover] = useState<string | null>(null);
   const [coverOpen, setCoverOpen] = useState(false);
+  const [archive, setArchive] = useState<ArchiveStatus | null>(null);
+  const [normalizing, setNormalizing] = useState(false);
 
   /** 任一写操作在途即锁住全部写按钮：它们最终都写同一个音频文件，并发会相互覆盖 */
   const writing = writingField !== null || writingCover || writingTags;
@@ -73,6 +85,7 @@ export function ComparePanel({
     setFileCover(null);
     setCatalogCover(null);
     setDraft({});
+    setArchive(null);
     (async () => {
       try {
         const d = await api.catalogCompare(trackId);
@@ -91,6 +104,11 @@ export function ComparePanel({
           if (d.track.has_cover) {
             const thumb = await api.trackCoverThumb(d.track.path).catch(() => null);
             if (!cancelled) setFileCover(thumb);
+          }
+          // 归档状态（只对已关联曲目有意义）
+          if (d.track.catalog_id != null) {
+            const map = await api.archiveCheckBatch([trackId]).catch(() => null);
+            if (!cancelled && map && map[trackId] != null) setArchive(map[trackId]);
           }
         }
       } catch (e) {
@@ -213,6 +231,22 @@ export function ComparePanel({
     }
   }, [trackId, dirtyFields, onWritten]);
 
+  const normalizeArchive = useCallback(async () => {
+    setNormalizing(true);
+    setError(null);
+    try {
+      await api.archiveNormalize(trackId);
+      // 重新检查归档状态
+      const map = await api.archiveCheckBatch([trackId]);
+      if (map[trackId] != null) setArchive(map[trackId]);
+      onWritten();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setNormalizing(false);
+    }
+  }, [trackId, onWritten]);
+
   return (
     <aside className="cmp-panel" role="complementary" aria-label="catalog 字段">
       <header className="cmp-head">
@@ -303,33 +337,86 @@ export function ComparePanel({
       {data && data.catalog && (
         <div className="cmp-fields">
           <div className="cmp-fields-title">catalog 字段</div>
-          {fields.map((f) => (
-            <div key={f.field} className={`cmp-field${f.changed ? " changed" : ""}`}>
-              <span className="cmp-field-label">{f.label}</span>
-              <span className="cmp-field-value" title={f.value || "—"}>
-                {f.value || "—"}
-              </span>
-              {f.writable ? (
-                <button
-                  className="icon-btn"
-                  title="写入歌曲文件"
-                  disabled={writing}
-                  onClick={() => void writeField(f.field)}
-                >
-                  {writingField === f.field ? (
-                    <Loader2 size={14} className="spin" />
-                  ) : (
-                    <FileInput size={14} />
-                  )}
-                </button>
-              ) : (
-                <span className="icon-btn-placeholder" />
-              )}
-            </div>
-          ))}
+          {FIELD_GROUPS.map((group, gi) => {
+            const items = group
+              .map((field) => fields.find((f) => f.field === field))
+              .filter(Boolean) as typeof fields;
+            if (items.length === 0) return null;
+            return (
+              <div key={gi} className={`cmp-field-row${items.length === 1 ? " single" : ""}`}>
+                {items.map((f) => (
+                  <div key={f.field} className={`cmp-field-compact${f.changed ? " changed" : ""}`}>
+                    <span className="cmp-field-label">{f.label}</span>
+                    <span className="cmp-field-value" title={f.value || "—"}>
+                      {f.value || "—"}
+                    </span>
+                    {f.writable ? (
+                      <button
+                        className="icon-btn"
+                        title="写入歌曲文件"
+                        disabled={writing}
+                        onClick={() => void writeField(f.field)}
+                      >
+                        {writingField === f.field ? (
+                          <Loader2 size={14} className="spin" />
+                        ) : (
+                          <FileInput size={14} />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="icon-btn-placeholder" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
           <div className="tertiary cmp-hint">
             带写入按钮的字段与文件不一致；catalog 空值不写入。
           </div>
+        </div>
+      )}
+      {/* 归档状态：已关联曲目才显示；无歌词不报 */}
+      {data && data.track.catalog_id != null && archive && (
+        <div className="cmp-archive">
+          <div className="cmp-fields-title">
+            归档状态
+            {archive.ok ? (
+              <span className="cmp-archive-ok">✓ 规范</span>
+            ) : (
+              <span className="cmp-archive-bad">
+                ? {archive.issues.length} 项不规范
+              </span>
+            )}
+          </div>
+          {!archive.ok && (
+            <>
+              <ul className="cmp-archive-issues">
+                {archive.issues.map((issue, i) => (
+                  <li key={i} className="cmp-archive-issue">
+                    <span className="cmp-archive-msg">{issue.message}</span>
+                    {issue.current && (
+                      <span className="cmp-archive-path tertiary" title={issue.current}>
+                        当前：{issue.current}
+                      </span>
+                    )}
+                    <span className="cmp-archive-path tertiary" title={issue.expected}>
+                      期望：{issue.expected}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <button
+                className="btn btn-primary"
+                disabled={normalizing}
+                title="把外挂歌词移到库 lrc/ 目录并按「歌手 - 歌名.lrc」命名"
+                onClick={() => void normalizeArchive()}
+              >
+                {normalizing ? <Loader2 size={14} className="spin" /> : <FolderCheck size={14} />}
+                整理
+              </button>
+            </>
+          )}
         </div>
       )}
       {coverOpen && (

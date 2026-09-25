@@ -110,7 +110,29 @@
   font-size: 12px;
 }
 
-.cmp-field.changed .cmp-field-value {
+/* 紧凑双列排版：曲名/专辑、歌手/专辑艺人、年份/轨号 */
+.cmp-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  padding: 2px 0;
+}
+
+.cmp-field-row.single {
+  grid-template-columns: 1fr;
+}
+
+.cmp-field-compact {
+  display: grid;
+  grid-template-columns: 52px 1fr 28px;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.cmp-field-compact.changed .cmp-field-value {
   color: var(--success);
   font-weight: 600;
 }
@@ -181,6 +203,59 @@
   display: flex;
   justify-content: flex-end;
   margin-top: 10px;
+}
+
+/* 归档状态 */
+.cmp-archive {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cmp-archive-ok {
+  margin-left: 8px;
+  color: var(--success);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.cmp-archive-bad {
+  margin-left: 8px;
+  color: var(--warning);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.cmp-archive-issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cmp-archive-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  background: var(--warning-soft);
+  font-size: 12px;
+}
+
+.cmp-archive-msg {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+.cmp-archive-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-size: 11px;
 }
 
 @keyframes spin {

@@ -213,7 +213,7 @@ export function LyricsPanel({
           <button
             className="link-btn"
             disabled={!hasEmbedded || saving}
-            title="把内嵌歌词导出为同目录 .lrc 文件"
+            title="把内嵌歌词导出为 .lrc 文件"
             onClick={() => void convert("export")}
           >
             <FileOutput size={13} /> 内嵌 → 外挂
@@ -346,8 +346,8 @@ export function LyricsPanel({
               disabled={candId == null || saving || !previewText}
               title={
                 hasSidecar
-                  ? "替换同目录同名 .lrc（推荐，兼容性好，不动音频文件）"
-                  : "写入同目录同名 .lrc（推荐，兼容性好，不动音频文件）"
+                  ? "替换外挂 .lrc（推荐，兼容性好，不动音频文件）"
+                  : "写入外挂 .lrc（推荐，兼容性好，不动音频文件）"
               }
               onClick={() => void save("sidecar")}
             >

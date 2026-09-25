@@ -26,7 +26,7 @@ function isBusy(e) {
   return code === 'EPERM' || code === 'EBUSY'
 }
 
-/** 强杀 AxMusic* / axmusic*（绿色版进程名带版本号，如 AxMusic-v0.0.1） */
+/** 强杀 AxMusic* / axmusic*（绿色版进程名带版本号，如 AxMusic-v0.0.2） */
 function killAxMusic() {
   try {
     execFileSync(

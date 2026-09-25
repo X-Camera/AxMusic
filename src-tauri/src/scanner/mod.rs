@@ -140,13 +140,11 @@ where
     })
 }
 
-/// 外挂歌词 = 与音频文件同目录、同主名、扩展名 .lrc
-pub fn sidecar_lrc_path(path: &Path) -> PathBuf {
-    path.with_extension("lrc")
-}
-
-pub fn sidecar_lrc_exists(path: &Path) -> bool {
-    sidecar_lrc_path(path).is_file()
+/// 外挂歌词 = 库内规范化/stem 命名或音频旁 .lrc（任一存在即算有）
+pub fn sidecar_lrc_exists(path: &Path, artist: &str, title: &str) -> bool {
+    let artist = if artist.is_empty() { None } else { Some(artist) };
+    let title = if title.is_empty() { None } else { Some(title) };
+    crate::lyrics::lrc_exists(path, artist, title)
 }
 
 /// Parse one audio file into a `TrackRow` (path filled by caller).
@@ -199,7 +197,7 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         bit_rate,
         has_cover: false,
         has_lyrics: false,
-        has_lrc: sidecar_lrc_exists(path),
+        has_lrc: false, // 标签读完后更新（需要 artist/title 找规范化命名）
         has_year: false,
         has_mb_id: false,
         tag_status: "unmatched".into(),
@@ -289,6 +287,9 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
             .unwrap_or(&row.filename)
             .to_string();
     }
+
+    // 标签就绪后再查外挂歌词（规范化命名需要 artist/title）
+    row.has_lrc = sidecar_lrc_exists(path, &row.artist, &row.title);
 
     compute_status(&mut row);
     Ok(row)
