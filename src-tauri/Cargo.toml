@@ -53,6 +53,18 @@ encoding_rs = "0.8"
 # 内嵌封面缩略图（管理表）：仅 jpeg/png 解码 + 缩放，保持编译轻量
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
+# 任务栏缩略图工具栏（ITaskbarList3 播放控制按钮）
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Controls",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [profile.release]
 opt-level = 1          # 默认 3,降到 1 编译快一倍+,exe 稍大几 MB 但运行无感
 lto = false            # 默认 "thin",关掉省大量链接时间

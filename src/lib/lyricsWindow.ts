@@ -1,4 +1,4 @@
-import { emitTo, listen } from "@tauri-apps/api/event";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import type { LyricsTarget } from "./types";
@@ -71,22 +71,35 @@ export async function openLyricsWindow(target: LyricsTarget): Promise<void> {
   });
 }
 
-/** 子窗口保存歌词后广播；主窗口/管理页据此刷新 */
+/**
+ * 子窗口保存歌词后广播；主窗口/管理页据此刷新。
+ * 用全局 emit（所有窗口可收），比 emitTo 定向更稳——子窗口关闭竞态时事件不会丢。
+ * Rust 侧写入成功后也会广播同名事件；监听方需容忍短时间重复。
+ */
 export function emitLyricsSaved(target: LyricsTarget): void {
-  void emitTo("main", LYRICS_EVT_SAVED, target);
-  void emitTo(LYRICS_WINDOW_LABEL, LYRICS_EVT_SAVED, target);
+  void emit(LYRICS_EVT_SAVED, target);
 }
 
-/** 订阅歌词已保存（主窗口侧刷新用） */
+/** 订阅歌词已保存（主窗口侧刷新用）。Rust/JS 可能各广播一次，做短去抖避免双刷 */
 export function onLyricsSaved(cb: (t: LyricsTarget) => void): () => void {
   let un: (() => void) | undefined;
   let cancelled = false;
-  void listen<LyricsTarget>(LYRICS_EVT_SAVED, (e) => cb(e.payload)).then((f) => {
+  let timer = 0;
+  void listen<LyricsTarget>(LYRICS_EVT_SAVED, (e) => {
+    if (cancelled) return;
+    window.clearTimeout(timer);
+    const payload = e.payload;
+    timer = window.setTimeout(() => {
+      timer = 0;
+      if (!cancelled) cb(payload);
+    }, 40);
+  }).then((f) => {
     if (cancelled) f();
     else un = f;
   });
   return () => {
     cancelled = true;
+    window.clearTimeout(timer);
     un?.();
   };
 }

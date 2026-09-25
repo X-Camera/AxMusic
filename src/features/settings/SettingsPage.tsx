@@ -19,7 +19,6 @@ import type {
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { BrandMark } from "../../components/BrandMark";
-import { RightDock } from "../../components/RightDock";
 import "./SettingsPage.css";
 
 const REPEAT_MODES: { id: RepeatMode; label: string }[] = [
@@ -321,7 +320,6 @@ export function SettingsPage() {
             <p className="muted">{error ?? "加载中…"}</p>
           </div>
         </div>
-        {sideOpen && <RightDock variant="dock" />}
       </>
     );
   }
@@ -604,13 +602,9 @@ export function SettingsPage() {
             </Section>
         </div>
 
-        {/* 右边栏壳与管理页一致；播放列表/歌词只替换内容 */}
+        {/* 右边栏壳与管理页一致；播放列表/歌词激活时让位（App 常驻 dock 覆盖） */}
         <div className="set-about">
-          {sideOpen ? (
-            <RightDock variant="slot" />
-          ) : (
-            <AboutPanel appInfo={appInfo} paths={paths} />
-          )}
+          {!sideOpen && <AboutPanel appInfo={appInfo} paths={paths} />}
         </div>
       </div>
     </>

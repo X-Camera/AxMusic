@@ -45,6 +45,30 @@ pub fn persist_play_session(state: &AppState) {
 fn emit_player_state(app: &AppHandle, snap: &PlayerSnapshot) {
     let _ = app.emit("player://state", snap);
     play_session::save_from_snapshot(snap);
+    crate::play_ui::sync_play_ui(app, snap.status == crate::player::PlayStatus::Playing);
+}
+
+/// 托盘 / 任务栏缩略图共用的播放控制入口：与 IPC player_toggle / next / prev 同源。
+pub fn control_player(app: &AppHandle, action: &str) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let Ok(mut player) = state.player.lock() else {
+        return;
+    };
+    match action {
+        "play_pause" => player.engine.play_pause(),
+        "next" => {
+            let _ = player.next();
+        }
+        "prev" => {
+            let _ = player.prev();
+        }
+        _ => return,
+    }
+    let snap = player.snapshot();
+    drop(player);
+    emit_player_state(app, &snap);
 }
 
 fn require_db<'a>(
@@ -789,7 +813,10 @@ fn build_library_dest(root: &Path, row: &TrackRow, src: &Path) -> PathBuf {
 // ── player ────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerSnapshot, String> {
+pub fn get_player_state(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PlayerSnapshot, String> {
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     // auto-advance tick
     let advanced = player.tick();
@@ -798,6 +825,8 @@ pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerSnapshot, St
     if advanced.is_some() {
         play_session::save_from_snapshot(&snap);
     }
+    // 播完停住等场景托盘/任务栏文案跟上（内部状态没变时是无操作）
+    crate::play_ui::sync_play_ui(&app, snap.status == crate::player::PlayStatus::Playing);
     Ok(snap)
 }
 
@@ -1463,7 +1492,23 @@ pub async fn lyrics_save(
         rescan_track_row(&state, &path_buf);
         let _ = app.emit("library://changed", id);
     }
+    emit_lyrics_saved(&app, tid, &path_buf);
     Ok(desc)
+}
+
+/// 歌词写入成功后广播（主窗口歌词格/管理表/满窗据此刷新）。
+/// 由 Rust 发出比子窗口 JS emit 可靠——保存后立刻关窗也不丢事件。
+fn emit_lyrics_saved(app: &AppHandle, tid: Option<i64>, path: &Path) {
+    let _ = app.emit(
+        "lyrics://saved",
+        serde_json::json!({
+            "id": tid.unwrap_or(0),
+            "path": path.to_string_lossy(),
+            "title": "",
+            "artist": "",
+            "filename": "",
+        }),
+    );
 }
 
 /// Export embedded lyrics → sidecar .lrc（内嵌转外挂）.
@@ -1484,6 +1529,7 @@ pub fn lyrics_export_sidecar(
         rescan_track_row(&state, &path_buf);
         let _ = app.emit("library://changed", id);
     }
+    emit_lyrics_saved(&app, tid, &path_buf);
     Ok(format!("已导出到 {}", dest.display()))
 }
 
@@ -1515,6 +1561,7 @@ pub fn lyrics_embed_sidecar(
         rescan_track_row(&state, &path_buf);
         let _ = app.emit("library://changed", id);
     }
+    emit_lyrics_saved(&app, tid, &path_buf);
     Ok("已内嵌到文件标签（外挂 .lrc 保留未删）".into())
 }
 

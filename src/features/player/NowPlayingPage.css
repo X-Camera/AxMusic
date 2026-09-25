@@ -774,13 +774,13 @@
   margin-top: 0.25em;
 }
 
-/* 主界面歌词跟主题（满窗固定白字叠封面氛围） */
+/* 主界面歌词跟主题（满窗固定白字叠封面氛围）；墨色走 lyrics token，浅色不发硬 */
 .side-lyrics .np-lyrics.synced .np-main {
-  color: var(--text-secondary);
+  color: var(--text-lyrics-dim, var(--text-secondary));
 }
 
 .side-lyrics .np-lyrics.synced .np-line.on .np-main {
-  color: var(--text);
+  color: var(--text-lyrics, var(--text));
 }
 
 .side-lyrics .np-lyrics.synced .np-trans {
@@ -788,11 +788,11 @@
 }
 
 .side-lyrics .np-lyrics.synced .np-line.on .np-trans {
-  color: var(--text-secondary);
+  color: var(--text-lyrics-dim, var(--text-secondary));
 }
 
 .side-lyrics .np-line.plain .np-main {
-  color: var(--text-secondary);
+  color: var(--text-lyrics-dim, var(--text-secondary));
 }
 
 .side-lyrics .np-lyrics.synced .np-line:hover {

@@ -12,8 +12,8 @@ import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import { findLrcIndex, type LrcLine } from "../lrc";
 import { POS_Y_PARAMS, SCALE_PARAMS, Spring } from "./spring";
 
-/** 焦点行中心对齐容器高度的比例（焦点略偏上，非正中） */
-const ALIGN_POS = 0.35;
+/** 焦点行中心对齐容器高度的比例（中间略偏上） */
+const ALIGN_POS = 0.42;
 /** 阶梯级联：首行延迟 50ms 起，当前句之后每行衰减 ÷1.05 */
 const STAGGER_BASE_S = 0.05;
 const STAGGER_DECAY = 1 / 1.05;

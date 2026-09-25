@@ -29,7 +29,12 @@ export function SideLyrics() {
   const posMs = player?.position_ms ?? 0;
   const playing = player?.status === "Playing";
 
-  const [info, setInfo] = useState<LyricsCurrent | null>(null);
+  const [lyricState, setLyricState] = useState<{
+    path: string;
+    info: LyricsCurrent | null;
+  }>({ path: "", info: null });
+  /** 渲染期派生：path 一变立刻视为空歌词，避免旧歌词残影/飞入叠在新歌上 */
+  const info = lyricState.path === path ? lyricState.info : null;
   const [prefer, setPrefer] = useState<LyricsPrefer>("sidecar");
   /** 主界面歌词显示参数（设置页「主界面歌词」/ 右键「歌词样式」） */
   const [disp, setDisp] = useState({
@@ -67,7 +72,7 @@ export function SideLyrics() {
   // 切歌拉歌词
   useEffect(() => {
     let cancelled = false;
-    setInfo(null);
+    setLyricState({ path, info: null });
     setTrackGen((g) => g + 1);
     lastPathRef.current = path;
     lastPosRef.current = 0;
@@ -75,10 +80,10 @@ export function SideLyrics() {
     void api
       .lyricsCurrent(null, path)
       .then((cur) => {
-        if (!cancelled) setInfo(cur);
+        if (!cancelled) setLyricState({ path, info: cur });
       })
       .catch(() => {
-        if (!cancelled) setInfo({ embedded: null, sidecar: null });
+        if (!cancelled) setLyricState({ path, info: { embedded: null, sidecar: null } });
       });
     return () => {
       cancelled = true;
@@ -88,10 +93,15 @@ export function SideLyrics() {
   // 搜索歌词子窗口保存后立刻刷新本格
   useEffect(() => {
     if (!path) return;
-    return onLyricsSaved(() => {
+    return onLyricsSaved((t) => {
+      if (t.path && t.path !== path) return;
       void api
         .lyricsCurrent(null, path)
-        .then((cur) => setInfo(cur))
+        .then((cur) => {
+          setLyricState({ path, info: cur });
+          // 空歌词 → 有歌词：升代强制整表重建，避免引擎停在空态
+          setTrackGen((g) => g + 1);
+        })
         .catch(() => undefined);
     });
   }, [path]);
@@ -189,6 +199,7 @@ export function SideLyrics() {
       </div>
       <div className="side-lyrics-stage" onContextMenu={onContextMenu}>
         <LyricsView
+          key={path || "idle"}
           ref={lyricsViewRef}
           className="side-lyrics-body"
           compact

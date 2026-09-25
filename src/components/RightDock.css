@@ -10,22 +10,13 @@
   border-left: 1px solid var(--border);
 }
 
-/* 浏览页：顶栏下方贴右缘；须低于迷你条，进度圆点骑分界 */
+/* 常驻贴右缘（App 挂载）；管理/设置右栏让位后由本壳覆盖同一槽位 */
 .right-dock-dock {
   position: absolute;
   top: var(--topbar-height);
   right: 0;
   bottom: 0;
   z-index: 1;
-}
-
-/* 管理/设置：填满原槽位，壳已有边框/底色 */
-.right-dock-slot {
-  width: 100%;
-  height: 100%;
-  flex: 1;
-  background: transparent;
-  border-left: none;
 }
 
 .right-dock-pane {

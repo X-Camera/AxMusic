@@ -6,12 +6,14 @@ mod library;
 mod lyrics;
 mod paths;
 mod play_session;
+mod play_ui;
 mod player;
 mod playlists;
 mod scanner;
 mod scraper;
 mod settings;
 mod tagger;
+mod taskbar;
 mod tray;
 
 use std::path::Path;
@@ -86,6 +88,7 @@ pub fn run() {
             };
             app.manage(state);
             tray::init(app)?;
+            taskbar::init(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {

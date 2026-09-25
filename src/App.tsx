@@ -26,7 +26,8 @@ export default function App() {
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
   const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
   const sideOpen = queuePanelOpen || lyricsPanelOpen;
-  const showDock = sideOpen && !QUEUE_SLOT_ROUTES.has(route);
+  /** 浏览页挤内容；管理/设置由本页右栏占位，不挤 */
+  const squeeze = sideOpen && !QUEUE_SLOT_ROUTES.has(route);
 
   // 独立「搜索歌词」子窗口：不渲染主壳
   if (isLyricsWindow()) {
@@ -36,7 +37,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <Sidebar />
-      <div className={`main-col${showDock ? " queue-squeeze" : ""}`}>
+      <div className={`main-col${squeeze ? " queue-squeeze" : ""}`}>
         {route === "songs" && <SongsPage />}
         {route === "albums" && <AlbumWallPage />}
         {route === "manage" && <ManagePage />}
@@ -44,7 +45,8 @@ export default function App() {
         {route === "folders" && <FoldersPage />}
         {route === "playlists" && <PlaylistsPage />}
         {route === "settings" && <SettingsPage />}
-        {showDock && <RightDock variant="dock" />}
+        {/* 常驻挂载：切页不卸载歌词/队列，避免重载飞入 */}
+        {sideOpen && <RightDock />}
       </div>
       <MiniPlayer />
       {fullPlayer && <NowPlayingPage />}

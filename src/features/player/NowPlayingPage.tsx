@@ -72,7 +72,12 @@ export function NowPlayingPage() {
   const dur = Math.max(player?.duration_ms ?? track?.duration_ms ?? 0, 1);
   const playing = player?.status === "Playing";
 
-  const [info, setInfo] = useState<MediaInfo | null>(null);
+  const [mediaState, setMediaState] = useState<{
+    path: string;
+    info: MediaInfo | null;
+  }>({ path: "", info: null });
+  /** 渲染期派生：path 一变立刻清空，避免旧封面/旧歌词残影 */
+  const info = mediaState.path === path ? mediaState.info : null;
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
   const [closing, setClosing] = useState(false);
@@ -96,10 +101,10 @@ export function NowPlayingPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setInfo(null);
+    setMediaState({ path, info: null });
     if (!path) return;
     void api.trackMediaInfo(path).then((m) => {
-      if (!cancelled) setInfo(m);
+      if (!cancelled) setMediaState({ path, info: m });
     });
     return () => {
       cancelled = true;
@@ -233,6 +238,35 @@ export function NowPlayingPage() {
 
   const lyricsViewRef = useRef<LyricsViewHandle>(null);
 
+  function requestClose() {
+    if (closing) return;
+    setClosing(true);
+    // 真全屏是播放页专属状态，缩回主界面时一并退出（主界面没有退出入口）
+    void appWindow.isFullscreen().then((f) => {
+      if (f) void appWindow.setFullscreen(false);
+    });
+    window.setTimeout(() => setFullPlayer(false), 280);
+  }
+
+  /** 空白处双击 ↔ 真全屏（覆盖任务栏）；交互元素（歌词/按钮/进度条/弹层等）不触发 */
+  function onStageDoubleClick(e: React.MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (t.closest("button, input, .np-lyrics, .np-seek, .np-window-controls")) return;
+    void appWindow.isFullscreen().then((f) => void appWindow.setFullscreen(!f));
+  }
+
+  // Esc 退出真全屏（惯例，与浏览器/播放器一致）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      void appWindow.isFullscreen().then((f) => {
+        if (f) void appWindow.setFullscreen(false);
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /** 点击句子：跳转（闪光由 LyricsView 负责） */
   function seekToLine(_i: number, ms: number) {
     void commitSeek(ms);
@@ -274,40 +308,16 @@ export function NowPlayingPage() {
     }
   }, [pos, seeking]);
 
-  function requestClose() {
-    if (closing) return;
-    setClosing(true);
-    // 真全屏是播放页专属状态，缩回主界面时一并退出（主界面没有退出入口）
-    void appWindow.isFullscreen().then((f) => {
-      if (f) void appWindow.setFullscreen(false);
-    });
-    window.setTimeout(() => setFullPlayer(false), 280);
-  }
-
-  /** 空白处双击 ↔ 真全屏（覆盖任务栏）；交互元素（歌词/按钮/进度条/弹层等）不触发 */
-  function onStageDoubleClick(e: React.MouseEvent) {
-    const t = e.target as HTMLElement;
-    if (t.closest("button, input, .np-lyrics, .np-seek, .np-window-controls")) return;
-    void appWindow.isFullscreen().then((f) => void appWindow.setFullscreen(!f));
-  }
-
-  // Esc 退出真全屏（惯例，与浏览器/播放器一致）
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      void appWindow.isFullscreen().then((f) => {
-        if (f) void appWindow.setFullscreen(false);
-      });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   // 歌词子窗口保存后刷新当前曲目歌词
   useEffect(() => {
     if (!path) return;
-    return onLyricsSaved(() => {
-      void api.trackMediaInfo(path).then((m) => setInfo(m));
+    return onLyricsSaved((t) => {
+      if (t.path && t.path !== path) return;
+      void api.trackMediaInfo(path).then((m) => {
+        setMediaState({ path, info: m });
+        // 空歌词 → 有歌词：升代强制整表重建
+        setTrackGen((g) => g + 1);
+      });
     });
   }, [path]);
 
@@ -470,6 +480,7 @@ export function NowPlayingPage() {
 
         <section className="np-right">
           <LyricsView
+            key={path || "idle"}
             ref={lyricsViewRef}
             lines={lines}
             plain={plain}

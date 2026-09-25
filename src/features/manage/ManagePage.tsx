@@ -13,7 +13,6 @@ import { ComparePanel } from "./ComparePanel";
 import { StatsPanel } from "./StatsPanel";
 import { ScrapeWizard } from "./ScrapeWizard";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
-import { RightDock } from "../../components/RightDock";
 import "./ManagePage.css";
 
 const TRACKS_LIMIT = 2000;
@@ -204,7 +203,6 @@ export function ManagePage() {
         <div className={`page-scroll${sideOpen ? " queue-squeeze-self" : ""}`}>
           <div className="empty-state">加载中…</div>
         </div>
-        {sideOpen && <RightDock variant="dock" />}
       </>
     );
   }
@@ -230,7 +228,6 @@ export function ManagePage() {
           </div>
           {error && <div className="error-line">{error}</div>}
         </div>
-        {sideOpen && <RightDock variant="dock" />}
       </>
     );
   }
@@ -378,11 +375,9 @@ export function ManagePage() {
           </div>
         </div>
 
-        {/* 播放列表/歌词激活时只替换右边栏内容，不另外挤压 */}
+        {/* 播放列表/歌词激活时右栏让位（App 常驻 dock 覆盖），本栏只留占位宽度 */}
         <div className="manage-side">
-          {sideOpen ? (
-            <RightDock variant="slot" />
-          ) : (
+          {!sideOpen && (
             <>
               <div className="manage-side-scroll">
                 {compareId != null ? (
