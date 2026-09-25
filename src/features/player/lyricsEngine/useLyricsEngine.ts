@@ -1,5 +1,5 @@
 /**
- * Apple Music 式歌词视图引擎（参考 amll 项目移植，按本项目行级 LRC 简化）。
+ * 同步歌词视图引擎（Apple Music 式观感；参考 amll，按本项目行级 LRC 简化）。
  *
  * 模型：行绝对定位，引擎每帧直写 style（不经 React 重渲染）——
  *   外层 .np-line      translateY（posY 弹簧）+ opacity/filter（CSS .4s 过渡平滑）
@@ -12,7 +12,7 @@ import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import { findLrcIndex, type LrcLine } from "../lrc";
 import { POS_Y_PARAMS, SCALE_PARAMS, Spring } from "./spring";
 
-/** 焦点行中心对齐容器高度的比例（AMLL 默认 0.35，非正中） */
+/** 焦点行中心对齐容器高度的比例（焦点略偏上，非正中） */
 const ALIGN_POS = 0.35;
 /** 阶梯级联：首行延迟 50ms 起，当前句之后每行衰减 ÷1.05 */
 const STAGGER_BASE_S = 0.05;
@@ -26,7 +26,7 @@ const INTENT_PX = 4;
 const INERTIA_MIN_V = 0.05; // px/ms
 const INERTIA_FRICTION = 0.95;
 const MAX_FRAME_S = 0.1; // 挂起恢复首帧防过冲
-/** 距离模糊：1+行距，封顶 5px；窗口 ≤1024px 打八折（照抄 AMLL） */
+/** 距离模糊：1+行距，封顶 5px；窗口 ≤1024px 打八折 */
 const BLUR_MAX = 5;
 const NARROW_WIDTH = 1024;
 
@@ -80,7 +80,7 @@ function freshState(): EngineState {
   };
 }
 
-export interface UseAmllLyricsOpts {
+export interface UseLyricsEngineOpts {
   lines: LrcLine[];
   synced: boolean;
   /** 播放时钟（含 scrub 预览与轮询间隙外推），由父组件提供 */
@@ -91,9 +91,11 @@ export interface UseAmllLyricsOpts {
   layoutKey?: string;
   /** 切歌/单曲循环重播：即使 lines 引用未变也整表重建，避免旧 DOM 残影叠加 */
   rebuildKey?: string;
+  /** 距离模糊上限（px）。小字号容器请调低，默认 5 */
+  maxBlur?: number;
 }
 
-export function useAmllLyrics(opts: UseAmllLyricsOpts) {
+export function useLyricsEngine(opts: UseLyricsEngineOpts) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeIdx, setActiveIdx] = useState(-1);
   const stRef = useRef<EngineState>(freshState());
@@ -172,12 +174,12 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
     st.suspended = false;
     st.interacting = "none";
     st.drag = null;
-    // seek 后那一两帧不做阶梯延迟（AMLL: Reason.Seek 禁用级联）
+    // seek 后那一两帧不做阶梯延迟（seek 后禁用级联）
     st.noStaggerFrames = 2;
     containerRef.current?.classList.remove("grabbing");
   }
 
-  // 歌词变化：重建弹簧与测量，行从底部远处飞入（AMLL 载入签名动效）
+  // 歌词变化：重建弹簧与测量，行从底部远处飞入（载入飞入）
   useLayoutEffect(() => {
     const st = stRef.current;
     st.measured = false;
@@ -211,7 +213,7 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
     const base = st.boxH * ALIGN_POS - (st.prefix[focus] + st.heights[focus] / 2);
     st.springs = linesKey.map((_, i) => {
       const s = new Spring(0, POS_Y_PARAMS);
-      // 正常：从底部远处弹簧飞入（AMLL 载入签名动效）；减少动态：直接到位
+      // 正常：从底部远处弹簧飞入（载入飞入）；减少动态：直接到位
       const start = st.reducedMotion ? base + st.prefix[i] : st.boxH * 1.5 + i * 40;
       s.setPosition(start);
       const el = st.els[i];
@@ -425,12 +427,12 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
       const base = H * ALIGN_POS - focalCenter - st.offset;
 
       const continuous = st.interacting === "drag" || st.interacting === "inertia";
-      // 只有纯播放推进才开阶梯级联；滚轮/拖拽/seek 后都禁用（AMLL 的 LayoutReason 策略）
+      // 只有纯播放推进才开阶梯级联；滚轮/拖拽/seek 后都禁用
       const stagger = st.interacting === "none" && st.noStaggerFrames <= 0 && !st.reducedMotion;
       if (st.noStaggerFrames > 0) st.noStaggerFrames--;
 
       const narrow = window.innerWidth <= NARROW_WIDTH;
-      const blurBase = continuous ? 0 : -1; // 拖拽/惯性中全部去模糊（AMLL 触摸行为）
+      const blurBase = continuous ? 0 : -1; // 拖拽/惯性中全部去模糊
 
       let delay = 0;
       let stepDelay = stagger ? STAGGER_BASE_S : 0;
@@ -467,12 +469,13 @@ export function useAmllLyrics(opts: UseAmllLyricsOpts) {
           if (inner) inner.style.transform = `scale(${s.toFixed(4)})`;
         }
 
-        // 距离模糊：焦点 0，其余 1+行距封顶 5px；拖拽中全 0；窄窗八折
+        // 距离模糊：焦点 0，其余 1+行距封顶 maxBlur；拖拽中全 0；窄窗八折
         let blur: number;
         if (blurBase === 0 || i === idx) blur = 0;
         else {
           const dist = Math.abs(i - Math.max(0, idx));
-          blur = Math.min(BLUR_MAX, 1 + dist) * (narrow ? 0.8 : 1);
+          const maxBlur = optsRef.current.maxBlur ?? BLUR_MAX;
+          blur = Math.min(maxBlur, 1 + dist) * (narrow ? 0.8 : 1);
         }
         if (Math.abs(blur - st.lastBlur[i]) >= 0.05 || Number.isNaN(st.lastBlur[i])) {
           st.lastBlur[i] = blur;

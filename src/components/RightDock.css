@@ -1,0 +1,47 @@
+/* 右边栏壳：管理/设置/播放列表/歌词共用 --panel-width */
+.right-dock {
+  width: var(--panel-width);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+}
+
+/* 浏览页：顶栏下方贴右缘；须低于迷你条，进度圆点骑分界 */
+.right-dock-dock {
+  position: absolute;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+/* 管理/设置：填满原槽位，壳已有边框/底色 */
+.right-dock-slot {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  background: transparent;
+  border-left: none;
+}
+
+.right-dock-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 上下等分：上播放列表、下歌词 */
+.right-dock-pane.split {
+  flex: 1 1 50%;
+  height: 50%;
+}
+
+.right-dock-pane.split:first-child {
+  border-bottom: 1px solid var(--border);
+}

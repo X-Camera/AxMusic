@@ -1,7 +1,7 @@
 /**
- * 弹簧物理 — 移植自 amll 参考项目 utils/spring.ts（MIT，原案 pushkine）。
- * 解析解求解器：setTarget 后位置是时间的闭式函数，无需逐步积分，跳帧不失稳。
- * 秒制 float；速度用数值差分接续（替代原项目的解析导数，等效且更省）。
+ * 弹簧物理 — 解析解求解器（参考 amll / pushkine，MIT）。
+ * setTarget 后位置是时间的闭式函数，无需逐步积分，跳帧不失稳。
+ * 秒制 float；速度用数值差分接续。
  */
 
 export interface SpringParams {

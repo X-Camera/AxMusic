@@ -135,7 +135,7 @@
   align-items: center;
 }
 
-/* ── 左：封面 + 曲目 + 控制（随视口缩放，AMLL 同款 min(50vh, 38vw) 无像素硬顶） ── */
+/* ── 左：封面 + 曲目 + 控制（随视口缩放，视口比例 min(50vh, 38vw) 无像素硬顶） ── */
 .np-left {
   display: flex;
   flex-direction: column;
@@ -648,27 +648,27 @@
 }
 
 /* ── 同步歌词：AM 引擎排版 ── */
-.np-lyrics.amll {
+.np-lyrics.synced {
   overflow: hidden;
   cursor: grab;
   /* 纵向手势交给引擎（拖拽浏览歌词），横向保留 */
   touch-action: pan-x;
   /* 行内 em 基准：行 padding/副行字号都随主句字号缩放；
-     AMLL 同款 max(5vh, 2.5vw) 视口比例公式 × 设置缩放，不封顶——4K 下歌词一样大 */
+     max(5vh, 2.5vw) 视口比例 × 设置缩放，不封顶——4K 下歌词一样大 */
   font-size: calc(max(max(5vh, 2.5vw), 20px) * var(--lyrics-scale));
 }
 
-.np-lyrics.amll.grabbing {
+.np-lyrics.synced.grabbing {
   cursor: grabbing;
 }
 
 /* 引擎测量完成前先藏行：避免无 transform 的行叠在 top:0，和旧歌词残影搅在一起 */
-.np-lyrics.amll:not([data-lyrics-ready="1"]) > .np-line {
+.np-lyrics.synced:not([data-lyrics-ready="1"]) > .np-line {
   opacity: 0 !important;
   filter: none !important;
 }
 
-.np-lyrics.amll .np-line {
+.np-lyrics.synced .np-line {
   position: absolute;
   top: 0;
   left: 0;
@@ -680,7 +680,7 @@
   text-align: left;
   cursor: pointer;
   will-change: transform;
-  /* 模糊/透明由引擎写目标值，这里负责平滑（AMLL 同为 0.4s） */
+  /* 模糊/透明由引擎写目标值，这里负责平滑（0.4s） */
   transition: opacity 0.4s ease, filter 0.4s ease, background-color 0.25s ease;
 }
 
@@ -699,20 +699,20 @@
   opacity: 1;
 }
 
-/* 悬停歌词区：全部去模糊便于阅读；行 hover 圆角底色（照抄 AMLL） */
-.np-lyrics.amll:hover .np-line {
+/* 悬停歌词区：全部去模糊便于阅读；行 hover 圆角底色 */
+.np-lyrics.synced:hover .np-line {
   filter: none !important;
 }
 
-.np-lyrics.amll .np-line:hover {
+.np-lyrics.synced .np-line:hover {
   background-color: rgba(255, 255, 255, 0.08);
 }
 
-.np-lyrics.amll .np-line:active {
+.np-lyrics.synced .np-line:active {
   background-color: rgba(255, 255, 255, 0.04);
 }
 
-.np-lyrics.amll .np-main {
+.np-lyrics.synced .np-main {
   font-family: var(--lyrics-font);
   font-size: 1em;
   font-weight: 700;
@@ -721,11 +721,11 @@
   color: rgba(255, 255, 255, 0.92);
 }
 
-.np-lyrics.amll .np-line.on .np-main {
+.np-lyrics.synced .np-line.on .np-main {
   color: #fff;
 }
 
-.np-lyrics.amll .np-trans {
+.np-lyrics.synced .np-trans {
   margin-top: 0.35em;
   font-family: var(--lyrics-font);
   font-size: 0.5em;
@@ -734,8 +734,92 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
-.np-lyrics.amll .np-line.on .np-trans {
+.np-lyrics.synced .np-line.on .np-trans {
   color: rgba(255, 255, 255, 0.78);
+}
+
+/* 边栏紧凑版：同一套动效；字号缩小、居中对齐、渐隐更浅 */
+.np-lyrics.synced.compact {
+  --lyrics-base: 15px;
+  font-size: calc(var(--lyrics-base) * var(--lyrics-scale));
+}
+
+.np-lyrics.synced.compact .np-line {
+  padding: calc(0.22em * var(--lyrics-lh)) 10px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.np-lyrics.synced.compact .np-line-inner {
+  transform-origin: center center;
+  width: 100%;
+}
+
+.np-lyrics.compact .np-line-spacer {
+  height: 28%;
+  min-height: 36px;
+}
+
+.np-lyrics.compact .np-lines {
+  gap: calc(12px * var(--lyrics-lh) / 1.25);
+  padding: 0 6px;
+}
+
+.np-lyrics.compact .np-line.plain .np-main {
+  font-size: calc(13px * var(--lyrics-scale));
+  text-align: center;
+}
+
+.np-lyrics.compact .np-trans {
+  margin-top: 0.25em;
+}
+
+/* 主界面歌词跟主题（满窗固定白字叠封面氛围） */
+.side-lyrics .np-lyrics.synced .np-main {
+  color: var(--text-secondary);
+}
+
+.side-lyrics .np-lyrics.synced .np-line.on .np-main {
+  color: var(--text);
+}
+
+.side-lyrics .np-lyrics.synced .np-trans {
+  color: var(--text-tertiary);
+}
+
+.side-lyrics .np-lyrics.synced .np-line.on .np-trans {
+  color: var(--text-secondary);
+}
+
+.side-lyrics .np-line.plain .np-main {
+  color: var(--text-secondary);
+}
+
+.side-lyrics .np-lyrics.synced .np-line:hover {
+  background-color: var(--bg-hover);
+}
+
+.side-lyrics .np-lyrics.synced .np-line:active {
+  background-color: var(--bg-card);
+}
+
+.side-lyrics .np-lyrics-empty {
+  color: var(--text-tertiary);
+}
+
+.side-lyrics .np-lyrics-search-btn {
+  border-color: var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.side-lyrics .np-lyrics-search-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 /* 点句跳转：短促发光反馈 */
@@ -769,7 +853,7 @@
   }
 
   /* 窄窗歌词列矮，字号改成随宽度走，避免只剩两三行 */
-  .np-lyrics.amll {
+  .np-lyrics.synced {
     font-size: calc(clamp(20px, 5vw, 32px) * var(--lyrics-scale));
   }
 }

@@ -160,6 +160,15 @@ pub struct AppSettings {
     /// 满窗歌词行间距（主句 line-height，1.0..=2.0）
     #[serde(default = "default_lyrics_line_height")]
     pub lyrics_line_height: f32,
+    /// 主界面歌词字号缩放（0.75..=1.5，与满窗分开）
+    #[serde(default = "default_lyrics_font_scale")]
+    pub side_lyrics_font_scale: f32,
+    /// 主界面歌词字体
+    #[serde(default)]
+    pub side_lyrics_font: LyricsFont,
+    /// 主界面歌词行间距（1.0..=2.0）
+    #[serde(default = "default_lyrics_line_height")]
+    pub side_lyrics_line_height: f32,
     /// 歌曲页默认视图
     #[serde(default)]
     pub songs_view: SongsView,
@@ -205,6 +214,9 @@ impl Default for AppSettings {
             lyrics_font_scale: default_lyrics_font_scale(),
             lyrics_font: LyricsFont::default(),
             lyrics_line_height: default_lyrics_line_height(),
+            side_lyrics_font_scale: default_lyrics_font_scale(),
+            side_lyrics_font: LyricsFont::default(),
+            side_lyrics_line_height: default_lyrics_line_height(),
             songs_view: SongsView::default(),
             close_behavior: CloseBehavior::default(),
             theme_mode: ThemeMode::default(),

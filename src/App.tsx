@@ -1,6 +1,6 @@
 import { CloseDialog } from "./components/CloseDialog";
 import { MiniPlayer } from "./components/MiniPlayer";
-import { QueuePanel } from "./components/QueuePanel";
+import { RightDock } from "./components/RightDock";
 import { Sidebar } from "./components/Sidebar";
 import { AlbumWallPage } from "./features/browse/AlbumWallPage";
 import { ArtistsPage } from "./features/browse/ArtistsPage";
@@ -24,7 +24,9 @@ export default function App() {
   const route = useApp((s) => s.route);
   const fullPlayer = useApp((s) => s.fullPlayer);
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
-  const showDockQueue = queuePanelOpen && !QUEUE_SLOT_ROUTES.has(route);
+  const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
+  const sideOpen = queuePanelOpen || lyricsPanelOpen;
+  const showDock = sideOpen && !QUEUE_SLOT_ROUTES.has(route);
 
   // 独立「搜索歌词」子窗口：不渲染主壳
   if (isLyricsWindow()) {
@@ -34,7 +36,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <Sidebar />
-      <div className={`main-col${showDockQueue ? " queue-squeeze" : ""}`}>
+      <div className={`main-col${showDock ? " queue-squeeze" : ""}`}>
         {route === "songs" && <SongsPage />}
         {route === "albums" && <AlbumWallPage />}
         {route === "manage" && <ManagePage />}
@@ -42,7 +44,7 @@ export default function App() {
         {route === "folders" && <FoldersPage />}
         {route === "playlists" && <PlaylistsPage />}
         {route === "settings" && <SettingsPage />}
-        {showDockQueue && <QueuePanel variant="dock" />}
+        {showDock && <RightDock variant="dock" />}
       </div>
       <MiniPlayer />
       {fullPlayer && <NowPlayingPage />}

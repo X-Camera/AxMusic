@@ -13,7 +13,7 @@ import { ComparePanel } from "./ComparePanel";
 import { StatsPanel } from "./StatsPanel";
 import { ScrapeWizard } from "./ScrapeWizard";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
-import { QueuePanel } from "../../components/QueuePanel";
+import { RightDock } from "../../components/RightDock";
 import "./ManagePage.css";
 
 const TRACKS_LIMIT = 2000;
@@ -21,7 +21,10 @@ const TRACKS_LIMIT = 2000;
 export function ManagePage() {
   const playQueue = useApp((s) => s.playQueue);
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
+  const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
   const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
+  const setLyricsPanelOpen = useApp((s) => s.setLyricsPanelOpen);
+  const sideOpen = queuePanelOpen || lyricsPanelOpen;
   const [root, setRoot] = useState<LibraryRoot | null | undefined>(undefined);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [missingOnly, setMissingOnly] = useState(false);
@@ -198,10 +201,10 @@ export function ManagePage() {
     return (
       <>
         <TopBar title="管理" />
-        <div className={`page-scroll${queuePanelOpen ? " queue-squeeze-self" : ""}`}>
+        <div className={`page-scroll${sideOpen ? " queue-squeeze-self" : ""}`}>
           <div className="empty-state">加载中…</div>
         </div>
-        {queuePanelOpen && <QueuePanel variant="dock" />}
+        {sideOpen && <RightDock variant="dock" />}
       </>
     );
   }
@@ -210,7 +213,7 @@ export function ManagePage() {
     return (
       <>
         <TopBar title="管理" />
-        <div className={`page-scroll${queuePanelOpen ? " queue-squeeze-self" : ""}`}>
+        <div className={`page-scroll${sideOpen ? " queue-squeeze-self" : ""}`}>
           <h2 className="display">设置库目录</h2>
           <p className="muted" style={{ maxWidth: 520, marginTop: -8 }}>
             洗库只面向库目录。新建一个文件夹，或选择已有音乐文件夹作为库根并初始化。之后手动放入音频，再「刷新扫描」。
@@ -227,7 +230,7 @@ export function ManagePage() {
           </div>
           {error && <div className="error-line">{error}</div>}
         </div>
-        {queuePanelOpen && <QueuePanel variant="dock" />}
+        {sideOpen && <RightDock variant="dock" />}
       </>
     );
   }
@@ -288,8 +291,11 @@ export function ManagePage() {
         <div
           className="manage-main"
           onPointerDown={() => {
-            // 点左侧区域：收起播放列表，恢复本页右边栏
-            if (queuePanelOpen) setQueuePanelOpen(false);
+            // 点左侧区域：收起播放列表/歌词，恢复本页右边栏
+            if (sideOpen) {
+              setQueuePanelOpen(false);
+              setLyricsPanelOpen(false);
+            }
           }}
         >
           <div className="manage-toolbar">
@@ -372,10 +378,10 @@ export function ManagePage() {
           </div>
         </div>
 
-        {/* 播放列表激活时只替换右边栏内容，不另外挤压 */}
+        {/* 播放列表/歌词激活时只替换右边栏内容，不另外挤压 */}
         <div className="manage-side">
-          {queuePanelOpen ? (
-            <QueuePanel variant="slot" />
+          {sideOpen ? (
+            <RightDock variant="slot" />
           ) : (
             <>
               <div className="manage-side-scroll">

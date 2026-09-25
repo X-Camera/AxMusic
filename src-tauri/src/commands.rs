@@ -144,6 +144,9 @@ pub struct SettingsPatch {
     pub lyrics_font_scale: Option<f32>,
     pub lyrics_font: Option<crate::settings::LyricsFont>,
     pub lyrics_line_height: Option<f32>,
+    pub side_lyrics_font_scale: Option<f32>,
+    pub side_lyrics_font: Option<crate::settings::LyricsFont>,
+    pub side_lyrics_line_height: Option<f32>,
     pub songs_view: Option<crate::settings::SongsView>,
     pub close_behavior: Option<crate::settings::CloseBehavior>,
     pub theme_mode: Option<crate::settings::ThemeMode>,
@@ -202,6 +205,15 @@ pub fn update_settings(
     }
     if let Some(v) = patch.lyrics_line_height {
         guard.lyrics_line_height = v.clamp(1.0, 2.0);
+    }
+    if let Some(v) = patch.side_lyrics_font_scale {
+        guard.side_lyrics_font_scale = v.clamp(0.75, 1.5);
+    }
+    if let Some(f) = patch.side_lyrics_font {
+        guard.side_lyrics_font = f;
+    }
+    if let Some(v) = patch.side_lyrics_line_height {
+        guard.side_lyrics_line_height = v.clamp(1.0, 2.0);
     }
     if let Some(v) = patch.songs_view {
         guard.songs_view = v;

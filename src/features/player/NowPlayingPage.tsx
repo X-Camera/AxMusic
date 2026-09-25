@@ -12,7 +12,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -31,9 +31,9 @@ import {
 import { WindowControls } from "../../components/WindowControls";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { useApp } from "../../state/useApp";
-import { useAmllLyrics } from "./amll/useAmllLyrics";
+import { LyricsView, type LyricsViewHandle } from "./LyricsView";
 import { LyricsStyleDialog } from "./LyricsStyleDialog";
-import { pickLyrics, type LrcLine } from "./lrc";
+import { pickLyrics } from "./lrc";
 import "./NowPlayingPage.css";
 
 const appWindow = getCurrentWindow();
@@ -78,10 +78,8 @@ export function NowPlayingPage() {
   const [closing, setClosing] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [styleOpen, setStyleOpen] = useState(false);
-  const [flashIdx, setFlashIdx] = useState(-1);
   /** 曲目代数：切歌 / 单曲循环重播时 +1，强制歌词 DOM 与引擎整表重建 */
   const [trackGen, setTrackGen] = useState(0);
-  const flashTimerRef = useRef(0);
   const lastPosForGenRef = useRef(0);
   /** 播放中用基准时间外推，填补 500ms 轮询间隙 */
   const clockRef = useRef<PlayClock>(createPlayClock());
@@ -224,7 +222,7 @@ export function NowPlayingPage() {
     setSeekMs(target);
     setSeeking(true);
     reanchorClock(target);
-    resetScroll();
+    resetLyricsScroll();
     try {
       await seek(target);
     } finally {
@@ -233,30 +231,16 @@ export function NowPlayingPage() {
     }
   }
 
-  function flashLine(i: number) {
-    setFlashIdx(i);
-    window.clearTimeout(flashTimerRef.current);
-    flashTimerRef.current = window.setTimeout(() => setFlashIdx(-1), 400);
-  }
+  const lyricsViewRef = useRef<LyricsViewHandle>(null);
 
-  /** 点击句子：闪一下 + 跳转（AM 操作逻辑，由歌词引擎在「未拖动」时回调） */
-  function seekToLine(i: number, ms: number) {
-    flashLine(i);
+  /** 点击句子：跳转（闪光由 LyricsView 负责） */
+  function seekToLine(_i: number, ms: number) {
     void commitSeek(ms);
   }
 
-  const {
-    containerRef: lyricsRef,
-    activeIdx,
-    resetScroll,
-  } = useAmllLyrics({
-    lines,
-    synced,
-    getTimeMs: currentTimeMs,
-    onSeekLine: (i, ms) => seekToLine(i, ms),
-    layoutKey: `${lyricsDisp.fontScale}|${lyricsDisp.font}|${lyricsDisp.lineHeight}`,
-    rebuildKey: `${path}|${trackGen}`,
-  });
+  function resetLyricsScroll() {
+    lyricsViewRef.current?.resetScroll();
+  }
 
   const lyricsStyle = lyricsDisplayVars(lyricsDisp);
 
@@ -273,9 +257,8 @@ export function NowPlayingPage() {
       .catch(() => void 0);
   }
 
-  // 切歌清空行状态 + 升代（强制歌词整表重建）
+  // 切歌升代（强制歌词整表重建）
   useEffect(() => {
-    setFlashIdx(-1);
     setTrackGen((g) => g + 1);
     lastPosForGenRef.current = 0;
   }, [path]);
@@ -290,13 +273,6 @@ export function NowPlayingPage() {
       setTrackGen((g) => g + 1);
     }
   }, [pos, seeking]);
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(flashTimerRef.current);
-    },
-    [],
-  );
 
   function requestClose() {
     if (closing) return;
@@ -493,61 +469,34 @@ export function NowPlayingPage() {
         </section>
 
         <section className="np-right">
-          <div
-            className={`np-lyrics${synced ? " amll" : ""}`}
-            ref={lyricsRef}
+          <LyricsView
+            ref={lyricsViewRef}
+            lines={lines}
+            plain={plain}
+            synced={synced}
+            getTimeMs={currentTimeMs}
+            onSeekLine={seekToLine}
             style={lyricsStyle}
-          >
-            {!track && (
-              <div className="np-lyrics-empty tertiary">从专辑或管理表挑一首开始</div>
-            )}
-            {track && !synced && plain.length === 0 && (
-              <div className="np-lyrics-empty">
-                <button
-                  className="np-lyrics-search-btn"
-                  title="搜索歌词"
-                  aria-label="搜索歌词"
-                  onClick={() => void openLyricsSearch()}
-                >
-                  <Search size={18} strokeWidth={2} />
-                  <span>歌词</span>
-                </button>
-              </div>
-            )}
-            {track && !synced && plain.length > 0 && (
-              <div className="np-lines">
-                <div className="np-line-spacer" aria-hidden />
-                {plain.map((t, i) => (
-                  <div key={`${path}-p${i}`} className="np-line plain">
-                    <div className="np-main">{t}</div>
-                  </div>
-                ))}
-                <div className="np-line-spacer" aria-hidden />
-              </div>
-            )}
-            {synced && (
-              <Fragment key={`${path}-${trackGen}`}>
-                {lines.map((l: LrcLine, i) => {
-                  const on = i === activeIdx;
-                  const state = on ? "on" : i < activeIdx ? "past" : "next";
-                  return (
-                    <div
-                      key={`${path}-${l.timeMs}-${i}`}
-                      data-i={i}
-                      className={["np-line", state, flashIdx === i ? "flash" : ""]
-                        .filter(Boolean)
-                        .join(" ")}
-                    >
-                      <div className="np-line-inner">
-                        <div className="np-main">{l.text || "⋯"}</div>
-                        {l.trans ? <div className="np-trans">{l.trans}</div> : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </Fragment>
-            )}
-          </div>
+            layoutKey={`${lyricsDisp.fontScale}|${lyricsDisp.font}|${lyricsDisp.lineHeight}`}
+            rebuildKey={`${path}|${trackGen}`}
+            empty={
+              !track ? (
+                <div className="np-lyrics-empty tertiary">从专辑或管理表挑一首开始</div>
+              ) : !synced && plain.length === 0 ? (
+                <div className="np-lyrics-empty">
+                  <button
+                    className="np-lyrics-search-btn"
+                    title="搜索歌词"
+                    aria-label="搜索歌词"
+                    onClick={() => void openLyricsSearch()}
+                  >
+                    <Search size={18} strokeWidth={2} />
+                    <span>歌词</span>
+                  </button>
+                </div>
+              ) : null
+            }
+          />
         </section>
       </div>
 

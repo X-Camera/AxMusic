@@ -1,30 +1,11 @@
-/* 播放列表右边栏：与管理/设置右边栏同宽 */
+/* 播放列表格：填满 RightDock 半栏/整栏 */
 .queue-panel {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-/* 浏览页：顶栏下方贴右缘，从右往左挤内容；顶栏通栏不动 */
-.queue-panel-dock {
-  position: absolute;
-  top: var(--topbar-height);
-  right: 0;
-  bottom: 0;
-  width: var(--panel-width);
-  background: var(--bg-elevated);
-  border-left: 1px solid var(--border);
-  /* 必须低于 .mini-player(z:3)：进度条/圆点骑在下沿分界上，要盖住列表栏 */
-  z-index: 1;
-}
-
-/* 管理/设置：填满原右边栏槽位，不另外占位 */
-.queue-panel-slot {
-  flex: 1;
-  width: 100%;
-  background: transparent;
 }
 
 .queue-panel-head {

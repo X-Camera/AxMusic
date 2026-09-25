@@ -190,6 +190,11 @@ export interface AppSettings {
   lyrics_font: LyricsFont;
   /** 满窗歌词行间距（主句 line-height） */
   lyrics_line_height: number;
+  /** 主界面歌词字号缩放（与满窗分开） */
+  side_lyrics_font_scale: number;
+  side_lyrics_font: LyricsFont;
+  /** 主界面歌词行间距 */
+  side_lyrics_line_height: number;
   songs_view: SongsView;
   close_behavior: CloseBehavior;
   theme_mode: ThemeMode;

@@ -19,7 +19,7 @@ import type {
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { BrandMark } from "../../components/BrandMark";
-import { QueuePanel } from "../../components/QueuePanel";
+import { RightDock } from "../../components/RightDock";
 import "./SettingsPage.css";
 
 const REPEAT_MODES: { id: RepeatMode; label: string }[] = [
@@ -265,7 +265,10 @@ function AboutPanel({
 export function SettingsPage() {
   const setRoute = useApp((s) => s.setRoute);
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
+  const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
   const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
+  const setLyricsPanelOpen = useApp((s) => s.setLyricsPanelOpen);
+  const sideOpen = queuePanelOpen || lyricsPanelOpen;
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [paths, setPaths] = useState<PathsInfo | null>(null);
   const [appInfo, setAppInfo] = useState<{ name: string; version: string } | null>(
@@ -313,12 +316,12 @@ export function SettingsPage() {
     return (
       <>
         <TopBar title="设置" />
-        <div className={`page-scroll${queuePanelOpen ? " queue-squeeze-self" : ""}`}>
+        <div className={`page-scroll${sideOpen ? " queue-squeeze-self" : ""}`}>
           <div className="empty-state">
             <p className="muted">{error ?? "加载中…"}</p>
           </div>
         </div>
-        {queuePanelOpen && <QueuePanel variant="dock" />}
+        {sideOpen && <RightDock variant="dock" />}
       </>
     );
   }
@@ -332,8 +335,11 @@ export function SettingsPage() {
         <div
           className="set-main"
           onPointerDown={() => {
-            // 点左侧区域：收起播放列表，恢复本页右边栏
-            if (queuePanelOpen) setQueuePanelOpen(false);
+            // 点左侧区域：收起播放列表/歌词，恢复本页右边栏
+            if (sideOpen) {
+              setQueuePanelOpen(false);
+              setLyricsPanelOpen(false);
+            }
           }}
         >
           {error && <div className="error-line set-error">{error}</div>}
@@ -437,6 +443,45 @@ export function SettingsPage() {
                     );
                   })}
                 </div>
+              </Row>
+            </Section>
+
+            <Section title="主界面歌词">
+              <Row label="字号" hint="右边栏歌词大小；与满窗歌词分开保存">
+                <RangeCtrl
+                  min={0.75}
+                  max={1.5}
+                  step={0.05}
+                  value={settings.side_lyrics_font_scale ?? 1}
+                  label="主界面歌词字号"
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => void patch({ side_lyrics_font_scale: v })}
+                />
+              </Row>
+              <Row label="字体" hint="主句与译文共用；「默认」跟随应用显示字体">
+                <select
+                  className="set-select"
+                  aria-label="主界面歌词字体"
+                  value={settings.side_lyrics_font ?? "display"}
+                  onChange={(e) => void patch({ side_lyrics_font: e.target.value as LyricsFont })}
+                >
+                  {LYRICS_FONTS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+              <Row label="行距" hint="行与行之间松紧，主句 line-height">
+                <RangeCtrl
+                  min={1}
+                  max={2}
+                  step={0.05}
+                  value={settings.side_lyrics_line_height ?? 1.25}
+                  label="主界面歌词行距"
+                  format={(v) => v.toFixed(2)}
+                  onChange={(v) => void patch({ side_lyrics_line_height: v })}
+                />
               </Row>
             </Section>
 
@@ -559,10 +604,10 @@ export function SettingsPage() {
             </Section>
         </div>
 
-        {/* 右边栏壳与管理页一致；播放列表只替换内容 */}
+        {/* 右边栏壳与管理页一致；播放列表/歌词只替换内容 */}
         <div className="set-about">
-          {queuePanelOpen ? (
-            <QueuePanel variant="slot" />
+          {sideOpen ? (
+            <RightDock variant="slot" />
           ) : (
             <AboutPanel appInfo={appInfo} paths={paths} />
           )}

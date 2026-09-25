@@ -145,8 +145,9 @@ input[type="checkbox"]:disabled {
   min-height: 0;
 }
 
-/* 浏览页播放列表：只挤内容区，顶栏通栏（窗口按钮留在右缘） */
-.main-col.queue-squeeze > :not(.topbar):not(.queue-panel),
+/* 浏览页播放列表/歌词：只挤内容区，顶栏通栏（窗口按钮留在右缘）
+   必须排除 .right-dock —— 它本身是贴右缘的绝对定位壳，再加 margin 会被推到左边空出一截 */
+.main-col.queue-squeeze > :not(.topbar):not(.right-dock),
 .queue-squeeze-self {
   margin-right: var(--panel-width);
 }

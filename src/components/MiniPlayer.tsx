@@ -1,4 +1,4 @@
-import { FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
+import { Captions, FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, formatTime } from "../lib/api";
@@ -24,6 +24,8 @@ export function MiniPlayer() {
   const setFullPlayer = useApp((s) => s.setFullPlayer);
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
   const toggleQueuePanel = useApp((s) => s.toggleQueuePanel);
+  const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
+  const toggleLyricsPanel = useApp((s) => s.toggleLyricsPanel);
 
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
@@ -327,6 +329,14 @@ export function MiniPlayer() {
           />
         </div>
         <div className="mp-queue-wrap">
+          <button
+            className={`mp-icon mp-queue${lyricsPanelOpen ? " active" : ""}`}
+            title={lyricsPanelOpen ? "收起歌词" : "歌词"}
+            aria-expanded={lyricsPanelOpen}
+            onClick={() => toggleLyricsPanel()}
+          >
+            <Captions size={15} />
+          </button>
           <button
             className={`mp-icon mp-queue${queuePanelOpen ? " active" : ""}`}
             title={

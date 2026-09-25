@@ -13,6 +13,10 @@ interface AppState {
   queuePanelOpen: boolean;
   setQueuePanelOpen: (v: boolean) => void;
   toggleQueuePanel: () => void;
+  /** 主页歌词右边栏（与播放列表同逻辑；同开时上下等分） */
+  lyricsPanelOpen: boolean;
+  setLyricsPanelOpen: (v: boolean) => void;
+  toggleLyricsPanel: () => void;
   player: PlayerSnapshot | null;
   refreshing: boolean;
   setPlayer: (p: PlayerSnapshot | null) => void;
@@ -75,6 +79,9 @@ export const useApp = create<AppState>((set, get) => ({
   queuePanelOpen: false,
   setQueuePanelOpen: (queuePanelOpen) => set({ queuePanelOpen }),
   toggleQueuePanel: () => set((s) => ({ queuePanelOpen: !s.queuePanelOpen })),
+  lyricsPanelOpen: false,
+  setLyricsPanelOpen: (lyricsPanelOpen) => set({ lyricsPanelOpen }),
+  toggleLyricsPanel: () => set((s) => ({ lyricsPanelOpen: !s.lyricsPanelOpen })),
   player: null,
   refreshing: false,
   setPlayer: (p) => set({ player: p }),

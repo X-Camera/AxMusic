@@ -6,12 +6,8 @@ import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
 import "./QueuePanel.css";
 
-/**
- * 播放队列右边栏。
- * - dock：浏览页——贴在顶栏下方从右缘挤入（不影响顶栏/窗口按钮）
- * - slot：管理/设置——填入本页原右边栏槽位，不另外挤压
- */
-export function QueuePanel({ variant = "slot" }: { variant?: "dock" | "slot" }) {
+/** 播放队列格：由 RightDock 承载（可独占或与歌词上下等分） */
+export function QueuePanel() {
   const player = useApp((s) => s.player);
   const playQueue = useApp((s) => s.playQueue);
   const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
@@ -44,7 +40,7 @@ export function QueuePanel({ variant = "slot" }: { variant?: "dock" | "slot" }) 
   }
 
   return (
-    <aside className={`queue-panel queue-panel-${variant}`} aria-label="播放队列">
+    <div className="queue-panel" aria-label="播放队列">
       <div className="queue-panel-head">
         <span>播放队列 · {queueLen} 首</span>
         <div className="queue-panel-head-actions">
@@ -97,6 +93,6 @@ export function QueuePanel({ variant = "slot" }: { variant?: "dock" | "slot" }) 
           ))
         )}
       </div>
-    </aside>
+    </div>
   );
 }
