@@ -27,6 +27,8 @@ export interface VizFrame {
   focus: { x: number; y: number } | null;
   /** 当前封面纹理（无封面 null；data URL 不 taint） */
   cover: HTMLImageElement | null;
+  /** 亮色主题：加亮/白热在白底上隐形，效果应改用压深保色相的「墨」色与正常合成 */
+  isLight: boolean;
 }
 
 export interface VizEffect {

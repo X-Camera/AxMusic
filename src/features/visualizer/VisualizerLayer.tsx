@@ -102,6 +102,7 @@ export function VisualizerLayer({
       settings,
       focus: null,
       cover: null,
+      isLight: false,
     };
 
     function resize() {
@@ -158,6 +159,8 @@ export function VisualizerLayer({
       frame.settings = s;
       frame.focus = focusRef.current?.() ?? null;
       frame.cover = coverRef.current?.img ?? null;
+      // 主题热切换即时生效（读 attribute 开销可忽略）
+      frame.isLight = document.documentElement.dataset.theme === "light";
 
       if (s.kind === "silk") {
         // WebGL 独占另一 canvas；本 canvas 不画（resize 幂等，每帧确保同步）

@@ -1,4 +1,4 @@
-import { lerpRgb } from "../sideViz";
+import { inkify, lerpRgb, type Rgb } from "../sideViz";
 import type { VizEffect, VizFrame } from "./types";
 import { focusPoint, makeGlowSprite, rgba } from "./types";
 
@@ -123,11 +123,11 @@ interface Branch {
   seed: number;
 }
 
-/** 内环辐射出的火花粒子 */
+/** 内环辐射出的火花粒子（星空巡航模型） */
 interface Spark {
   ang: number;
   r: number;
-  /** 径向速度（指数衰减，先快后慢） */
+  /** 径向速度（极弱减速 + 微弱外向加速，近似匀速漂远） */
   vr: number;
   born: number;
   life: number;
@@ -156,6 +156,15 @@ export function createRadialLine(): VizEffect {
   let bandsPrimed = false;
   let lastRegen = -10;
   let beatLatch = false;
+  /** 主芯 ribbon 每帧复用的顶点缓冲（点/半宽/能量/内外顶点） */
+  const corePX = new Float32Array(N + 1);
+  const corePY = new Float32Array(N + 1);
+  const coreHW = new Float32Array(N + 1);
+  const coreLV = new Float32Array(N + 1);
+  const coreOX = new Float32Array(N + 1);
+  const coreOY = new Float32Array(N + 1);
+  const coreIX = new Float32Array(N + 1);
+  const coreIY = new Float32Array(N + 1);
 
   /** 生成新一道闪电形状（闭合随机游走 + 稀疏尖刺，归一到 [-1,1]） */
   function regenBolt() {
@@ -183,6 +192,13 @@ export function createRadialLine(): VizEffect {
       const { ctx, w, h, t, colors: cols, settings: s, beat, bass, dt } = f;
       if (!ctx) return;
       const ex = s.radial_ex;
+      // 亮主题适配：白底上加亮/白热全部隐形——色相保留、明度压深（墨），
+      // 「白热」芯换成「浓墨」芯；火花改回正常合成
+      const light = f.isLight;
+      const inkA = light ? inkify(cols.a, 0.45) : cols.a;
+      const inkB = light ? inkify(cols.b, 0.45) : cols.b;
+      const inkC = light ? inkify(cols.c, 0.45) : cols.c;
+      const hot: Rgb = light ? inkify(cols.c, 0.72) : [255, 255, 255];
       const { x: cx, y: cy } = focusPoint(w, h, f.focus);
       const pulse = bass * 0.6 + beat * 0.4;
 
@@ -238,7 +254,7 @@ export function createRadialLine(): VizEffect {
       // 残影：前两道闪电收缩变淡（像视网膜余像；跟随辉光层相位）
       ghosts.forEach((g, k) => {
         traceBolt(g, 1 - (k + 1) * 0.07, rotGlow - (k + 1) * 0.06);
-        ctx.strokeStyle = rgba(cols.c, 0.12 / (k + 1) + pulse * 0.03);
+        ctx.strokeStyle = rgba(inkC, 0.12 / (k + 1) + pulse * 0.03);
         ctx.lineWidth = 1;
         ctx.lineJoin = "miter";
         ctx.stroke();
@@ -260,48 +276,102 @@ export function createRadialLine(): VizEffect {
           r0 += stepLen;
           ctx.lineTo(cx + Math.cos(a0) * r0, cy + Math.sin(a0) * r0);
         }
-        ctx.strokeStyle = rgba(lerpRgb(cols.b, [255, 255, 255], 0.4), alpha);
+        ctx.strokeStyle = rgba(lerpRgb(inkB, hot, 0.4), alpha);
         ctx.lineWidth = 1;
         ctx.stroke();
       }
 
-      // 主电弧底描：彩色辉光（细，主要提供光晕而非线宽）
+      // 均匀底晕：整条一道、alpha 压低，只提供电弧柔光氛围，不承担明暗——
+      // 均匀的亮底会洗掉下面两层 ribbon 随频段起伏的对比
       traceBolt(boltCur, 1, rotGlow);
       const lg = ctx.createLinearGradient(cx - baseR * 2, cy, cx + baseR * 2, cy);
-      lg.addColorStop(0, rgba(cols.a, 0.45));
-      lg.addColorStop(0.5, rgba(lerpRgb(cols.a, cols.b, 0.5), 0.9));
-      lg.addColorStop(1, rgba(cols.c, 0.5));
+      lg.addColorStop(0, rgba(inkA, 0.18));
+      lg.addColorStop(0.5, rgba(lerpRgb(inkA, inkB, 0.5), 0.36));
+      lg.addColorStop(1, rgba(inkC, 0.2));
       ctx.strokeStyle = lg;
       ctx.lineWidth = 1.3 + s.intensity * 0.6 + pulse * 0.5;
       ctx.lineJoin = "miter";
-      ctx.shadowColor = rgba(cols.b, 0.65 * s.intensity + 0.2);
-      ctx.shadowBlur = 13 * (0.35 + s.intensity);
+      ctx.shadowColor = rgba(inkB, 0.5 * s.intensity + 0.15);
+      ctx.shadowBlur = 9 * (0.35 + s.intensity);
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // 白热主芯：视觉主体，粗而亮（相位错开、转速略快）
-      traceBolt(boltCur, 1, rotCore);
-      ctx.strokeStyle = rgba(
-        lerpRgb(cols.a, [255, 255, 255], 0.75),
-        0.72 + s.intensity * 0.24 + pulse * 0.15,
-      );
-      ctx.lineWidth = 1.9 + s.intensity * 0.8 + pulse * 0.4;
-      ctx.stroke();
+      // 两条 ribbon（彩色辉光 rotGlow + 白热主芯 rotCore）共用一组顶点缓冲。
+      // 共享边三角带填充：宽度/亮度/白度随所在频段能量起伏（lvl² 曲线，暗部更暗）；
+      // 不用逐段 stroke——round 端帽会在 160 个接缝处两两叠加成一串珠子亮点
+      const coreA = Math.min(1, 0.72 + s.intensity * 0.24 + pulse * 0.15);
+      const coreW = 1.9 + s.intensity * 0.8 + pulse * 0.4;
+      const paintRibbon = (rot: number, glow: boolean) => {
+        // 第一遍：每点的坐标、频段能量、半宽
+        for (let i = 0; i <= N; i++) {
+          const ang = (i / N) * Math.PI * 2 - Math.PI / 2 + rot;
+          const r = boltR(i, boltCur, 1);
+          corePX[i] = cx + Math.cos(ang) * r;
+          corePY[i] = cy + Math.sin(ang) * r;
+          const lvl = ringLevel(f, i / N);
+          coreLV[i] = lvl;
+          coreHW[i] = glow
+            ? (coreW * 2.1 * (0.5 + 0.8 * lvl)) / 2
+            : (coreW * (0.45 + 0.9 * lvl)) / 2;
+        }
+        // 第二遍：每点法线 = 相邻弦的垂线（相邻四边形共享此边），求内外顶点
+        for (let i = 0; i <= N; i++) {
+          const iPrev = i === 0 ? N - 1 : i - 1;
+          const iNext = i === N ? 1 : i + 1;
+          let dx = corePX[iNext] - corePX[iPrev];
+          let dy = corePY[iNext] - corePY[iPrev];
+          const len = Math.hypot(dx, dy) || 1;
+          dx /= len;
+          dy /= len;
+          coreOX[i] = corePX[i] - dy * coreHW[i];
+          coreOY[i] = corePY[i] + dx * coreHW[i];
+          coreIX[i] = corePX[i] + dy * coreHW[i];
+          coreIY[i] = corePY[i] - dx * coreHW[i];
+        }
+        // 第三遍：逐四边形填充，取两端点能量均值
+        for (let i = 0; i < N; i++) {
+          const lvl = (coreLV[i] + coreLV[i + 1]) / 2;
+          const lc = lvl * lvl; // 对比曲线：压低中低能量段，亮处更突出
+          ctx.beginPath();
+          ctx.moveTo(coreOX[i], coreOY[i]);
+          ctx.lineTo(coreOX[i + 1], coreOY[i + 1]);
+          ctx.lineTo(coreIX[i + 1], coreIY[i + 1]);
+          ctx.lineTo(coreIX[i], coreIY[i]);
+          ctx.closePath();
+          if (glow) {
+            const u = (i + 0.5) / N;
+            // 沿圆周 a→b→c 扫色（镜像映射：首尾同为低频色，闭合处无缝）
+            const col =
+              u < 0.5
+                ? lerpRgb(inkA, inkB, u * 2)
+                : lerpRgb(inkB, inkC, (u - 0.5) * 2);
+            ctx.fillStyle = rgba(col, (0.3 + s.intensity * 0.28 + pulse * 0.1) * (0.1 + 0.9 * lc));
+          } else {
+            ctx.fillStyle = rgba(
+              lerpRgb(inkA, hot, 0.4 + 0.55 * lc),
+              coreA * (0.08 + 0.92 * lc),
+            );
+          }
+          ctx.fill();
+        }
+      };
+      paintRibbon(rotGlow, true);
+      paintRibbon(rotCore, false);
 
       // 内环
       ctx.beginPath();
       ctx.arc(cx, cy, baseR * 0.55, 0, Math.PI * 2);
-      ctx.strokeStyle = rgba(cols.a, 0.14 + pulse * 0.12);
+      ctx.strokeStyle = rgba(inkA, 0.14 + pulse * 0.12);
       ctx.lineWidth = 1;
       ctx.stroke();
 
       // 内环火花辐射：分频段 onset 触发——某频段能量上跳一次，就在对应扇区喷一波
       const emit = Math.round(ex.emit);
       if (emit > 0) {
-        const cKey = `${cols.a}|${cols.b}|${cols.c}`;
+        const cKey = `${cols.a}|${cols.b}|${cols.c}|${light}`;
         if (cKey !== sparkSpriteKey) {
           sparkSpriteKey = cKey;
-          sparkSprites = [cols.a, cols.b, cols.c].map((c) => makeGlowSprite(c));
+          sparkSprites = [inkA, inkB, inkC].map((c) => makeGlowSprite(c));
         }
         // 触发阈值由灵敏度决定：0.5 → 0.15，拉满 0.04 近乎拨草寻蛇
         const threshold = 0.26 - ex.sensitivity * 0.22;
@@ -321,15 +391,17 @@ export function createRadialLine(): VizEffect {
             const sprite = p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2;
             for (let k = 0; k < burst && sparks.length < emit; k++) {
               sparks.push({
-                // 扇区角 ± 微小偏差（≈±2°），走直线
+                // 扇区角 ± 散布 = 3.5 倍扇区宽（±39°）：邻区深度交叠，整片弥散无区间感
                 ang:
-                  (u + (Math.random() - 0.5) * 0.035) * Math.PI * 2 - Math.PI / 2 + rotGlow,
+                  (u + (Math.random() - 0.5) * (3.5 / SECTORS)) * Math.PI * 2 -
+                  Math.PI / 2 +
+                  rotGlow,
                 r: baseR * 0.55,
-                // 初速随机 + 超出越多喷得越快
-                vr: baseR * (2.4 + Math.random() * 2.6 + over * 2.5),
+                // 初速低 + 超出越多略快：出生即巡航速度，不是炸出去
+                vr: baseR * (0.35 + Math.random() * 0.45 + over * 0.5),
                 born: t,
-                life: 0.55 + Math.random() * 0.6,
-                size: 1.4 + Math.random() * 2.6,
+                life: 2.4 + Math.random() * 2.2,
+                size: 1.0 + Math.random() * 1.1,
                 sprite,
               });
             }
@@ -338,17 +410,42 @@ export function createRadialLine(): VizEffect {
           bandBase[sec] += (lvl - base) * Math.min(1, dt * (lvl > base ? 3.5 : 9));
         }
         bandsPrimed = true;
+        // 强拍冲击波（重鼓点/大响度瞬态）：主圈整圈同时释放一圈粒子。
+        // 预算放宽到 max(emit×2, ringN)：星野占满时冲击波也能完整成环
+        if (rising && f.live) {
+          const ringN = Math.max(28, Math.round(emit * 0.9));
+          const ringCap = Math.max(emit * 2, ringN);
+          for (let k = 0; k < ringN && sparks.length < ringCap; k++) {
+            const u = (k + Math.random()) / ringN;
+            sparks.push({
+              ang: u * Math.PI * 2 - Math.PI / 2 + rotGlow,
+              r: baseR * (0.95 + Math.random() * 0.1),
+              // 初速明显高于巡航星野：先冲出去成环，再随弱减速并入星流
+              vr: baseR * (0.7 + Math.random() * 0.5 + beat * 0.35),
+              born: t,
+              life: 1.2 + Math.random() * 0.8,
+              size: 1.2 + Math.random() * 1.2,
+              // 颜色按圆周位置取（与辉光 ribbon 扫色一致）
+              sprite: u < 1 / 3 ? 0 : u < 2 / 3 ? 1 : 2,
+            });
+          }
+        }
         const maxR = Math.hypot(w, h) * 0.6;
-        const drag = Math.exp(-2.8 * dt); // 指数减速：先快后慢
-        ctx.globalCompositeOperation = "lighter";
+        const drag = Math.exp(-0.5 * dt); // 极弱减速：近似匀速巡航
+        // 亮主题下「加亮」在白底上无效，改正常合成（墨色 sprite 直接可见）
+        ctx.globalCompositeOperation = light ? "source-over" : "lighter";
         sparks = sparks.filter((sp) => {
-          sp.vr *= drag;
+          // 微弱外向加速（星空透视：越接近观察者移动越快），与 drag 平衡成稳定巡航
+          sp.vr = sp.vr * drag + baseR * 0.22 * dt;
           sp.r += sp.vr * dt;
           const age = t - sp.born;
           if (age > sp.life || sp.r > maxR) return false;
           const k = age / sp.life;
-          ctx.globalAlpha = (1 - k) * (0.7 + s.intensity * 0.3);
-          const d = sp.size * (4 - k * 2.2) * (0.8 + s.intensity * 0.5);
+          // 出生快速淡入、末三分之一淡出，中途稳定发光（星星不闪灭）
+          ctx.globalAlpha =
+            Math.min(1, age * 6) * Math.min(1, (1 - k) * 3) * (0.7 + s.intensity * 0.3);
+          // 随半径长大：远小近大，迎面而来的透视感（收敛最大尺寸）
+          const d = sp.size * (0.5 + (sp.r / baseR) * 1.2) * (0.8 + s.intensity * 0.5);
           const px = cx + Math.cos(sp.ang) * sp.r - d / 2;
           const py = cy + Math.sin(sp.ang) * sp.r - d / 2;
           ctx.drawImage(sparkSprites[sp.sprite], px, py, d, d);

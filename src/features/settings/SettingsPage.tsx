@@ -265,8 +265,6 @@ export function SettingsPage() {
   const setRoute = useApp((s) => s.setRoute);
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
   const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
-  const setQueuePanelOpen = useApp((s) => s.setQueuePanelOpen);
-  const setLyricsPanelOpen = useApp((s) => s.setLyricsPanelOpen);
   const sideOpen = queuePanelOpen || lyricsPanelOpen;
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [paths, setPaths] = useState<PathsInfo | null>(null);
@@ -330,16 +328,8 @@ export function SettingsPage() {
     <>
       <TopBar title="设置" />
       <div className="set-shell">
-        <div
-          className="set-main"
-          onPointerDown={() => {
-            // 点左侧区域：收起播放列表/歌词，恢复本页右边栏
-            if (sideOpen) {
-              setQueuePanelOpen(false);
-              setLyricsPanelOpen(false);
-            }
-          }}
-        >
+        {/* 本页右栏只是只读的关于面板，点左侧不收起队列/歌词面板（管理页才有此行为） */}
+        <div className="set-main">
           {error && <div className="error-line set-error">{error}</div>}
 
             <Section title="播放">

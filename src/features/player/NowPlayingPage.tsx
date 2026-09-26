@@ -29,6 +29,7 @@ import {
   type PlayClock,
 } from "../../lib/playClock";
 import { WindowControls } from "../../components/WindowControls";
+import { ContextMenu } from "../../components/ContextMenu";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { useApp } from "../../state/useApp";
 import { LyricsView, type LyricsViewHandle } from "./LyricsView";
@@ -515,41 +516,34 @@ export function NowPlayingPage() {
         </section>
       </div>
 
-      {ctxMenu &&
-        createPortal(
-          <div
-            className="np-ctx-menu"
-            style={{ left: ctxMenu.x, top: ctxMenu.y }}
-            role="menu"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {track && (
-              <button
-                className="np-ctx-item"
-                role="menuitem"
-                onClick={() => {
-                  setCtxMenu(null);
-                  void openLyricsSearch();
-                }}
-              >
-                <Search size={14} />
-                搜索歌词
-              </button>
-            )}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onCover>
+          {track && (
             <button
               className="np-ctx-item"
               role="menuitem"
               onClick={() => {
                 setCtxMenu(null);
-                setStyleOpen(true);
+                void openLyricsSearch();
               }}
             >
-              <SlidersHorizontal size={14} />
-              歌词样式
+              <Search size={14} />
+              搜索歌词
             </button>
-          </div>,
-          document.body,
-        )}
+          )}
+          <button
+            className="np-ctx-item"
+            role="menuitem"
+            onClick={() => {
+              setCtxMenu(null);
+              setStyleOpen(true);
+            }}
+          >
+            <SlidersHorizontal size={14} />
+            歌词样式
+          </button>
+        </ContextMenu>
+      )}
 
       {styleOpen &&
         createPortal(

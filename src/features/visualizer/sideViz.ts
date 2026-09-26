@@ -340,6 +340,11 @@ export function lerpRgb(a: Rgb, b: Rgb, t: number): Rgb {
   ];
 }
 
+/** 亮主题用：保色相、压明度——白底上浅色/白热不可见，压成「墨」色才有对比 */
+export function inkify(c: Rgb, k = 0.5): Rgb {
+  return lerpRgb(c, [16, 20, 28], k);
+}
+
 export function shiftHue(rgb: Rgb, deg: number): Rgb {
   // 近似：在 RGB 上做色相旋转（够视觉用，无需完整 HSL 往返）
   const [r, g, b] = rgb.map((v) => v / 255) as [number, number, number];

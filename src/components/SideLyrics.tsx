@@ -21,6 +21,7 @@ import {
 import { lyricsDisplayVars } from "../lib/lyricsDisplay";
 import { onLyricsSaved, openLyricsWindow } from "../lib/lyricsWindow";
 import { useApp } from "../state/useApp";
+import { ContextMenu } from "./ContextMenu";
 import { LyricsStyleDialog } from "../features/player/LyricsStyleDialog";
 import { LyricsView, type LyricsViewHandle } from "../features/player/LyricsView";
 import { pickLyrics } from "../features/player/lrc";
@@ -360,52 +361,45 @@ export function SideLyrics() {
         />
       </div>
 
-      {ctxMenu &&
-        createPortal(
-          <div
-            className="np-ctx-menu"
-            style={{ left: ctxMenu.x, top: ctxMenu.y }}
-            role="menu"
-            onClick={(e) => e.stopPropagation()}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y}>
+          {path && (
+            <button
+              className="np-ctx-item"
+              role="menuitem"
+              onClick={() => {
+                setCtxMenu(null);
+                void openLyricsSearch();
+              }}
+            >
+              <Search size={14} />
+              搜索歌词
+            </button>
+          )}
+          <button
+            className="np-ctx-item"
+            role="menuitem"
+            onClick={() => {
+              setCtxMenu(null);
+              setStyleOpen(true);
+            }}
           >
-            {path && (
-              <button
-                className="np-ctx-item"
-                role="menuitem"
-                onClick={() => {
-                  setCtxMenu(null);
-                  void openLyricsSearch();
-                }}
-              >
-                <Search size={14} />
-                搜索歌词
-              </button>
-            )}
-            <button
-              className="np-ctx-item"
-              role="menuitem"
-              onClick={() => {
-                setCtxMenu(null);
-                setStyleOpen(true);
-              }}
-            >
-              <SlidersHorizontal size={14} />
-              歌词样式
-            </button>
-            <button
-              className="np-ctx-item"
-              role="menuitem"
-              onClick={() => {
-                setCtxMenu(null);
-                setVizOpen(true);
-              }}
-            >
-              <Sparkles size={14} />
-              背景动效{viz.enabled ? "" : "（关）"}
-            </button>
-          </div>,
-          document.body,
-        )}
+            <SlidersHorizontal size={14} />
+            歌词样式
+          </button>
+          <button
+            className="np-ctx-item"
+            role="menuitem"
+            onClick={() => {
+              setCtxMenu(null);
+              setVizOpen(true);
+            }}
+          >
+            <Sparkles size={14} />
+            背景动效{viz.enabled ? "" : "（关）"}
+          </button>
+        </ContextMenu>
+      )}
 
       {styleOpen &&
         createPortal(
