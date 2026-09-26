@@ -103,3 +103,35 @@
 .stats-list li .mono {
   color: var(--text);
 }
+
+.stats-stray {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.stats-stray li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.stats-stray-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.stats-panel .btn-primary {
+  align-self: flex-start;
+}

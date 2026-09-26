@@ -491,6 +491,8 @@ pub fn init_library(
 
     // Working DB lives in the library root
     let db_path = crate::paths::library_db_path(&dir);
+    // 库目录骨架（archived / Unarchived / lrc / covers / playlists）
+    crate::paths::ensure_library_dirs(&dir).map_err(|e| e.to_string())?;
     let db = LibraryDb::open(&db_path).map_err(|e| e.to_string())?;
     let root_row = db.set_library_root(&dir).map_err(|e| e.to_string())?;
     *state.db.lock().map_err(|e| e.to_string())? = Some(db);
@@ -894,53 +896,17 @@ pub fn include_in_library(
     })
 }
 
-/// lossless-archive: `{albumartist}\{year} - {album}\{track} - {title}.{ext}`
+/// 归档目标：`archived/{artist}/{artist} - {title}{version}.{ext}`（见 docs/歌曲归档.md）
 fn build_library_dest(root: &Path, row: &TrackRow, src: &Path) -> PathBuf {
-    use crate::scanner::sanitize_segment;
-
-    let album_artist = if !row.album_artist.is_empty() {
-        row.album_artist.as_str()
-    } else if !row.artist.is_empty() {
-        row.artist.as_str()
-    } else {
-        "Unknown Artist"
-    };
-    let album = if !row.album.is_empty() {
-        row.album.as_str()
-    } else {
-        "Unknown Album"
-    };
-    let year_seg = if row.year.is_empty() {
-        "0000".to_string()
-    } else {
-        let digits: String = row.year.chars().filter(|c| c.is_ascii_digit()).collect();
-        let y = digits.chars().take(4).collect::<String>();
-        if y.len() == 4 {
-            y
-        } else {
-            "0000".into()
-        }
-    };
-
-    let track_no = row.track_no.unwrap_or(0).clamp(0, 999);
-    let track_seg = format!("{track_no:02}");
-    let title = if row.title.is_empty() {
+    let title = if row.title.trim().is_empty() {
         src.file_stem()
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Unknown".into())
+            .unwrap_or_default()
     } else {
         row.title.clone()
     };
-
-    let ext = src
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_else(|| "bin".into());
-
-    root.join(sanitize_segment(album_artist))
-        .join(sanitize_segment(&format!("{year_seg} - {album}")))
-        .join(sanitize_segment(&format!("{track_seg} - {title}.{ext}")))
+    // 用源文件名提取版本括号；标题空时 expected_* 内部也会回退主名
+    crate::archive::expected_song_path_from(root, &row.artist, &title, src)
 }
 
 // ── player ────────────────────────────────────────────────────────
@@ -1778,7 +1744,7 @@ pub fn lyrics_current(
 // ── archive (归档状态) ──────────────────────────────────────────────
 
 /// 批量检查归档状态。返回 map: track_id → ArchiveStatus。
-/// 只检查已关联 catalog 的曲目；无歌词不报。
+/// **仅已关联 catalog 的曲目**做归档要求；未关联 check 结果恒为 ok。
 #[tauri::command]
 pub fn archive_check_batch(
     state: State<'_, AppState>,
@@ -1797,7 +1763,76 @@ pub fn archive_check_batch(
     Ok(map)
 }
 
-/// 规范化单曲归档（当前只处理歌词：移动到 `<库根>/lrc/{artist} - {title}.lrc`）。
+/// 歌曲路径变更后：改 DB + 改歌单 + 按新路径重扫。
+fn apply_song_path_change(
+    state: &State<'_, AppState>,
+    app: &AppHandle,
+    root: &Path,
+    track_id: i64,
+    old_path: &Path,
+    new_song_path: &str,
+) -> Result<(), String> {
+    let new_path = PathBuf::from(new_song_path);
+    if path_eq_str(old_path, &new_path) {
+        return Ok(());
+    }
+    let filename = new_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = db_ref(&guard)?;
+        db.update_track_path(track_id, new_song_path, &filename)
+            .map_err(|e| e.to_string())?;
+    }
+    let _ = crate::playlists::rewrite_path_in_playlists(root, old_path, &new_path);
+    rescan_track_row(state, &new_path);
+    let _ = app.emit("library://changed", track_id);
+    Ok(())
+}
+
+fn path_eq_str(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy()
+        .eq_ignore_ascii_case(&b.to_string_lossy())
+}
+
+/// 只修一条归档意见：kind = song_location | song_name | lyrics_location | lyrics_name。
+#[tauri::command]
+pub fn archive_normalize_issue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: i64,
+    kind: String,
+) -> Result<String, String> {
+    let root = require_library_root(&state)?;
+    let root = PathBuf::from(root);
+    let row = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+    };
+    let old_path = PathBuf::from(&row.path);
+    let result =
+        crate::archive::normalize_issue(&root, &row, &kind).map_err(|e| e.to_string())?;
+
+    if let Some(song_path) = result.song_path.as_deref() {
+        apply_song_path_change(&state, &app, &root, track_id, &old_path, song_path)?;
+    } else {
+        // 仅歌词变化：按原路径重扫 has_lrc
+        rescan_track_row(&state, &old_path);
+        let _ = app.emit("library://changed", track_id);
+    }
+    if let Some(lrc) = result.lrc_path.as_deref() {
+        emit_lyrics_saved(&app, Some(track_id), Path::new(lrc));
+    }
+    Ok(result.message)
+}
+
+/// 规范化单曲归档：歌曲 → `archived/{歌手}/`，歌词 → `lrc/`（含版本括号）。
+/// 更新 tracks.path 并改写歌单相对路径。
 #[tauri::command]
 pub fn archive_normalize(
     app: AppHandle,
@@ -1813,12 +1848,32 @@ pub fn archive_normalize(
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?
     };
-    let dest = crate::archive::normalize_track(&root, &row).map_err(|e| e.to_string())?;
-    // 归档后 has_lrc 可能变化，重扫入库
-    rescan_track_row(&state, Path::new(&row.path));
-    let _ = app.emit("library://changed", track_id);
-    emit_lyrics_saved(&app, Some(track_id), &dest);
-    Ok(format!("已整理到 {}", dest.display()))
+    let old_path = PathBuf::from(&row.path);
+    let result = crate::archive::normalize_track(&root, &row).map_err(|e| e.to_string())?;
+    apply_song_path_change(&state, &app, &root, track_id, &old_path, &result.song_path)?;
+    if let Some(lrc) = result.lrc_path.as_deref() {
+        emit_lyrics_saved(&app, Some(track_id), Path::new(lrc));
+    }
+    Ok(result.message)
+}
+
+/// 库根杂项扫描：白名单外的直接子项（见 docs/歌曲归档.md）。
+#[tauri::command]
+pub fn library_root_scan(state: State<'_, AppState>) -> Result<crate::archive::LibraryRootScan, String> {
+    let root = require_library_root(&state)?;
+    crate::archive::scan_library_root(Path::new(&root)).map_err(|e| e.to_string())
+}
+
+/// 库根杂项整理：全部挪进 `Unarchived/`（重名失败保留）。
+#[tauri::command]
+pub fn library_root_organize(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::archive::OrganizeResult, String> {
+    let root = require_library_root(&state)?;
+    let result = crate::archive::organize_library_root(Path::new(&root)).map_err(|e| e.to_string())?;
+    let _ = app.emit("library://changed", ());
+    Ok(result)
 }
 
 // ���� scrape (MusicBrainz / Cover Art Archive) ������������������������������������������
@@ -2221,22 +2276,30 @@ pub async fn catalog_save(
 }
 
 /// Compare local file tags vs linked catalog row (empty fields if no link).
+/// 若本次比较触发了字段匹配并写入 catalog_id，`linked_now` 为 true（前端应刷新列表）。
 #[tauri::command]
 pub fn catalog_compare(
     state: State<'_, AppState>,
     track_id: i64,
 ) -> Result<serde_json::Value, String> {
-    let (track, catalog) = {
+    let (track, catalog, linked_now) = {
         let guard = require_db(&state)?;
         let db = db_ref(&guard)?;
+        let before = db
+            .get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?;
+        let was_linked = before.catalog_id.is_some_and(|c| c > 0);
+        let catalog = db
+            .find_catalog_for_track(track_id)
+            .map_err(|e| e.to_string())?;
+        // 重新取行：find_catalog_for_track 可能刚写入 catalog_id
         let track = db
             .get_track_by_id(track_id)
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?;
-        let catalog = db
-            .find_catalog_for_track(track_id)
-            .map_err(|e| e.to_string())?;
-        (track, catalog)
+        let linked_now = !was_linked && track.catalog_id.is_some_and(|c| c > 0);
+        (track, catalog, linked_now)
     };
     // db 锁已放：封面读盘 / settings 取根都在锁外
     let changes = if let Some(cat) = &catalog {
@@ -2297,6 +2360,7 @@ pub fn catalog_compare(
         "catalog": catalog,
         "changes": changes,
         "cover_data": cover_data_of(catalog.as_ref(), track_id, &state),
+        "linked_now": linked_now,
     }))
 }
 

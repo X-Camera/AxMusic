@@ -93,7 +93,7 @@ pub struct ParsedEntry {
 // ── 路径与名称 ─────────────────────────────────────────────────────
 
 pub fn playlists_dir(root: &Path) -> PathBuf {
-    root.join("playlists")
+    root.join(crate::paths::PLAYLISTS_DIR_NAME)
 }
 
 /// 校验歌单名；自动剥掉多余的 `.m3u8` 后缀。非法返回「歌单名不合法」。
@@ -572,6 +572,102 @@ pub fn favorite_toggle(root: &Path, item: &PlaylistAddItem) -> Result<FavoriteTo
         favorited: !was_present,
         track_count: entries.len(),
     })
+}
+
+/// 归档移动后，把所有歌单（含喜爱）里的旧绝对路径条目改写为新路径。
+/// 返回改写条数。路径比较忽略大小写（Windows）。
+/// 按磁盘文件路径读写，不经名称校验/别名归一，避免 `favorites.m3u8` 等被重定向漏改。
+pub fn rewrite_path_in_playlists(root: &Path, old_abs: &Path, new_abs: &Path) -> Result<usize, String> {
+    let dir = playlists_dir(root);
+    let old_key = path_key(root, old_abs);
+    let new_rel = rel_from(&dir, new_abs);
+
+    let files = list_playlist_files(root)?;
+    let mut total = 0usize;
+    let mut failures = Vec::new();
+    for path in files {
+        match rewrite_one_playlist_file(&dir, &path, &old_key, &new_rel) {
+            Ok(n) => total += n,
+            Err(e) => {
+                failures.push(format!("{}（{e}）", path.display()));
+            }
+        }
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "已改写 {total} 条；{} 个歌单失败：{}",
+            failures.len(),
+            failures.join("、")
+        ));
+    }
+    Ok(total)
+}
+
+/// 改写单个歌单文件（按完整路径读写，不经过 resolve_name）。
+fn rewrite_one_playlist_file(
+    dir: &Path,
+    path: &Path,
+    old_key: &str,
+    new_rel: &str,
+) -> Result<usize, String> {
+    let text = crate::paths::read_text_lossy(path).map_err(|e| format!("读取失败：{e}"))?;
+    let mut entries = parse_m3u8(&text);
+    let mut n = 0usize;
+    let mut changed = false;
+    for e in entries.iter_mut() {
+        if path_key_of(dir, &abs_from(dir, &e.rel)) == old_key {
+            e.rel = new_rel.to_string();
+            changed = true;
+            n += 1;
+        }
+    }
+    if changed {
+        write_playlist_at(path, &entries)?;
+    }
+    Ok(n)
+}
+
+/// 按完整路径原子写出 m3u8（跳过名称校验）。
+fn write_playlist_at(path: &Path, entries: &[ParsedEntry]) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建歌单目录失败：{e}"))?;
+    }
+    let mut text = String::from("#EXTM3U\n");
+    for e in entries {
+        let secs = if e.duration_ms == 0 {
+            -1i64
+        } else {
+            (e.duration_ms / 1000) as i64
+        };
+        text.push_str(&format!("#EXTINF:{},{}\n{}\n", secs, e.display, e.rel));
+    }
+    crate::paths::write_atomic(path, text.as_bytes()).map_err(|e| format!("写歌单失败：{e}"))
+}
+
+/// path_key 的目录参数化版本（rewrite 时用已解析的 playlists 目录）。
+fn path_key_of(dir: &Path, abs: &Path) -> String {
+    abs_from(dir, &rel_from(dir, abs)).to_string_lossy().to_lowercase()
+}
+
+/// 磁盘上全部歌单文件绝对路径（含喜爱）。目录不存在视为空；其它 IO 错误上抛。
+fn list_playlist_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let dir = playlists_dir(root);
+    let rd = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("读取歌单目录失败：{e}")),
+    };
+    let mut files = Vec::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension()
+            .map(|x| x.eq_ignore_ascii_case("m3u8"))
+            .unwrap_or(false)
+        {
+            files.push(p);
+        }
+    }
+    Ok(files)
 }
 
 #[cfg(test)]

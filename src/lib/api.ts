@@ -209,6 +209,15 @@ export const api = {
     }),
   archiveNormalize: (trackId: number) =>
     invoke<string>("archive_normalize", { trackId }),
+  /** 只修一条归档意见：song_location | song_name | lyrics_location | lyrics_name */
+  archiveNormalizeIssue: (trackId: number, kind: string) =>
+    invoke<string>("archive_normalize_issue", { trackId, kind }),
+  /** 库根杂项扫描（白名单外直接子项） */
+  libraryRootScan: () =>
+    invoke<import("./types").LibraryRootScan>("library_root_scan"),
+  /** 杂项全部挪进 Unarchived/ */
+  libraryRootOrganize: () =>
+    invoke<import("./types").OrganizeResult>("library_root_organize"),
 
   // ── playlists (m3u8，存 <库>/playlists/) ────────────────────────
   playlistList: () => invoke<PlaylistSummary[]>("playlist_list"),

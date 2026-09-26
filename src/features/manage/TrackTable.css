@@ -5,7 +5,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  overflow: hidden;
+  /* 勿加 overflow:hidden：会把 table 变成滚动容器，表头 sticky 失效 */
 }
 
 .track-table th {
@@ -16,11 +16,39 @@
   padding: 0 10px;
   height: 34px;
   border-bottom: 1px solid var(--border);
+  /* 必须完全不透明，否则行会从表头后面透出 */
   background: var(--bg-card);
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   white-space: nowrap;
+}
+
+/* 圆角表头（替代 overflow:hidden 裁切） */
+.track-table thead th:first-child {
+  border-top-left-radius: var(--radius-card);
+}
+
+.track-table thead th:last-child {
+  border-top-right-radius: var(--radius-card);
+}
+
+/* 末行圆角：tr 背景（hover/selected）也需裁切，否则从卡片底角溢出 */
+.track-table tbody tr:last-child {
+  border-bottom-left-radius: var(--radius-card);
+  border-bottom-right-radius: var(--radius-card);
+}
+
+.track-table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: var(--radius-card);
+}
+
+.track-table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: var(--radius-card);
+}
+
+.track-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .track-table td {

@@ -131,7 +131,7 @@ export function TrackTable({
           <th style={{ width: 72 }} title="外挂歌词（库 lrc/ 或同目录 .lrc）">
             外挂歌词
           </th>
-          <th style={{ width: 56 }} title="归档状态（当前检查歌词命名与位置）">
+          <th style={{ width: 56 }} title="归档状态（已关联 catalog 才检查；未关联显示 —）">
             归档
           </th>
         </tr>
@@ -200,7 +200,9 @@ export function TrackTable({
               </td>
               <td>
                 {t.catalog_id == null ? (
-                  <span className="cell-empty">—</span>
+                  <span className="cell-empty" title="先要刮削，关联后才检查归档">
+                    —
+                  </span>
                 ) : archiveMap && archiveMap[t.id] != null ? (
                   archiveMap[t.id].ok ? (
                     <span className="cell-ok" title="归档规范">✓</span>

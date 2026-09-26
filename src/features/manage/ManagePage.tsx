@@ -64,7 +64,7 @@ export function ManagePage() {
       setTracks(list);
       setStats(st);
       setError(null);
-      // 归档状态（只查已关联的）
+      // 归档状态：仅已关联 catalog 的曲目有归档要求
       const linkedIds = list.filter((t) => t.catalog_id != null).map((t) => t.id);
       if (linkedIds.length > 0) {
         const map = await api.archiveCheckBatch(linkedIds).catch(() => null);
@@ -360,7 +360,6 @@ export function ManagePage() {
 
           <div
             className="page-scroll manage-table-pane"
-            style={{ paddingTop: 12 }}
             onClick={(e) => {
               // 点空白处取消选中（行内点击的 target 会落在 tr.row 内）
               if ((e.target as HTMLElement).closest("tr.row") == null) setCompareId(null);

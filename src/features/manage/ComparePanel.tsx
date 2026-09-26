@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileInput, FolderCheck, ImagePlus, Loader2, Search } from "lucide-react";
 import { api } from "../../lib/api";
 import type { ArchiveStatus, CatalogRow, FieldChange, TrackRow } from "../../lib/types";
@@ -39,8 +39,13 @@ const FIELD_GROUPS: string[][] = [
   ["musicbrainz_release"],
 ];
 
-/** 未关联时可编辑的文件标签字段 */
-const EDIT_FIELDS = ["title", "artist", "album", "album_artist", "year", "track_no", "release_type"] as const;
+/** 未关联时可编辑的文件标签字段（与 catalog 双列同构；不放专辑类型） */
+const EDIT_GROUPS: readonly (readonly string[])[] = [
+  ["title", "album"],
+  ["artist", "album_artist"],
+  ["year", "track_no"],
+];
+const EDIT_FIELDS: readonly string[] = EDIT_GROUPS.flat();
 
 export interface CompareData {
   track: TrackRow;
@@ -48,6 +53,8 @@ export interface CompareData {
   changes: FieldChange[];
   /** catalog 缓存封面（data URL），未刮取为 null */
   cover_data: string | null;
+  /** 本次比较刚写入 catalog_id（列表需刷新绿字） */
+  linked_now?: boolean;
 }
 
 export function ComparePanel({
@@ -73,10 +80,16 @@ export function ComparePanel({
   const [catalogCover, setCatalogCover] = useState<string | null>(null);
   const [coverOpen, setCoverOpen] = useState(false);
   const [archive, setArchive] = useState<ArchiveStatus | null>(null);
-  const [normalizing, setNormalizing] = useState(false);
+  const [normalizing, setNormalizing] = useState<string | null>(null);
 
   /** 任一写操作在途即锁住全部写按钮：它们最终都写同一个音频文件，并发会相互覆盖 */
-  const writing = writingField !== null || writingCover || writingTags;
+  const writing = writingField !== null || writingCover || writingTags || normalizing !== null;
+
+  // onWritten 身份随父组件重渲染变化；用 ref 保持加载 effect 稳定
+  const onWrittenRef = useRef(onWritten);
+  useEffect(() => {
+    onWrittenRef.current = onWritten;
+  }, [onWritten]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,17 +112,18 @@ export function ComparePanel({
             album_artist: d.track.album_artist || "",
             year: d.track.year || "",
             track_no: d.track.track_no != null ? String(d.track.track_no) : "",
-            release_type: d.track.release_type || "",
           });
           if (d.track.has_cover) {
             const thumb = await api.trackCoverThumb(d.track.path).catch(() => null);
             if (!cancelled) setFileCover(thumb);
           }
-          // 归档状态（只对已关联曲目有意义）
+          // 归档状态：仅已关联 catalog 时有意义（未关联由 UI 提示先刮削）
           if (d.track.catalog_id != null) {
             const map = await api.archiveCheckBatch([trackId]).catch(() => null);
             if (!cancelled && map && map[trackId] != null) setArchive(map[trackId]);
           }
+          // 本次比较补上了关联 → 刷列表，让绿字/未关联筛选立刻更新
+          if (!cancelled && d.linked_now) onWrittenRef.current();
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -207,7 +221,6 @@ export function ComparePanel({
       album_artist: t.album_artist || "",
       year: t.year || "",
       track_no: t.track_no != null ? String(t.track_no) : "",
-      release_type: t.release_type || "",
     };
     return EDIT_FIELDS.map((field) => ({
       field,
@@ -231,21 +244,24 @@ export function ComparePanel({
     }
   }, [trackId, dirtyFields, onWritten]);
 
-  const normalizeArchive = useCallback(async () => {
-    setNormalizing(true);
-    setError(null);
-    try {
-      await api.archiveNormalize(trackId);
-      // 重新检查归档状态
-      const map = await api.archiveCheckBatch([trackId]);
-      if (map[trackId] != null) setArchive(map[trackId]);
-      onWritten();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setNormalizing(false);
-    }
-  }, [trackId, onWritten]);
+  const normalizeIssue = useCallback(
+    async (kind: string) => {
+      setNormalizing(kind);
+      setError(null);
+      try {
+        await api.archiveNormalizeIssue(trackId, kind);
+        // 重新检查归档状态
+        const map = await api.archiveCheckBatch([trackId]);
+        if (map[trackId] != null) setArchive(map[trackId]);
+        onWritten();
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setNormalizing(null);
+      }
+    },
+    [trackId, onWritten],
+  );
 
   return (
     <aside className="cmp-panel" role="complementary" aria-label="catalog 字段">
@@ -309,15 +325,22 @@ export function ComparePanel({
           </div>
           <div className="cmp-fields">
             <div className="cmp-fields-title">文件字段（可编辑）</div>
-            {EDIT_FIELDS.map((field) => (
-              <label key={field} className="cmp-field-edit">
-                <span className="cmp-field-label">{FIELD_LABEL[field] ?? field}</span>
-                <input
-                  value={draft[field] ?? ""}
-                  onChange={(e) => setDraft((d) => ({ ...d, [field]: e.target.value }))}
-                  placeholder="—"
-                />
-              </label>
+            {EDIT_GROUPS.map((group, gi) => (
+              <div
+                key={gi}
+                className={`cmp-field-row${group.length === 1 ? " single" : ""}`}
+              >
+                {group.map((field) => (
+                  <label key={field} className="cmp-field-compact cmp-field-edit">
+                    <span className="cmp-field-label">{FIELD_LABEL[field] ?? field}</span>
+                    <input
+                      value={draft[field] ?? ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, [field]: e.target.value }))}
+                      placeholder="—"
+                    />
+                  </label>
+                ))}
+              </div>
             ))}
             <div className="cmp-edit-actions">
               <button
@@ -376,7 +399,13 @@ export function ComparePanel({
           </div>
         </div>
       )}
-      {/* 归档状态：已关联曲目才显示；无歌词不报 */}
+      {/* 归档状态：仅已关联 catalog；未关联提示先刮削 */}
+      {data && data.track.catalog_id == null && (
+        <div className="cmp-archive">
+          <div className="cmp-fields-title">归档状态</div>
+          <div className="tertiary cmp-hint">先要刮削，关联 catalog 后再整理归档</div>
+        </div>
+      )}
       {data && data.track.catalog_id != null && archive && (
         <div className="cmp-archive">
           <div className="cmp-fields-title">
@@ -390,32 +419,40 @@ export function ComparePanel({
             )}
           </div>
           {!archive.ok && (
-            <>
-              <ul className="cmp-archive-issues">
-                {archive.issues.map((issue, i) => (
-                  <li key={i} className="cmp-archive-issue">
+            <ul className="cmp-archive-issues">
+              {archive.issues.map((issue, i) => (
+                <li key={`${issue.kind}-${i}`} className="cmp-archive-issue">
+                  <div className="cmp-archive-issue-row">
                     <span className="cmp-archive-msg">{issue.message}</span>
-                    {issue.current && (
-                      <span className="cmp-archive-path tertiary" title={issue.current}>
-                        当前：{issue.current}
-                      </span>
-                    )}
-                    <span className="cmp-archive-path tertiary" title={issue.expected}>
-                      期望：{issue.expected}
+                    <button
+                      className="btn btn-sm"
+                      disabled={writing}
+                      title={
+                        issue.kind.endsWith("location")
+                          ? "只挪位置，保留当前文件名"
+                          : "只改命名，留在当前目录"
+                      }
+                      onClick={() => void normalizeIssue(issue.kind)}
+                    >
+                      {normalizing === issue.kind ? (
+                        <Loader2 size={12} className="spin" />
+                      ) : (
+                        <FolderCheck size={12} />
+                      )}
+                      整理
+                    </button>
+                  </div>
+                  {issue.current && (
+                    <span className="cmp-archive-path tertiary" title={issue.current}>
+                      当前：{issue.current}
                     </span>
-                  </li>
-                ))}
-              </ul>
-              <button
-                className="btn btn-primary"
-                disabled={normalizing}
-                title="把外挂歌词移到库 lrc/ 目录并按「歌手 - 歌名.lrc」命名"
-                onClick={() => void normalizeArchive()}
-              >
-                {normalizing ? <Loader2 size={14} className="spin" /> : <FolderCheck size={14} />}
-                整理
-              </button>
-            </>
+                  )}
+                  <span className="cmp-archive-path tertiary" title={issue.expected}>
+                    期望：{issue.expected}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

@@ -240,6 +240,8 @@ impl LibraryDb {
             CREATE INDEX IF NOT EXISTS idx_tracks_deleted ON tracks(is_deleted);
             CREATE INDEX IF NOT EXISTS idx_tracks_catalog ON tracks(catalog_id);
             CREATE INDEX IF NOT EXISTS idx_tracks_mb_rec ON tracks(mb_recording_mbid);
+            CREATE INDEX IF NOT EXISTS idx_tracks_mb_rel ON tracks(mb_release_mbid);
+            CREATE INDEX IF NOT EXISTS idx_tracks_title_artist ON tracks(title, artist);
 
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -266,9 +268,11 @@ impl LibraryDb {
             eprintln!("[AxMusic] catalog 去重跳过: {e}");
         }
         if let Err(e) = self.conn.execute_batch(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_mbid ON catalog(mbid) WHERE mbid != '';",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_mbid ON catalog(mbid) WHERE mbid != '';
+             CREATE INDEX IF NOT EXISTS idx_catalog_title_artist ON catalog(title, artist);
+             CREATE INDEX IF NOT EXISTS idx_catalog_rel_track ON catalog(release_mbid, track_no);",
         ) {
-            eprintln!("[AxMusic] catalog.mbid 唯一索引未建立: {e}");
+            eprintln!("[AxMusic] catalog 索引未完全建立: {e}");
         }
         Ok(())
     }
@@ -427,6 +431,148 @@ impl LibraryDb {
         )?;
         // Re-apply any known catalog link (upsert keeps catalog_id on conflict).
         Ok(())
+    }
+
+    /// 归档移动后改写 tracks.path / filename（按 id 定位，避免 upsert 插新行）。
+    pub fn update_track_path(&self, id: i64, new_path: &str, new_filename: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET path = ?1, filename = ?2, updated_at = ?3 WHERE id = ?4",
+            params![new_path, new_filename, now_unix_secs(), id],
+        )?;
+        Ok(())
+    }
+
+    /// 找出「同一首歌换路径」的旧行 id（搬迁继承）。
+    /// 身份优先级：recording MBID → release MBID+轨号 → title+artist+album+时长 → title+artist+时长。
+    /// 仅接受旧路径文件已不在磁盘（或已标删）的行；优先有 catalog_id、已标删者。
+    pub fn find_moved_track_candidate(
+        &self,
+        new_path: &str,
+        probe: &TrackRow,
+    ) -> Result<Option<i64>> {
+        const CAND_COLS: &str = "id, path, catalog_id, is_deleted";
+        type Cand = (i64, String, Option<i64>, i64);
+
+        fn map_cand(r: &rusqlite::Row<'_>) -> rusqlite::Result<Cand> {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        }
+
+        // 旧路径文件仍在 → 不是搬迁（复制/双文件），不继承；优先有 catalog_id、已标删者
+        fn better(best: &mut Option<(i64, (bool, bool))>, c: Cand) {
+            let (id, path, cid, del) = c;
+            if del == 0 && std::path::Path::new(&path).exists() {
+                return;
+            }
+            let s = (cid.is_some_and(|v| v > 0), del != 0);
+            if best.as_ref().map(|(_, b)| *b < s).unwrap_or(true) {
+                *best = Some((id, s));
+            }
+        }
+
+        let mut best: Option<(i64, (bool, bool))> = None;
+
+        // 1. recording MBID
+        if !probe.mb_recording_mbid.is_empty() {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {CAND_COLS} FROM tracks
+                 WHERE path != ?1 AND mb_recording_mbid = ?2 AND mb_recording_mbid != ''"
+            ))?;
+            for row in stmt.query_map(params![new_path, probe.mb_recording_mbid], map_cand)? {
+                better(&mut best, row?);
+            }
+            if best.is_some() {
+                return Ok(best.map(|(id, _)| id));
+            }
+        }
+        // 2. release MBID + 轨号（碟号尽量对齐）
+        if !probe.mb_release_mbid.is_empty() && probe.track_no.is_some() {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {CAND_COLS} FROM tracks
+                 WHERE path != ?1 AND mb_release_mbid = ?2 AND mb_release_mbid != ''
+                   AND track_no = ?3
+                   AND (disc_no IS NULL OR ?4 IS NULL OR disc_no = ?4)"
+            ))?;
+            for row in stmt.query_map(
+                params![new_path, probe.mb_release_mbid, probe.track_no, probe.disc_no],
+                map_cand,
+            )? {
+                better(&mut best, row?);
+            }
+            if best.is_some() {
+                return Ok(best.map(|(id, _)| id));
+            }
+        }
+        // 3/4. 标签字段 + 时长（时长须有效，降低误配）
+        if !probe.title.is_empty() && !probe.artist.is_empty() && probe.duration_ms > 0 {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {CAND_COLS} FROM tracks
+                 WHERE path != ?1 AND title = ?2 AND artist = ?3
+                   AND ((?4 != '' AND album = ?4) OR album = '' OR ?4 = '')
+                   AND duration_ms = ?5"
+            ))?;
+            for row in stmt.query_map(
+                params![
+                    new_path,
+                    probe.title,
+                    probe.artist,
+                    probe.album,
+                    probe.duration_ms
+                ],
+                map_cand,
+            )? {
+                better(&mut best, row?);
+            }
+            if best.is_some() {
+                return Ok(best.map(|(id, _)| id));
+            }
+
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {CAND_COLS} FROM tracks
+                 WHERE path != ?1 AND title = ?2 AND artist = ?3 AND duration_ms = ?4"
+            ))?;
+            for row in stmt.query_map(
+                params![new_path, probe.title, probe.artist, probe.duration_ms],
+                map_cand,
+            )? {
+                better(&mut best, row?);
+            }
+        }
+        Ok(best.map(|(id, _)| id))
+    }
+
+    /// 扫描收尾兜底：把「已删旧行」上的 catalog_id 继承给「仍存活但未关联」的新行。
+    /// 覆盖扫描中途未能搬迁接管的场景（旧文件当时仍在、后被挪走等）。返回继承条数。
+    pub fn inherit_catalog_from_moved(&self) -> Result<usize> {
+        let unlinked: Vec<TrackRow> = self
+            .conn
+            .prepare(&format!(
+                "SELECT {TRACK_COLS} FROM tracks
+                 WHERE is_deleted = 0 AND (catalog_id IS NULL OR catalog_id = 0)"
+            ))?
+            .query_map([], map_track)?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut n = 0usize;
+        for t in unlinked {
+            let Some(old_id) = self.find_moved_track_candidate(&t.path, &t)? else {
+                continue;
+            };
+            let cid: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT catalog_id FROM tracks WHERE id = ?1",
+                    params![old_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            if let Some(cid) = cid {
+                if cid > 0 {
+                    self.link_track_catalog(t.id, cid)?;
+                    n += 1;
+                }
+            }
+        }
+        Ok(n)
     }
 
     /// 全量置删 + 分块回置进同一事务：中途崩溃/失败不会把全库残留在 is_deleted=1。
@@ -1067,6 +1213,112 @@ pub fn create_library_dir(parent: &Path, name: &str) -> Result<PathBuf> {
     let dir = parent.join(name);
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("无法创建目录 {}", dir.display()))?;
+    crate::paths::ensure_library_dirs(&dir)
+        .with_context(|| format!("无法创建库子目录 {}", dir.display()))?;
     Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_track(path: &str) -> TrackRow {
+        TrackRow {
+            id: 0,
+            path: path.into(),
+            filename: Path::new(path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            title: "晴天".into(),
+            artist: "周杰伦".into(),
+            album: "叶惠美".into(),
+            album_artist: "周杰伦".into(),
+            year: "2003".into(),
+            track_no: Some(1),
+            disc_no: None,
+            duration_ms: 269_000,
+            format: "flac".into(),
+            sample_rate: Some(44100),
+            bit_rate: Some(900),
+            has_cover: false,
+            has_lyrics: false,
+            has_lrc: false,
+            has_year: true,
+            has_mb_id: false,
+            tag_status: "partial".into(),
+            missing: String::new(),
+            release_type: String::new(),
+            mb_recording_mbid: String::new(),
+            mb_release_mbid: String::new(),
+            catalog_id: None,
+            mtime: 0,
+            file_size: 1000,
+            catalog_title: None,
+            catalog_artist: None,
+            catalog_album: None,
+            catalog_year: None,
+            catalog_track_no: None,
+        }
+    }
+
+    #[test]
+    fn moved_track_inherits_catalog_id() {
+        let dir = std::env::temp_dir().join(format!("axmusic-lib-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("t.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = LibraryDb::open(&db_path).unwrap();
+
+        // 旧路径行：已关联 catalog，文件已不在
+        let old_path = dir.join("old_gone.flac").to_string_lossy().to_string();
+        let old = sample_track(&old_path);
+        db.upsert_track(&old, 1000, 1).unwrap();
+        let old_id = db.get_track_by_path(&old_path).unwrap().unwrap().id;
+        let cat_id = db
+            .insert_catalog(&CatalogRow {
+                id: 0,
+                source: "musicbrainz".into(),
+                kind: "recording".into(),
+                mbid: "mb-1".into(),
+                release_mbid: String::new(),
+                title: "晴天".into(),
+                artist: "周杰伦".into(),
+                album: "叶惠美".into(),
+                album_artist: "周杰伦".into(),
+                year: "2003".into(),
+                track_no: Some(1),
+                disc_no: None,
+                release_type: String::new(),
+                cover_path: None,
+                created_at: String::new(),
+            })
+            .unwrap();
+        db.link_track_catalog(old_id, cat_id).unwrap();
+
+        // 新路径文件存在，内容是「同一首歌」但尚未入库关联
+        let new_path = dir.join("Unarchived").join("new.flac");
+        std::fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        std::fs::write(&new_path, b"x").unwrap();
+        let mut probe = sample_track(&new_path.to_string_lossy());
+        probe.catalog_id = None;
+
+        // 1) 扫描中搬迁接管：应命中旧行
+        let cand = db
+            .find_moved_track_candidate(&probe.path, &probe)
+            .unwrap()
+            .expect("应命中搬迁候选");
+        assert_eq!(cand, old_id);
+
+        // 2) 兜底 inherit：旧行已标删、新行未关联
+        db.mark_missing_paths(&[]).unwrap(); // 全部标删
+        db.upsert_track(&probe, 1000, 2).unwrap(); // 新路径活行，catalog_id 仍空
+        let n = db.inherit_catalog_from_moved().unwrap();
+        assert!(n >= 1, "inherit 应至少补上一条");
+        let after = db.get_track_by_path(&probe.path).unwrap().unwrap();
+        assert_eq!(after.catalog_id, Some(cat_id));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 

@@ -97,7 +97,25 @@ where
 
                 row.path = path_str.clone();
                 row.filename = name.clone();
-                let existed = db.get_track_by_path(&path_str)?.is_some();
+                let mut existed = db.get_track_by_path(&path_str)?.is_some();
+                // 搬迁继承：路径变了但仍是同一首歌 → 复用旧行（保留 catalog_id / id）。
+                // 增强步骤失败不中止扫描：降级为按新曲目入库。
+                if !existed {
+                    match db.find_moved_track_candidate(&path_str, &row) {
+                        Ok(Some(old_id)) => {
+                            match db.update_track_path(old_id, &path_str, &name) {
+                                Ok(()) => existed = true,
+                                Err(e) => {
+                                    eprintln!("[AxMusic] 搬迁继承跳过 {path_str}: {e:#}");
+                                }
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            eprintln!("[AxMusic] 搬迁候选匹配跳过 {path_str}: {e:#}");
+                        }
+                    }
+                }
                 db.upsert_track(&row, file_size, mtime)?;
                 if existed {
                     updated += 1;
@@ -131,6 +149,9 @@ where
     tx.commit()?;
 
     db.mark_missing_paths(&present)?;
+    // 搬迁兜底继承 + 字段自动匹配：挪路径/重扫后把 catalog_id 粘回曲目身份
+    let _ = db.inherit_catalog_from_moved();
+    let _ = db.auto_match_unlinked();
 
     Ok(ScanStats {
         added,

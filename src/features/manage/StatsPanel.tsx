@@ -1,12 +1,73 @@
-import type { LibraryStats } from "../../lib/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FolderCheck, Loader2, FileAudio, FileText, File, Folder } from "lucide-react";
+import { api } from "../../lib/api";
+import type { LibraryRootScan, LibraryStats } from "../../lib/types";
 import "./StatsPanel.css";
+
+const KIND_ICON: Record<string, typeof Folder> = {
+  audio: FileAudio,
+  lyrics: FileText,
+  other_file: File,
+  other_dir: Folder,
+};
+
+const KIND_LABEL: Record<string, string> = {
+  audio: "音频",
+  lyrics: "歌词",
+  other_file: "文件",
+  other_dir: "文件夹",
+};
 
 /** 右栏常驻面板：未选中曲目时显示库统计（选中后切换为 文件 vs catalog 对比）。 */
 export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
+  const [rootScan, setRootScan] = useState<LibraryRootScan | null>(null);
+  const [organizing, setOrganizing] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const aliveRef = useRef(true);
+
   const pct =
     stats && stats.total_tracks > 0
       ? Math.round((stats.linked_tracks / stats.total_tracks) * 100)
       : 0;
+
+  const reloadScan = useCallback(async () => {
+    try {
+      const s = await api.libraryRootScan();
+      if (aliveRef.current) {
+        setRootScan(s);
+        setScanError(null);
+      }
+    } catch (e) {
+      if (aliveRef.current) setScanError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadScan();
+    return () => {
+      aliveRef.current = false;
+    };
+  }, [reloadScan]);
+
+  const organize = useCallback(async () => {
+    setOrganizing(true);
+    setScanError(null);
+    try {
+      const r = await api.libraryRootOrganize();
+      await reloadScan();
+      if (r.failed.length > 0 && aliveRef.current) {
+        const shown = r.failed.slice(0, 5).join("、");
+        const more = r.failed.length > 5 ? " 等" : "";
+        setScanError(
+          `已整理 ${r.moved.length} 项；${r.failed.length} 项未移动：${shown}${more}`,
+        );
+      }
+    } catch (e) {
+      setScanError(String(e));
+    } finally {
+      setOrganizing(false);
+    }
+  }, [reloadScan]);
 
   return (
     <aside className="stats-panel" aria-label="库统计">
@@ -67,6 +128,45 @@ export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
                 <span className="mono">{stats.with_lyrics}</span>
               </li>
             </ul>
+          </section>
+
+          <section className="stats-block">
+            <div className="stats-block-title">库文件扫描</div>
+            {scanError && <div className="error-line">{scanError}</div>}
+            {!rootScan && <div className="tertiary">扫描中…</div>}
+            {rootScan?.ok && <div className="tertiary stats-note">库根目录整洁</div>}
+            {rootScan != null && !rootScan.ok && (
+              <>
+                <div className="stats-big">
+                  <span className="mono stats-accent">{rootScan.items.length}</span>
+                  <span className="tertiary"> 项待整理（挪入 Unarchived）</span>
+                </div>
+                <ul className="stats-stray">
+                  {rootScan.items.map((it) => {
+                    const Icon = KIND_ICON[it.kind] ?? File;
+                    return (
+                      <li key={it.path} title={it.path}>
+                        <Icon size={12} />
+                        <span className="stats-stray-name">{it.name}</span>
+                        <span className="tertiary">{KIND_LABEL[it.kind] ?? it.kind}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button
+                  className="btn btn-primary"
+                  disabled={organizing}
+                  title="把库根目录里不属于白名单的文件/文件夹全部挪进 Unarchived/"
+                  onClick={() => void organize()}
+                >
+                  {organizing ? <Loader2 size={14} className="spin" /> : <FolderCheck size={14} />}
+                  整理
+                </button>
+              </>
+            )}
+            <div className="tertiary stats-note">
+              保留 archived / Unarchived / lrc / covers / playlists / axmusic.db
+            </div>
           </section>
         </>
       )}

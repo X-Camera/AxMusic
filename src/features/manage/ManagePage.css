@@ -122,6 +122,14 @@
 .manage-table-pane {
   flex: 1;
   min-width: 0;
+  /* 表头 sticky 贴顶：去掉上内边距，否则行会从表头上方缝隙穿出 */
+  padding-top: 0 !important;
+}
+
+.manage-table-pane .track-table,
+.manage-table-pane .empty-state {
+  /* 顶距用 margin：随内容滚走，不占表头上方的固定空隙 */
+  margin-top: var(--space-3);
 }
 
 /* 右栏：上顶到工具栏同一行，底部固定操作排；宽度与设置/播放列表一致 */

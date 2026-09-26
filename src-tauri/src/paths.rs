@@ -65,7 +65,7 @@ fn appdata_root() -> PathBuf {
 
 /// Library working DB lives **inside the library root** (next to the audio).
 pub fn library_db_path(library_root: &Path) -> PathBuf {
-    library_root.join("axmusic.db")
+    library_root.join(DB_FILE_NAME)
 }
 
 /// 当前库目录（全局单例）。歌词路径解析等无 AppState 上下文的场景使用。
@@ -80,9 +80,54 @@ pub fn set_library_root(root: Option<PathBuf>) {
     }
 }
 
+/// 库根目录/文件名单一事实来源（helper 与白名单共同引用，防止漂移）。
+pub const ARCHIVED_DIR_NAME: &str = "archived";
+pub const UNARCHIVED_DIR_NAME: &str = "Unarchived";
+pub const LRC_DIR_NAME: &str = "lrc";
+pub const COVERS_DIR_NAME: &str = "covers";
+pub const PLAYLISTS_DIR_NAME: &str = "playlists";
+pub const DB_FILE_NAME: &str = "axmusic.db";
+
 /// 库内歌词目录：`<库根>/lrc/`
 pub fn library_lrc_dir(library_root: &Path) -> PathBuf {
-    library_root.join("lrc")
+    library_root.join(LRC_DIR_NAME)
+}
+
+/// 歌曲归档区：`<库根>/archived/`
+pub fn library_archived_dir(library_root: &Path) -> PathBuf {
+    library_root.join(ARCHIVED_DIR_NAME)
+}
+
+/// 待整理区：`<库根>/Unarchived/`
+pub fn library_unarchived_dir(library_root: &Path) -> PathBuf {
+    library_root.join(UNARCHIVED_DIR_NAME)
+}
+
+/// 库根白名单目录/文件（见 docs/歌曲归档.md）。
+/// 含 SQLite WAL/rollback journal 伴生文件——journal 在非 WAL 回退或崩溃恢复时会出现，
+/// 被当成杂项挪走会导致库损坏。
+pub const LIBRARY_ROOT_DIRS: &[&str] = &[
+    ARCHIVED_DIR_NAME,
+    UNARCHIVED_DIR_NAME,
+    LRC_DIR_NAME,
+    COVERS_DIR_NAME,
+    PLAYLISTS_DIR_NAME,
+];
+pub const LIBRARY_ROOT_FILES: &[&str] = &[
+    DB_FILE_NAME,
+    "axmusic.db-wal",
+    "axmusic.db-shm",
+    "axmusic.db-journal",
+];
+
+/// 创建库目录骨架（archived / Unarchived / lrc / covers / playlists）。
+pub fn ensure_library_dirs(library_root: &Path) -> std::io::Result<()> {
+    for name in LIBRARY_ROOT_DIRS {
+        fs::create_dir_all(library_root.join(name)).map_err(|e| {
+            std::io::Error::new(e.kind(), format!("创建库目录 {name} 失败: {e}"))
+        })?;
+    }
+    Ok(())
 }
 
 /// 同目录唯一临时文件路径（pid + 毫秒 + 自增计数），供「写临时文件 + rename」用。

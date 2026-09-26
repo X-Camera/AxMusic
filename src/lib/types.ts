@@ -411,6 +411,8 @@ export interface CompareData {
   changes: FieldChange[];
   /** catalog 缓存封面（data URL），未刮取为 null */
   cover_data: string | null;
+  /** 本次比较刚写入 catalog_id（列表需刷新绿字） */
+  linked_now?: boolean;
 }
 
 export interface CoverCandidate {
@@ -540,7 +542,7 @@ export type FolderMeta = FolderFile;
 
 /** 一项归档问题 */
 export interface ArchiveIssue {
-  /** "lyrics_name" | "lyrics_location" */
+  /** "song_location" | "song_name" | "lyrics_location" | "lyrics_name" */
   kind: string;
   message: string;
   current: string;
@@ -551,4 +553,27 @@ export interface ArchiveIssue {
 export interface ArchiveStatus {
   ok: boolean;
   issues: ArchiveIssue[];
+}
+
+// ── 库根杂项扫描 ────────────────────────────────────────────────────
+
+/** 库根白名单外的一项 */
+export interface LibraryRootItem {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  /** "audio" | "lyrics" | "other_file" | "other_dir" */
+  kind: string;
+}
+
+/** 库根杂项扫描结果 */
+export interface LibraryRootScan {
+  ok: boolean;
+  items: LibraryRootItem[];
+}
+
+/** 杂项整理结果 */
+export interface OrganizeResult {
+  moved: string[];
+  failed: string[];
 }

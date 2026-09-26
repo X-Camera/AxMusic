@@ -182,21 +182,29 @@
   margin-top: 8px;
 }
 
+/* 未关联可编辑字段：嵌在双列 .cmp-field-row 里，与 catalog 紧凑格同构 */
 .cmp-field-edit {
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 52px 1fr;
   align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border-soft);
+  gap: 6px;
+  min-height: 30px;
   font-size: 12px;
 }
 
 .cmp-field-edit input {
-  height: 28px;
-  padding: 0 8px;
+  height: 26px;
+  padding: 0 6px;
   font-size: 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+/* 兼容：若单独一行使用（无 .cmp-field-compact） */
+.cmp-field-edit:not(.cmp-field-compact) {
+  grid-template-columns: 72px 1fr;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .cmp-edit-actions {
@@ -243,6 +251,20 @@
   border-radius: var(--radius-control);
   background: var(--warning-soft);
   font-size: 12px;
+}
+
+.cmp-archive-issue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cmp-archive-issue-row .btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .cmp-archive-msg {
