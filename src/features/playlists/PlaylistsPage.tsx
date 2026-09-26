@@ -38,6 +38,8 @@ export function PlaylistsPage() {
   const loadDetail = useCallback(async (name: string) => {
     try {
       setDetail(await api.playlistGet(name));
+      // 打开详情会做失效条目重匹配自愈；心形对照键跟着刷
+      void useFavorites.getState().reload();
       setError(null);
     } catch (e) {
       setDetail(null);

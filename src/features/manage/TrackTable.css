@@ -101,9 +101,58 @@
   color: var(--success);
 }
 
-/* 布尔列打勾（内嵌/外挂歌词） */
+/* 布尔列打勾（归档等） */
 .track-table td.cell-ok {
   color: var(--success);
+}
+
+/* 格式标签：无损 success，有损中性 */
+.fmt-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+}
+
+.fmt-tag.lossless {
+  color: var(--success);
+  border-color: var(--success-line);
+  background: var(--success-soft);
+}
+
+/* 歌词双态小标签：嵌=内嵌 / 挂=外挂，绿=有 */
+.lyr-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1;
+  border: 1px solid transparent;
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+
+.lyr-mini + .lyr-mini {
+  margin-left: 2px;
+}
+
+.lyr-mini.ok {
+  color: var(--success);
+  border-color: var(--success-line);
+  background: var(--success-soft);
 }
 
 /* 归档有问题 → 黄色问号 */

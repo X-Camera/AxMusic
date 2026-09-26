@@ -540,6 +540,100 @@ impl LibraryDb {
         Ok(best.map(|(id, _)| id))
     }
 
+    /// 歌单失效条目兜底重匹配：路径变更（归档/移动）后按线索找回库内仍存活曲目。
+    /// 线索分层：EXTINF artist+title → 文件名主名（原名 / `artist - title` / title）→ title+时长。
+    /// 仅接受磁盘上仍存在的行；无法唯一定位时返回 None（宁缺勿滥，避免误愈合歌单/喜爱）。
+    pub fn find_track_for_playlist_rematch(
+        &self,
+        old_path: &str,
+        artist: &str,
+        title: &str,
+        duration_ms: u64,
+    ) -> Result<Option<TrackRow>> {
+        let artist = artist.trim();
+        let title = title.trim();
+        let old = Path::new(old_path);
+        let old_stem = old
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let old_ext = old
+            .extension()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        // A. artist + title（归档改名后 EXTINF 仍带这两项）
+        if !artist.is_empty() && !title.is_empty() {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {TRACK_COLS} FROM tracks
+                 WHERE is_deleted = 0
+                   AND lower(trim(title)) = lower(trim(?1))
+                   AND lower(trim(artist)) = lower(trim(?2))"
+            ))?;
+            let cands = stmt
+                .query_map(params![title, artist], map_track)?
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(r) = pick_unique_rematch(cands, duration_ms, &old_ext) {
+                return Ok(Some(r));
+            }
+        }
+
+        // B. 文件名主名：原主名 / `artist - title` / title
+        let mut stems: Vec<String> = Vec::new();
+        if !old_stem.is_empty() {
+            stems.push(old_stem.clone());
+        }
+        if !title.is_empty() {
+            if !artist.is_empty() {
+                stems.push(format!("{artist} - {title}").to_lowercase());
+            }
+            stems.push(title.to_lowercase());
+        }
+        for stem in stems {
+            // LIKE 通配符转义：% _ \ —— 否则「100%」之类会误匹配
+            let stem_like = stem
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {TRACK_COLS} FROM tracks
+                 WHERE is_deleted = 0
+                   AND (lower(filename) = lower(?1)
+                        OR lower(filename) LIKE lower(?2) || '.%' ESCAPE '\\')"
+            ))?;
+            let with_ext = if old_ext.is_empty() {
+                stem.clone()
+            } else {
+                format!("{stem}.{old_ext}")
+            };
+            let cands = stmt
+                .query_map(params![with_ext, stem_like], map_track)?
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(r) = pick_unique_rematch(cands, duration_ms, &old_ext) {
+                return Ok(Some(r));
+            }
+        }
+
+        // C. 仅 title + 时长（无歌手时的最后手段）
+        if !title.is_empty() && duration_ms > 0 {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {TRACK_COLS} FROM tracks
+                 WHERE is_deleted = 0
+                   AND lower(trim(title)) = lower(trim(?1))
+                   AND duration_ms > 0
+                   AND abs(duration_ms - ?2) <= 3000"
+            ))?;
+            let cands = stmt
+                .query_map(params![title, duration_ms as i64], map_track)?
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(r) = pick_unique_rematch(cands, duration_ms, &old_ext) {
+                return Ok(Some(r));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// 扫描收尾兜底：把「已删旧行」上的 catalog_id 继承给「仍存活但未关联」的新行。
     /// 覆盖扫描中途未能搬迁接管的场景（旧文件当时仍在、后被挪走等）。返回继承条数。
     pub fn inherit_catalog_from_moved(&self) -> Result<usize> {
@@ -1202,6 +1296,66 @@ fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
     })
 }
 
+/// 重匹配候选收敛：只认磁盘仍存在的行；时长/扩展名择优后若仍不唯一，
+/// 仅当身份（title+artist）完全一致时取时长最近、id 最小的一条，否则放弃（防误配）。
+fn pick_unique_rematch(
+    mut cands: Vec<TrackRow>,
+    entry_duration_ms: u64,
+    old_ext: &str,
+) -> Option<TrackRow> {
+    cands.retain(|r| Path::new(&r.path).is_file());
+    if cands.is_empty() {
+        return None;
+    }
+    if entry_duration_ms > 0 {
+        let near: Vec<TrackRow> = cands
+            .iter()
+            .filter(|r| r.duration_ms > 0 && (r.duration_ms - entry_duration_ms as i64).abs() <= 3000)
+            .cloned()
+            .collect();
+        if !near.is_empty() {
+            cands = near;
+        }
+    }
+    if !old_ext.is_empty() {
+        let same_ext: Vec<TrackRow> = cands
+            .iter()
+            .filter(|r| {
+                Path::new(&r.path)
+                    .extension()
+                    .map(|e| e.to_string_lossy().eq_ignore_ascii_case(old_ext))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        if !same_ext.is_empty() {
+            cands = same_ext;
+        }
+    }
+    if cands.len() == 1 {
+        return cands.into_iter().next();
+    }
+    let ident = |r: &TrackRow| {
+        (
+            r.title.trim().to_lowercase(),
+            r.artist.trim().to_lowercase(),
+        )
+    };
+    let k0 = ident(&cands[0]);
+    if cands.iter().all(|r| ident(r) == k0) {
+        cands.sort_by_key(|r| {
+            let d = if entry_duration_ms > 0 && r.duration_ms > 0 {
+                (r.duration_ms - entry_duration_ms as i64).unsigned_abs()
+            } else {
+                0
+            };
+            (d, r.id)
+        });
+        return cands.into_iter().next();
+    }
+    None
+}
+
 /// Create parent dirs + a new directory (library wizard).
 pub fn create_library_dir(parent: &Path, name: &str) -> Result<PathBuf> {
     let name = name.trim();
@@ -1317,6 +1471,64 @@ mod tests {
         assert!(n >= 1, "inherit 应至少补上一条");
         let after = db.get_track_by_path(&probe.path).unwrap().unwrap();
         assert_eq!(after.catalog_id, Some(cat_id));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn playlist_rematch_finds_moved_track() {
+        let dir = std::env::temp_dir().join(format!("axmusic-rematch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("t.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = LibraryDb::open(&db_path).unwrap();
+
+        // 归档后的新路径（文件在磁盘上）
+        let new_path = dir
+            .join("archived")
+            .join("周杰伦")
+            .join("周杰伦 - 晴天.flac");
+        std::fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        std::fs::write(&new_path, b"x").unwrap();
+        let mut row = sample_track(&new_path.to_string_lossy());
+        row.filename = "周杰伦 - 晴天.flac".into();
+        db.upsert_track(&row, 1000, 1).unwrap();
+
+        // 旧路径已不存在；EXTINF 线索 = 歌手 - 歌名
+        let old_path = dir.join("Unarchived").join("晴天.flac");
+        let hit = db
+            .find_track_for_playlist_rematch(
+                &old_path.to_string_lossy(),
+                "周杰伦",
+                "晴天",
+                269_000,
+            )
+            .unwrap()
+            .expect("应按 artist+title 找回归档后的曲目");
+        assert_eq!(hit.path, new_path.to_string_lossy());
+
+        // 无歌手线索时靠文件名主名 `artist - title`
+        let hit2 = db
+            .find_track_for_playlist_rematch(
+                &old_path.to_string_lossy(),
+                "",
+                "晴天",
+                269_000,
+            )
+            .unwrap()
+            .expect("应按 title/文件名找回");
+        assert_eq!(hit2.path, new_path.to_string_lossy());
+
+        // 库里没有的歌 → None
+        let miss = db
+            .find_track_for_playlist_rematch(
+                &old_path.to_string_lossy(),
+                "不存在",
+                "没有这首歌",
+                1000,
+            )
+            .unwrap();
+        assert!(miss.is_none(), "匹配不到才算真失效");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

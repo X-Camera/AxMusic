@@ -29,6 +29,10 @@ function matchNo(file: number | null, catalog: number | null): boolean {
   return file != null && catalog != null && file === catalog;
 }
 
+/** 无损容器扩展名（格式列标签用 success 描边区分） */
+const LOSSLESS_EXT = new Set(["flac", "wav", "alac", "aiff", "aif", "wv", "ape", "tta"]);
+const isLossless = (format: string) => LOSSLESS_EXT.has(format.toLowerCase());
+
 /** 内嵌封面缩略图：进入视口才提取（懒加载），无封面显示占位图标且不发起加载。 */
 function CoverThumb({
   path,
@@ -125,11 +129,11 @@ export function TrackTable({
           <th>专辑</th>
           <th style={{ width: 56 }}>年份</th>
           <th style={{ width: 48 }}>轨号</th>
-          <th style={{ width: 72 }} title="内嵌歌词（标签内）">
-            内嵌歌词
+          <th style={{ width: 56 }} title="文件格式">
+            格式
           </th>
-          <th style={{ width: 72 }} title="外挂歌词（库 lrc/ 或同目录 .lrc）">
-            外挂歌词
+          <th style={{ width: 56 }} title="歌词：嵌=标签内，挂=外挂 .lrc（绿=有）">
+            歌词
           </th>
           <th style={{ width: 56 }} title="归档状态（已关联 catalog 才检查；未关联显示 —）">
             归档
@@ -192,11 +196,27 @@ export function TrackTable({
               >
                 {t.track_no ?? "—"}
               </td>
-              <td className={t.has_lyrics ? "cell-ok" : "cell-empty"}>
-                {t.has_lyrics ? "✓" : "—"}
+              <td title={t.format ? `格式 ${t.format.toUpperCase()}` : undefined}>
+                {t.format ? (
+                  <span className={`fmt-tag${isLossless(t.format) ? " lossless" : ""}`}>
+                    {t.format.toUpperCase()}
+                  </span>
+                ) : (
+                  <span className="cell-empty">—</span>
+                )}
               </td>
-              <td className={t.has_lrc ? "cell-ok" : "cell-empty"}>
-                {t.has_lrc ? "✓" : "—"}
+              <td
+                title={`内嵌歌词：${t.has_lyrics ? "有" : "无"}；外挂歌词：${t.has_lrc ? "有" : "无"}`}
+              >
+                <span
+                  className={`lyr-mini${t.has_lyrics ? " ok" : ""}`}
+                  title="内嵌歌词（标签内）"
+                >
+                  嵌
+                </span>
+                <span className={`lyr-mini${t.has_lrc ? " ok" : ""}`} title="外挂歌词（.lrc）">
+                  挂
+                </span>
               </td>
               <td>
                 {t.catalog_id == null ? (

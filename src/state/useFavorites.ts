@@ -38,11 +38,15 @@ export const useFavorites = create<FavState>((set, get) => ({
     set({ loading: true });
     try {
       const paths = await api.favoritePaths();
+      const keys = new Set(paths.map(favKey));
+      const prev = get().keys;
+      // 键集不变不 bump rev：避免「拉详情→刷喜爱→rev→再拉详情」打环
+      const unchanged = prev.size === keys.size && [...keys].every((k) => prev.has(k));
       set({
-        keys: new Set(paths.map(favKey)),
+        keys,
         loaded: true,
         // 首次加载不 bump，避免歌单页挂载时白刷一轮
-        rev: wasLoaded ? get().rev + 1 : get().rev,
+        rev: !wasLoaded || unchanged ? get().rev : get().rev + 1,
       });
     } catch (e) {
       // 「尚未初始化库根」是合法空态（库外浏览也会挂心形）：空集即可，避免反复打后端；

@@ -2686,14 +2686,10 @@ fn require_library_root(state: &State<'_, AppState>) -> Result<String, String> {
 }
 
 /// 歌单详情（带 DB 富化；无 DB 也能出列表，仅展示字段退化）。
+/// 失效条目先库内兜底重匹配，命中写回自愈；匹配不到才算缺失。
 fn playlist_detail_of(root: &str, name: &str, state: &State<'_, AppState>) -> Result<PlaylistDetail, String> {
-    let parsed = if playlists::is_favorites_id(name) {
-        playlists::read_favorites(Path::new(root))?
-    } else {
-        playlists::read_playlist(Path::new(root), name)?
-    };
     let guard = state.db.lock().map_err(|e| e.to_string())?;
-    Ok(playlists::to_entries(Path::new(root), name, &parsed, guard.as_ref()))
+    playlists::detail_with_rematch(Path::new(root), name, guard.as_ref()).map(|(d, _)| d)
 }
 
 /// 列出 `<库>/playlists/*.m3u8`（「喜爱」系统歌单始终置顶）。
@@ -2704,10 +2700,12 @@ pub fn playlist_list(state: State<'_, AppState>) -> Result<Vec<PlaylistSummary>,
 }
 
 /// 喜爱歌单路径列表（绝对路径），供前端心形状态对照。
+/// 读取时失效条目会库内兜底重匹配并写回，心形才能跟归档后的新路径对齐。
 #[tauri::command]
 pub fn favorite_paths(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let root = require_library_root(&state)?;
-    playlists::favorite_paths(Path::new(&root))
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    playlists::favorite_paths(Path::new(&root), guard.as_ref())
 }
 
 /// 切换单曲喜爱状态；返回切换后是否已喜爱及喜爱总数。
@@ -2800,13 +2798,17 @@ pub fn playlist_move_track(
 }
 
 /// 批量清理失效条目（磁盘上已不存在），一次读写；返回清理后的歌单详情。
+/// 先库内兜底重匹配：能找回的改路径保留，找不回的才删。
 #[tauri::command]
 pub fn playlist_clean_missing(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<PlaylistDetail, String> {
     let root = require_library_root(&state)?;
-    playlists::clean_missing(Path::new(&root), &name)?;
+    {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        playlists::clean_missing(Path::new(&root), &name, guard.as_ref())?;
+    }
     playlist_detail_of(&root, &name, &state)
 }
 

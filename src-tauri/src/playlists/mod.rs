@@ -528,25 +528,97 @@ pub fn move_entry(root: &Path, name: &str, rel_path: &str, delta: i64) -> Result
 }
 
 /// 批量清理失效条目（磁盘上已不存在），一次读写完事；返回清掉条数。
-pub fn clean_missing(root: &Path, name: &str) -> Result<usize, String> {
+/// 先库内兜底重匹配：能找回的改写路径保留，找不回的才删。
+pub fn clean_missing(root: &Path, name: &str, db: Option<&LibraryDb>) -> Result<usize, String> {
     let dir = playlists_dir(root);
     let mut entries = read_for_update(root, name)?;
+    let (healed, _) = rematch_missing_entries(root, &mut entries, db);
     let before = entries.len();
     entries.retain(|e| abs_from(&dir, &e.rel).is_file());
     let removed = before - entries.len();
-    if removed > 0 {
+    if removed > 0 || healed > 0 {
         write_playlist(root, name, &entries)?;
     }
     Ok(removed)
 }
 
 /// 喜爱歌单里各条目的绝对路径（原样）。
-pub fn favorite_paths(root: &Path) -> Result<Vec<String>, String> {
+/// 先做库内兜底重匹配并写回自愈，心形状态才能跟归档/移动后的新路径对齐。
+pub fn favorite_paths(root: &Path, db: Option<&LibraryDb>) -> Result<Vec<String>, String> {
+    let mut entries = read_favorites(root)?;
+    let (healed, _) = rematch_missing_entries(root, &mut entries, db);
+    if healed > 0 {
+        write_playlist(root, FAVORITES_FILE, &entries)?;
+    }
     let dir = playlists_dir(root);
-    Ok(read_favorites(root)?
+    Ok(entries
         .iter()
         .map(|e| abs_from(&dir, &e.rel).to_string_lossy().to_string())
         .collect())
+}
+
+/// 失效条目库内兜底重匹配：命中现存曲目则就地改写 `rel` 为新路径。
+/// 返回 (自愈条数, 仍缺失条数)。无库时只统计缺失、不改动。
+/// 归档/移动后路径变了，靠 EXTINF 的歌手/歌名、时长、原文件名找回；匹配不到才算真失效。
+pub fn rematch_missing_entries(
+    root: &Path,
+    entries: &mut [ParsedEntry],
+    db: Option<&LibraryDb>,
+) -> (usize, usize) {
+    let Some(db) = db else {
+        let dir = playlists_dir(root);
+        let missing = entries
+            .iter()
+            .filter(|e| !abs_from(&dir, &e.rel).is_file())
+            .count();
+        return (0, missing);
+    };
+    let dir = playlists_dir(root);
+    let mut healed = 0usize;
+    let mut missing = 0usize;
+    for e in entries.iter_mut() {
+        let abs = abs_from(&dir, &e.rel);
+        if abs.is_file() {
+            continue;
+        }
+        let (artist, title) = extinf_parse(&e.display);
+        let hit = db
+            .find_track_for_playlist_rematch(
+                &abs.to_string_lossy(),
+                &artist,
+                &title,
+                e.duration_ms,
+            )
+            .ok()
+            .flatten()
+            .filter(|t| Path::new(&t.path).is_file());
+        match hit {
+            Some(t) => {
+                e.rel = rel_from(&dir, Path::new(&t.path));
+                healed += 1;
+            }
+            None => missing += 1,
+        }
+    }
+    (healed, missing)
+}
+
+/// 读歌单/喜爱 → 兜底重匹配（命中则写回自愈）→ 展示结构。返回 (详情, 自愈条数)。
+pub fn detail_with_rematch(
+    root: &Path,
+    name: &str,
+    db: Option<&LibraryDb>,
+) -> Result<(PlaylistDetail, usize), String> {
+    let mut entries = if is_favorites_id(name) {
+        read_favorites(root)?
+    } else {
+        read_playlist(root, name)?
+    };
+    let (healed, _) = rematch_missing_entries(root, &mut entries, db);
+    if healed > 0 {
+        write_playlist(root, name, &entries)?;
+    }
+    Ok((to_entries(root, name, &entries, db), healed))
 }
 
 fn path_key(root: &Path, abs: &Path) -> String {
@@ -739,5 +811,82 @@ mod tests {
         assert_eq!(resolve_name("喜爱").unwrap(), FAVORITES_FILE);
         assert_eq!(display_name("喜爱"), FAVORITES_LABEL);
         assert_eq!(display_name("跑步"), "跑步");
+    }
+
+    #[test]
+    fn rematch_missing_heals_playlist_paths() {
+        use crate::library::{LibraryDb, TrackRow};
+
+        let root = std::env::temp_dir().join(format!("axmusic-pl-rematch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(playlists_dir(&root)).unwrap();
+        let db = LibraryDb::open(&root.join("axmusic.db")).unwrap();
+
+        // 归档后的新文件 + DB 行
+        let new_path = root
+            .join("archived")
+            .join("周杰伦")
+            .join("周杰伦 - 晴天.flac");
+        std::fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        std::fs::write(&new_path, b"x").unwrap();
+        let row = TrackRow {
+            id: 0,
+            path: new_path.to_string_lossy().to_string(),
+            filename: "周杰伦 - 晴天.flac".into(),
+            title: "晴天".into(),
+            artist: "周杰伦".into(),
+            album: "叶惠美".into(),
+            album_artist: "周杰伦".into(),
+            year: "2003".into(),
+            track_no: Some(1),
+            disc_no: None,
+            duration_ms: 269_000,
+            format: "flac".into(),
+            sample_rate: Some(44100),
+            bit_rate: Some(900),
+            has_cover: false,
+            has_lyrics: false,
+            has_lrc: false,
+            has_year: true,
+            has_mb_id: false,
+            tag_status: String::new(),
+            missing: String::new(),
+            release_type: String::new(),
+            mb_recording_mbid: String::new(),
+            mb_release_mbid: String::new(),
+            catalog_id: None,
+            mtime: 0,
+            file_size: 1,
+            catalog_title: None,
+            catalog_artist: None,
+            catalog_album: None,
+            catalog_year: None,
+            catalog_track_no: None,
+        };
+        db.upsert_track(&row, 1000, 1).unwrap();
+
+        // 喜爱里存的是归档前的旧路径
+        write_playlist(
+            &root,
+            FAVORITES_FILE,
+            &[ParsedEntry {
+                rel: "../Unarchived/晴天.flac".into(),
+                display: "周杰伦 - 晴天".into(),
+                duration_ms: 269_000,
+            }],
+        )
+        .unwrap();
+
+        let (detail, healed) = detail_with_rematch(&root, FAVORITES_FILE, Some(&db)).unwrap();
+        assert_eq!(healed, 1, "应自愈 1 条");
+        assert!(detail.entries[0].exists, "自愈后不应标缺失");
+        assert_eq!(detail.entries[0].path, new_path.to_string_lossy());
+
+        // 磁盘歌单已写回新路径
+        let paths = favorite_paths(&root, Some(&db)).unwrap();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], new_path.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

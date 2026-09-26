@@ -1,3 +1,6 @@
+import { listen } from "@tauri-apps/api/event";
+import { useEffect } from "react";
+
 import { CloseDialog } from "./components/CloseDialog";
 import { MiniPlayer } from "./components/MiniPlayer";
 import { RightDock } from "./components/RightDock";
@@ -13,6 +16,7 @@ import { PlaylistsPage } from "./features/playlists/PlaylistsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { VizSettingsWindow } from "./features/visualizer/VizSettingsWindow";
 import { useApp } from "./state/useApp";
+import { useFavorites } from "./state/useFavorites";
 
 function windowKind(): string | null {
   return new URLSearchParams(window.location.search).get("win");
@@ -29,6 +33,17 @@ export default function App() {
   const sideOpen = queuePanelOpen || lyricsPanelOpen;
   /** 浏览页挤内容；管理/设置由本页右栏占位，不挤 */
   const squeeze = sideOpen && !QUEUE_SLOT_ROUTES.has(route);
+
+  // 归档/重扫可能改路径：刷喜爱对照键（后端读取时会兜底重匹配自愈）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen("library://changed", () => {
+      void useFavorites.getState().reload();
+    }).then((f) => {
+      unlisten = f;
+    });
+    return () => unlisten?.();
+  }, []);
 
   // 独立子窗口：不渲染主壳
   const win = windowKind();

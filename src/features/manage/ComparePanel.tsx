@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileInput, FolderCheck, ImagePlus, Loader2, Search } from "lucide-react";
 import { api } from "../../lib/api";
 import type { ArchiveStatus, CatalogRow, FieldChange, TrackRow } from "../../lib/types";
+import { useFavorites } from "../../state/useFavorites";
 import { CoverPicker } from "./CoverPicker";
 import "./ComparePanel.css";
 
@@ -253,6 +254,8 @@ export function ComparePanel({
         // 重新检查归档状态
         const map = await api.archiveCheckBatch([trackId]);
         if (map[trackId] != null) setArchive(map[trackId]);
+        // 路径变了：喜爱/歌单条目靠兜底重匹配自愈，这里刷心形对照键
+        void useFavorites.getState().reload();
         onWritten();
       } catch (e) {
         setError(String(e));
