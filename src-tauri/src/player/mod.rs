@@ -7,6 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub mod engine;
+pub mod viz;
 
 pub use engine::SymphoniaPlayer;
 

@@ -90,6 +90,46 @@ function KindIcon({ kind }: { kind: SideVizKind | "off" | "idle" }) {
       </svg>
     );
   }
+  if (kind === "fluid") {
+    return (
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M8 2.2c2 2.6 3.8 4.6 3.8 6.7a3.8 3.8 0 1 1-7.6 0c0-2.1 1.8-4.1 3.8-6.7z"
+          fill="currentColor"
+          opacity="0.9"
+        />
+      </svg>
+    );
+  }
+  if (kind === "silk") {
+    return (
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M1.5 5c2.5-2.2 4.5-2.2 6.5 0s4 2.2 6.5 0"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <path
+          d="M1.5 9c2.5-2.2 4.5-2.2 6.5 0s4 2.2 6.5 0"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          fill="none"
+          opacity="0.6"
+        />
+        <path
+          d="M1.5 13c2.5-2.2 4.5-2.2 6.5 0s4 2.2 6.5 0"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          fill="none"
+          opacity="0.3"
+        />
+      </svg>
+    );
+  }
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="4" cy="5" r="1.4" fill="currentColor" opacity="0.55" />

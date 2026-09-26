@@ -23,6 +23,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::sample::{i24, u24};
 use symphonia::core::units::Time;
 
+use super::viz::{self, VizTap};
 use super::{PlayerEngine, PlayStatus, PlayerSnapshot, QueueItem, RepeatMode, TrackInfo};
 
 const STATUS_STOPPED: u8 = 0;
@@ -68,7 +69,7 @@ struct Shared {
     track_ended: AtomicBool,
     /// 音频世代号：每次「应丢弃已缓冲音频」（seek/切歌/显式 flush）+1。
     /// 块带世代戳、回调只播当前世代——单布尔标志会把 flush 后新到的有效块一并冲掉
-    audio_gen: AtomicU64,
+    audio_gen: Arc<AtomicU64>,
     /// 切歌确认序号：worker 处理完 Next/Prev 后 +1，engine 据此同步等待后再返回
     switch_seq: AtomicU64,
     play_mode: AtomicU8,
@@ -95,7 +96,7 @@ impl Shared {
             duration_ms: AtomicU64::new(0),
             volume_bits: AtomicU32::new(0.8f32.to_bits()),
             track_ended: AtomicBool::new(false),
-            audio_gen: AtomicU64::new(0),
+            audio_gen: Arc::new(AtomicU64::new(0)),
             switch_seq: AtomicU64::new(0),
             play_mode: AtomicU8::new(0),
             track: Mutex::new(None),
@@ -153,6 +154,9 @@ pub struct SymphoniaPlayer {
     cmd_tx: Sender<Cmd>,
     _worker: Option<std::thread::JoinHandle<()>>,
     output_sample_rate: u32,
+    /// 频谱动效分接：回调侧生产者 + 前端订阅开关（viz 线程的消费者在此待取）
+    viz_active: Arc<AtomicBool>,
+    viz_consumer: Mutex<Option<ringbuf::HeapCons<f32>>>,
 }
 
 impl SymphoniaPlayer {
@@ -160,10 +164,12 @@ impl SymphoniaPlayer {
         let (cmd_tx, cmd_rx) = unbounded::<Cmd>();
         let shared = Arc::new(Shared::new());
         let worker_shared = Arc::clone(&shared);
+        let (viz_tap, viz_consumer) = viz::new_tap();
+        let viz_active = Arc::clone(&viz_tap.active);
 
         let worker = std::thread::Builder::new()
             .name("axmusic-player".into())
-            .spawn(move || worker_main(cmd_rx, worker_shared))
+            .spawn(move || worker_main(cmd_rx, worker_shared, viz_tap))
             .context("启动播放线程失败")?;
 
         // 等 worker 发布真实设备采样率（初始 0，非 0 即就绪）或启动报错；超时兜底继续
@@ -182,7 +188,33 @@ impl SymphoniaPlayer {
             shared,
             cmd_tx,
             _worker: Some(worker),
+            viz_active,
+            viz_consumer: Mutex::new(Some(viz_consumer)),
         })
+    }
+
+    /// 设备输出采样率（0 = 尚未就绪/设备异常）
+    pub fn output_sample_rate(&self) -> u32 {
+        self.output_sample_rate
+    }
+
+    /// 频谱动效订阅开关（前端开/关背景动效时调用）
+    pub fn set_viz_active(&self, on: bool) {
+        self.viz_active.store(on, Ordering::Relaxed);
+    }
+
+    pub fn viz_active_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.viz_active)
+    }
+
+    /// 音频世代句柄（viz 线程据此在切歌/seek 时清 ring，防残样闪跳）
+    pub fn viz_gen_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.shared.audio_gen)
+    }
+
+    /// 取出频谱 ring 的消费者（仅一次，给 viz 线程）
+    pub fn take_viz_consumer(&self) -> Option<ringbuf::HeapCons<f32>> {
+        self.viz_consumer.lock().ok()?.take()
     }
 
     pub fn current_track(&self) -> Option<TrackInfo> {
@@ -573,7 +605,7 @@ struct DecoderState {
     end: bool,
 }
 
-fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
+fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>, viz_tap: VizTap) {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
         set_error(&shared, Some("无默认音频输出设备".into()));
@@ -596,6 +628,8 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>) {
         shared: Arc::clone(&shared),
         cur_gen: 0,
         out_channels,
+        viz_prod: viz_tap.producer,
+        viz_active: viz_tap.active,
     };
 
     let stream = match default_config.sample_format() {
@@ -669,6 +703,9 @@ struct AudioOut {
     cur_gen: u64,
     /// 设备声道数（解码端统一出立体声，这里按设备映射：单声道混音、多声道补零）
     out_channels: usize,
+    /// 频谱动效分接（mono f32，wait-free push；满则丢帧）
+    viz_prod: ringbuf::HeapProd<f32>,
+    viz_active: Arc<AtomicBool>,
 }
 
 impl AudioOut {
@@ -697,17 +734,23 @@ impl AudioOut {
     }
 
     fn fill(&mut self, data: &mut [f32]) {
+        use ringbuf::traits::Producer as _;
         let gen = self.shared.audio_gen.load(Ordering::SeqCst);
         if gen != self.cur_gen {
             self.cur_gen = gen;
             self.cur.clear();
             self.pos = 0;
+            // 切歌/seek 的 ring 清理由 viz 线程监听 audio_gen 完成（producer 侧无 clear）
         }
         let vol = self.shared.volume();
         let paused = self.shared.status.load(Ordering::SeqCst) != STATUS_PLAYING;
         let ch = self.out_channels;
         let frames = data.len() / ch;
         let mut frames_written = 0u64;
+        // 频谱分接缓冲（栈上，回调结束一次 push_slice；不分配不锁）
+        let viz_on = !paused && self.viz_active.load(Ordering::Relaxed);
+        let mut tap = [0.0f32; 4096];
+        let mut tap_n = 0usize;
 
         for f in 0..frames {
             let o = f * ch;
@@ -720,9 +763,20 @@ impl AudioOut {
             }
             if self.pos + 1 < self.cur.len() {
                 // 源固定立体声交错；按设备声道数映射
-                let l = self.cur[self.pos] * vol;
-                let r = self.cur[self.pos + 1] * vol;
+                let ls = self.cur[self.pos];
+                let rs = self.cur[self.pos + 1];
                 self.pos += 2;
+                if viz_on {
+                    // 取音量前原始信号：动效幅度不随用户音量缩放
+                    tap[tap_n] = (ls + rs) * 0.5;
+                    tap_n += 1;
+                    if tap_n == tap.len() {
+                        let _ = self.viz_prod.push_slice(&tap);
+                        tap_n = 0;
+                    }
+                }
+                let l = ls * vol;
+                let r = rs * vol;
                 match ch {
                     1 => data[o] = (l + r) * 0.5,
                     2 => {
@@ -739,6 +793,9 @@ impl AudioOut {
             } else {
                 data[o..o + ch].fill(0.0);
             }
+        }
+        if tap_n > 0 {
+            let _ = self.viz_prod.push_slice(&tap[..tap_n]);
         }
         if frames_written > 0 {
             self.shared

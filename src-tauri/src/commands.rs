@@ -252,6 +252,17 @@ pub fn update_settings(
         guard.side_viz.intensity = v.intensity.clamp(0.0, 1.0);
         guard.side_viz.opacity = v.opacity.clamp(0.0, 1.0);
         guard.side_viz.speed = v.speed.clamp(0.2, 2.0);
+        guard.side_viz.render_scale = match v.render_scale {
+            s if s <= 0.62 => 0.5,
+            s if s <= 0.87 => 0.75,
+            _ => 1.0,
+        };
+        guard.side_viz.fps_cap = if v.fps_cap <= 45 { 30 } else { 60 };
+        guard.side_viz.fluid = v.fluid.clamped();
+        guard.side_viz.silk = v.silk.clamped();
+        guard.side_viz.spectrum_ex = v.spectrum_ex.clamped();
+        guard.side_viz.particles_ex = v.particles_ex.clamped();
+        guard.side_viz.radial_ex = v.radial_ex.clamped();
     }
     if let Some(v) = patch.songs_view {
         guard.songs_view = v;
@@ -963,6 +974,15 @@ pub fn get_player_state(
     // 播完停住等场景托盘/任务栏文案跟上（内部状态没变时是无操作）
     crate::play_ui::sync_play_ui(&app, snap.status == crate::player::PlayStatus::Playing);
     Ok(snap)
+}
+
+/// 歌词区背景动效订阅开关：开 = 回调侧开始分接 PCM、viz 线程开始推 `viz://spectrum`；
+/// 关 = 全链路静默（CPU 归零）。
+#[tauri::command]
+pub fn viz_set_active(state: State<'_, AppState>, active: bool) -> Result<(), String> {
+    let player = state.player.lock().map_err(|e| e.to_string())?;
+    player.engine.set_viz_active(active);
+    Ok(())
 }
 
 #[tauri::command]

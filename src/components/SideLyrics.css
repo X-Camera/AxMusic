@@ -87,6 +87,8 @@
 .side-viz-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
   padding: 4px;
   border-radius: 10px;

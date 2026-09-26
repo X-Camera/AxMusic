@@ -203,10 +203,75 @@ export interface AppSettings {
   color_scheme: ColorScheme;
 }
 
-export type SideVizKind = "aurora" | "spectrum" | "particles" | "radial-bars" | "radial-line";
+export type SideVizKind =
+  | "aurora"
+  | "spectrum"
+  | "particles"
+  | "radial-bars"
+  | "radial-line"
+  | "fluid"
+  | "silk";
 
-/** 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变） */
-export type SideVizPalette = "mono" | "soft" | "vivid";
+/** 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）/ 封面（专辑取色） */
+export type SideVizPalette = "mono" | "soft" | "vivid" | "cover";
+
+/** 「封面流体」专属参数（0–1，前端映射物理量） */
+export interface FluidVizParams {
+  /** 模糊度 → CSS blur 6–32px */
+  blur: number;
+  /** 低音呼吸幅度 */
+  breathe: number;
+  /** 旋转/漂移速度系数 */
+  spin: number;
+}
+
+/** 「极光丝绸」专属参数 */
+export interface SilkVizParams {
+  /** 流速 */
+  flow: number;
+  /** 层次复杂度 → fbm octaves 3–6 */
+  complexity: number;
+  /** 亮度 */
+  brightness: number;
+}
+
+/** 「频谱」专属参数 */
+export interface SpectrumVizParams {
+  /** 柱数 16–128 */
+  bars: number;
+  /** 发光强度 0=关 */
+  glow: number;
+  /** 峰值滞留点 */
+  peaks: boolean;
+  /** 上下镜像 */
+  mirror: boolean;
+}
+
+/** 「粒子」专属参数 */
+export interface ParticlesVizParams {
+  /** 粒子数 8–160 */
+  count: number;
+  /** 近距连线（plexus） */
+  links: boolean;
+  /** 连线距离系数 0–1 */
+  link_dist: number;
+  /** 粒子大小系数 0–1 */
+  size: number;
+}
+
+/** 「环形」（环柱/环线共用）专属参数 */
+export interface RadialVizParams {
+  /** 主圆环大小 0–1 → min(w,h)×0.08–0.30 */
+  radius: number;
+  /** 外伸长度（环柱）/ 波形幅度（环线）系数 0–1 */
+  out_len: number;
+  /** 内伸长度系数 0–1（仅环柱） */
+  in_len: number;
+  /** 内环粒子发射量 0–200（仅环线，0=关） */
+  emit: number;
+  /** 粒子触发灵敏度 0–1（越高越容易触发；仅环线） */
+  sensitivity: number;
+}
 
 export interface SideVizSettings {
   enabled: boolean;
@@ -220,6 +285,15 @@ export interface SideVizSettings {
   opacity: number;
   /** 0.2–2 动画速度 */
   speed: number;
+  /** 渲染缩放 0.5 / 0.75 / 1（省 GPU） */
+  render_scale: number;
+  /** 帧率上限 30 / 60 */
+  fps_cap: number;
+  fluid: FluidVizParams;
+  silk: SilkVizParams;
+  spectrum_ex: SpectrumVizParams;
+  particles_ex: ParticlesVizParams;
+  radial_ex: RadialVizParams;
 }
 
 export type SettingsPatch = Partial<

@@ -123,9 +123,13 @@ pub enum SideVizKind {
     /// 环形频谱（线条）
     #[serde(alias = "radial_line")]
     RadialLine,
+    /// 封面流体渐变（AMLL 风）
+    Fluid,
+    /// 极光丝绸（WebGL 流光，前端自动回退 2D）
+    Silk,
 }
 
-/// 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）
+/// 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）/ 封面（专辑取色）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SideVizPalette {
@@ -136,6 +140,214 @@ pub enum SideVizPalette {
     Soft,
     /// 多彩渐变，最炫
     Vivid,
+    /// 从当前专辑封面提取三色（无封面回退 soft）
+    Cover,
+}
+
+/// 「封面流体」效果专属参数（0.0..=1.0，前端映射到物理量）
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FluidVizParams {
+    /// 模糊度 → CSS blur 6..32px
+    #[serde(default = "default_half")]
+    pub blur: f32,
+    /// 低音呼吸幅度（缩放/亮度脉动）
+    #[serde(default = "default_half")]
+    pub breathe: f32,
+    /// 旋转/漂移速度系数
+    #[serde(default = "default_half")]
+    pub spin: f32,
+}
+
+impl Default for FluidVizParams {
+    fn default() -> Self {
+        Self {
+            blur: 0.5,
+            breathe: 0.5,
+            spin: 0.5,
+        }
+    }
+}
+
+impl FluidVizParams {
+    pub fn clamped(self) -> Self {
+        Self {
+            blur: self.blur.clamp(0.0, 1.0),
+            breathe: self.breathe.clamp(0.0, 1.0),
+            spin: self.spin.clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// 「极光丝绸」效果专属参数
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SilkVizParams {
+    /// 流速
+    #[serde(default = "default_half")]
+    pub flow: f32,
+    /// 复杂度 → fbm octaves 3..6
+    #[serde(default = "default_half")]
+    pub complexity: f32,
+    /// 亮度
+    #[serde(default = "default_half")]
+    pub brightness: f32,
+}
+
+impl Default for SilkVizParams {
+    fn default() -> Self {
+        Self {
+            flow: 0.5,
+            complexity: 0.5,
+            brightness: 0.5,
+        }
+    }
+}
+
+impl SilkVizParams {
+    pub fn clamped(self) -> Self {
+        Self {
+            flow: self.flow.clamp(0.0, 1.0),
+            complexity: self.complexity.clamp(0.0, 1.0),
+            brightness: self.brightness.clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// 「频谱」效果专属参数
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SpectrumVizParams {
+    /// 柱数 16..=128
+    #[serde(default = "default_spectrum_bars")]
+    pub bars: u32,
+    /// 发光强度 0=关 .. 1
+    #[serde(default = "default_half")]
+    pub glow: f32,
+    /// 峰值滞留点
+    #[serde(default = "default_true")]
+    pub peaks: bool,
+    /// 上下镜像
+    #[serde(default)]
+    pub mirror: bool,
+}
+
+impl Default for SpectrumVizParams {
+    fn default() -> Self {
+        Self {
+            bars: default_spectrum_bars(),
+            glow: 0.5,
+            peaks: true,
+            mirror: false,
+        }
+    }
+}
+
+impl SpectrumVizParams {
+    pub fn clamped(self) -> Self {
+        Self {
+            bars: self.bars.clamp(16, 128),
+            glow: self.glow.clamp(0.0, 1.0),
+            peaks: self.peaks,
+            mirror: self.mirror,
+        }
+    }
+}
+
+/// 「粒子」效果专属参数
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ParticlesVizParams {
+    /// 粒子数 8..=160
+    #[serde(default = "default_particles_count")]
+    pub count: u32,
+    /// 近距连线（plexus）
+    #[serde(default = "default_true")]
+    pub links: bool,
+    /// 连线距离系数 0..1
+    #[serde(default = "default_half")]
+    pub link_dist: f32,
+    /// 粒子大小系数 0..1
+    #[serde(default = "default_half")]
+    pub size: f32,
+}
+
+impl Default for ParticlesVizParams {
+    fn default() -> Self {
+        Self {
+            count: default_particles_count(),
+            links: true,
+            link_dist: 0.5,
+            size: 0.5,
+        }
+    }
+}
+
+impl ParticlesVizParams {
+    pub fn clamped(self) -> Self {
+        Self {
+            count: self.count.clamp(8, 160),
+            links: self.links,
+            link_dist: self.link_dist.clamp(0.0, 1.0),
+            size: self.size.clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// 「环形」效果（环柱/环线共用）专属参数
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RadialVizParams {
+    /// 主圆环大小 0..1 → min(w,h)×0.08..0.30
+    #[serde(default = "default_half")]
+    pub radius: f32,
+    /// 外伸长度（环柱）/ 波形幅度（环线）系数
+    #[serde(default = "default_half")]
+    pub out_len: f32,
+    /// 内伸长度系数（仅环柱）
+    #[serde(default = "default_half")]
+    pub in_len: f32,
+    /// 内环粒子发射量 0..=200（仅环线，0=关）
+    #[serde(default = "default_radial_emit")]
+    pub emit: u32,
+    /// 粒子触发灵敏度 0..1（越高越容易触发；仅环线）
+    #[serde(default = "default_half")]
+    pub sensitivity: f32,
+}
+
+impl Default for RadialVizParams {
+    fn default() -> Self {
+        Self {
+            radius: 0.5,
+            out_len: 0.5,
+            in_len: 0.5,
+            emit: default_radial_emit(),
+            sensitivity: 0.5,
+        }
+    }
+}
+
+impl RadialVizParams {
+    pub fn clamped(self) -> Self {
+        Self {
+            radius: self.radius.clamp(0.0, 1.0),
+            out_len: self.out_len.clamp(0.0, 1.0),
+            in_len: self.in_len.clamp(0.0, 1.0),
+            emit: self.emit.clamp(0, 200),
+            sensitivity: self.sensitivity.clamp(0.0, 1.0),
+        }
+    }
+}
+
+fn default_radial_emit() -> u32 {
+    40
+}
+
+fn default_half() -> f32 {
+    0.5
+}
+
+fn default_spectrum_bars() -> u32 {
+    64
+}
+
+fn default_particles_count() -> u32 {
+    56
 }
 
 /// 主界面歌词区背景动效设置（默认关闭，保持界面素净）
@@ -160,6 +372,27 @@ pub struct SideVizSettings {
     /// 动画速度 0.2..=2.0
     #[serde(default = "default_viz_speed")]
     pub speed: f32,
+    /// 渲染缩放 0.5 / 0.75 / 1.0（省 GPU）
+    #[serde(default = "default_viz_render_scale")]
+    pub render_scale: f32,
+    /// 帧率上限 30 / 60
+    #[serde(default = "default_viz_fps_cap")]
+    pub fps_cap: u32,
+    /// 「封面流体」专属参数
+    #[serde(default)]
+    pub fluid: FluidVizParams,
+    /// 「极光丝绸」专属参数
+    #[serde(default)]
+    pub silk: SilkVizParams,
+    /// 「频谱」专属参数
+    #[serde(default)]
+    pub spectrum_ex: SpectrumVizParams,
+    /// 「粒子」专属参数
+    #[serde(default)]
+    pub particles_ex: ParticlesVizParams,
+    /// 「环形」（环柱/环线）专属参数
+    #[serde(default)]
+    pub radial_ex: RadialVizParams,
 }
 
 fn default_viz_color() -> String {
@@ -176,6 +409,14 @@ fn default_viz_opacity() -> f32 {
 
 fn default_viz_speed() -> f32 {
     1.0
+}
+
+fn default_viz_render_scale() -> f32 {
+    1.0
+}
+
+fn default_viz_fps_cap() -> u32 {
+    60
 }
 
 /// `#rgb` / `#rrggbb`（大小写均可）
@@ -197,8 +438,25 @@ impl Default for SideVizSettings {
             intensity: default_viz_intensity(),
             opacity: default_viz_opacity(),
             speed: default_viz_speed(),
+            render_scale: default_viz_render_scale(),
+            fps_cap: default_viz_fps_cap(),
+            fluid: FluidVizParams::default(),
+            silk: SilkVizParams::default(),
+            spectrum_ex: SpectrumVizParams::default(),
+            particles_ex: ParticlesVizParams::default(),
+            radial_ex: RadialVizParams::default(),
         }
     }
+}
+
+/// side_viz 宽松反序列化：整组解析失败（如降级遇到新枚举值）时回退默认，
+/// 不拖垮整份 settings.json（load() 的整份解析是最后防线，这里兜住字段级）。
+pub fn side_viz_lenient<'de, D>(deserializer: D) -> Result<SideVizSettings, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(v).unwrap_or_default())
 }
 
 /// 歌词在线源开关
@@ -266,7 +524,7 @@ pub struct AppSettings {
     #[serde(default = "default_lyrics_line_height")]
     pub side_lyrics_line_height: f32,
     /// 主界面歌词区背景动效（默认关）
-    #[serde(default)]
+    #[serde(default, deserialize_with = "side_viz_lenient")]
     pub side_viz: SideVizSettings,
     /// 歌曲页默认视图
     #[serde(default)]

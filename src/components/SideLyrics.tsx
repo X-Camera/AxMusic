@@ -27,6 +27,7 @@ import { pickLyrics } from "../features/player/lrc";
 import { VisualizerLayer } from "../features/visualizer/VisualizerLayer";
 import { VisualizerSettingsDialog } from "../features/visualizer/VisualizerSettingsDialog";
 import { SideVizSwitcher } from "../features/visualizer/SideVizSwitcher";
+import { loadCoverArt, type CoverArt } from "../features/visualizer/coverArt";
 import {
   clampViz,
   getVizCache,
@@ -66,6 +67,8 @@ export function SideLyrics() {
   const [viz, setViz] = useState<SideVizSettings>(
     () => getVizCache() ?? SIDE_VIZ_DEFAULT,
   );
+  /** 当前曲封面（流体纹理 + 封面取色），随 path 变化 */
+  const [coverArt, setCoverArt] = useState<CoverArt | null>(null);
   const lastPathRef = useRef("");
   const lastPosRef = useRef(0);
   /** 进度回跳检测（gapless 连播校准 / 单曲重播） */
@@ -133,6 +136,21 @@ export function SideLyrics() {
       unlisten?.();
     };
   }, []);
+
+  // 切歌加载封面（流体效果纹理 + cover 配色取色）
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) {
+      setCoverArt(null);
+      return;
+    }
+    void loadCoverArt(path).then((art) => {
+      if (!cancelled) setCoverArt(art);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
 
   // 切歌拉歌词
   useEffect(() => {
@@ -303,7 +321,7 @@ export function SideLyrics() {
         </div>
       </div>
       <div className="side-lyrics-stage" ref={stageRef} onContextMenu={onContextMenu}>
-        <VisualizerLayer settings={viz} playing={playing} getFocus={getVizFocus} />
+        <VisualizerLayer settings={viz} playing={playing} getFocus={getVizFocus} cover={coverArt} />
         <SideVizSwitcher
           value={viz}
           onChange={patchViz}

@@ -6,6 +6,7 @@ import {
   SIDE_VIZ_KINDS,
   SIDE_VIZ_PALETTES,
   SIDE_VIZ_STYLES,
+  VIZ_PARAM_SCHEMA,
 } from "./sideViz";
 
 export type VisualizerSettingsValue = SideVizSettings;
@@ -274,6 +275,9 @@ export function VisualizerSettingsDialog({
             {value.palette === "mono" && (
               <span className="np-style-color-hint">素雅下不显色</span>
             )}
+            {value.palette === "cover" && (
+              <span className="np-style-color-hint">封面取色优先，无封面回退主色</span>
+            )}
           </div>
         </div>
 
@@ -351,6 +355,100 @@ export function VisualizerSettingsDialog({
               style={{ ["--pct" as string]: pct(value.speed, 0.2, 2) }}
             />
             <span className="np-style-val mono">{value.speed.toFixed(2)}×</span>
+          </div>
+        </div>
+
+        {(VIZ_PARAM_SCHEMA[value.kind]?.length ?? 0) > 0 && (
+          <>
+            <div className="np-style-row">
+              <span className="np-style-label">效果参数</span>
+              <div className="np-style-ctrl" />
+            </div>
+            {VIZ_PARAM_SCHEMA[value.kind]!.map((def) => {
+              const group = value[def.group] as unknown as Record<string, number | boolean>;
+              const v = group[def.key];
+              if (def.type === "toggle") {
+                return (
+                  <div className="np-style-row" key={`${def.group}.${def.key}`}>
+                    <span className="np-style-label">{def.label}</span>
+                    <div className="np-style-ctrl">
+                      <button
+                        type="button"
+                        className={`np-style-toggle ${v ? "on" : ""}`}
+                        role="switch"
+                        aria-checked={!!v}
+                        disabled={!value.enabled}
+                        onClick={() => onChange({ [def.group]: { ...group, [def.key]: !v } })}
+                      >
+                        {v ? "开" : "关"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              const num = typeof v === "number" ? v : (def.min ?? 0);
+              return (
+                <div className="np-style-row" key={`${def.group}.${def.key}`}>
+                  <span className="np-style-label">{def.label}</span>
+                  <div className="np-style-ctrl">
+                    <input
+                      type="range"
+                      min={def.min ?? 0}
+                      max={def.max ?? 1}
+                      step={def.step ?? 0.05}
+                      value={num}
+                      disabled={!value.enabled}
+                      aria-label={def.label}
+                      onChange={(e) =>
+                        onChange({ [def.group]: { ...group, [def.key]: Number(e.target.value) } })
+                      }
+                      style={{
+                        ["--pct" as string]: pct(num, def.min ?? 0, def.max ?? 1),
+                      }}
+                    />
+                    <span className="np-style-val mono">
+                      {def.format ? def.format(num) : `${Math.round(num * 100)}%`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        <div className="np-style-row">
+          <span className="np-style-label">画质</span>
+          <div className="np-style-ctrl np-style-style-row">
+            {([0.5, 0.75, 1] as const).map((rs) => (
+              <button
+                key={rs}
+                type="button"
+                className={`np-style-preset${value.render_scale === rs ? " on" : ""}`}
+                disabled={!value.enabled}
+                title={`渲染缩放 ${Math.round(rs * 100)}%（省 GPU）`}
+                onClick={() => onChange({ render_scale: rs })}
+              >
+                {Math.round(rs * 100)}%
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="np-style-row">
+          <span className="np-style-label">帧率</span>
+          <div className="np-style-ctrl np-style-style-row">
+            {([30, 60] as const).map((fps) => (
+              <button
+                key={fps}
+                type="button"
+                className={`np-style-preset${value.fps_cap === fps ? " on" : ""}`}
+                disabled={!value.enabled}
+                title={`帧率上限 ${fps}fps`}
+                onClick={() => onChange({ fps_cap: fps })}
+              >
+                {fps}fps
+              </button>
+            ))}
           </div>
         </div>
 

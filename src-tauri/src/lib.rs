@@ -84,6 +84,19 @@ pub fn run() {
                 }
             }
 
+            // 频谱动效数据管线：消费 PCM 分接 → ~30Hz 推 viz://spectrum（定向主窗口）
+            if let Some(win) = app.get_webview_window("main") {
+                if let Some(cons) = player.engine.take_viz_consumer() {
+                    player::viz::spawn_viz_thread(
+                        win,
+                        cons,
+                        player.engine.viz_active_handle(),
+                        player.engine.viz_gen_handle(),
+                        player.engine.output_sample_rate(),
+                    );
+                }
+            }
+
             let state = commands::AppState {
                 db: Mutex::new(db),
                 player: Mutex::new(player),
@@ -151,6 +164,7 @@ pub fn run() {
             commands::get_track_by_path,
             commands::include_in_library,
             commands::get_player_state,
+            commands::viz_set_active,
             commands::play_file,
             commands::play_queue,
             commands::player_enqueue,
