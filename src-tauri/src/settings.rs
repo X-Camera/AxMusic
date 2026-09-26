@@ -129,18 +129,30 @@ pub enum SideVizKind {
     Silk,
 }
 
-/// 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）/ 封面（专辑取色）
+/// 背景动效的色彩丰富程度：素雅（纯黑白灰）/ 柔和（主色单色渐变）/ 炫酷（主色+对比色双色渐变）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SideVizPalette {
-    /// 单色白/灰，最素
+    /// 纯黑白灰，不显色
     Mono,
-    /// 柔和单强调色
+    /// 主色单色渐变
     #[default]
+    #[serde(alias = "cover", alias = "theme")] // 旧配置迁移：cover/theme 已移入 color_source
     Soft,
-    /// 多彩渐变，最炫
+    /// 主色 + 对比色双色渐变
     Vivid,
-    /// 从当前专辑封面提取三色（无封面回退 soft）
+}
+
+/// 主色来源：跟随主题强调色 / 跟随封面取色 / 自选颜色（`color` 字段）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SideVizColorSource {
+    /// 自选颜色（SideVizSettings.color）
+    #[default]
+    Custom,
+    /// 跟随当前主题强调色（前端读 CSS 变量 --accent 解析，Rust 仅透传）
+    Theme,
+    /// 跟随当前专辑封面取色（无封面回退自选颜色）
     Cover,
 }
 
@@ -350,17 +362,16 @@ fn default_particles_count() -> u32 {
     56
 }
 
-/// 主界面歌词区背景动效设置（默认关闭，保持界面素净）
-/// 字段全部 `default`，旧 settings.json 缺字段也不致整份配置解析失败。
+/// 每个效果各自一份的公共参数（调色/强度/速度/画质）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SideVizSettings {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub kind: SideVizKind,
+pub struct VizCommonParams {
+    /// 色彩丰富程度：素雅/柔和/炫酷
     #[serde(default)]
     pub palette: SideVizPalette,
-    /// 主色 hex（如 #82aaff）
+    /// 主色来源（跟随主题/封面/自选）
+    #[serde(default)]
+    pub color_source: SideVizColorSource,
+    /// 主色 hex（如 #82aaff，color_source = custom 时生效）
     #[serde(default = "default_viz_color")]
     pub color: String,
     /// 强度 0.0..=1.0
@@ -378,6 +389,91 @@ pub struct SideVizSettings {
     /// 帧率上限 30 / 60
     #[serde(default = "default_viz_fps_cap")]
     pub fps_cap: u32,
+}
+
+impl Default for VizCommonParams {
+    fn default() -> Self {
+        Self {
+            palette: SideVizPalette::default(),
+            color_source: SideVizColorSource::default(),
+            color: default_viz_color(),
+            intensity: default_viz_intensity(),
+            opacity: default_viz_opacity(),
+            speed: default_viz_speed(),
+            render_scale: default_viz_render_scale(),
+            fps_cap: default_viz_fps_cap(),
+        }
+    }
+}
+
+impl VizCommonParams {
+    pub fn clamped(self) -> Self {
+        let color = self.color.trim().to_ascii_lowercase();
+        Self {
+            palette: self.palette,
+            color_source: self.color_source,
+            color: if is_hex_color(&color) {
+                color
+            } else {
+                default_viz_color()
+            },
+            intensity: self.intensity.clamp(0.0, 1.0),
+            opacity: self.opacity.clamp(0.0, 1.0),
+            speed: self.speed.clamp(0.2, 2.0),
+            render_scale: match self.render_scale {
+                s if s <= 0.62 => 0.5,
+                s if s <= 0.87 => 0.75,
+                _ => 1.0,
+            },
+            fps_cap: if self.fps_cap <= 45 { 30 } else { 60 },
+        }
+    }
+}
+
+/// 7 个效果各自的公共参数（serde 名与前端 SideVizKind 的 kebab-case id 一致）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SideVizCommons {
+    #[serde(default)]
+    pub aurora: VizCommonParams,
+    #[serde(default)]
+    pub spectrum: VizCommonParams,
+    #[serde(default)]
+    pub particles: VizCommonParams,
+    #[serde(default, rename = "radial-bars", alias = "radial_bars")]
+    pub radial_bars: VizCommonParams,
+    #[serde(default, rename = "radial-line", alias = "radial_line")]
+    pub radial_line: VizCommonParams,
+    #[serde(default)]
+    pub fluid: VizCommonParams,
+    #[serde(default)]
+    pub silk: VizCommonParams,
+}
+
+impl SideVizCommons {
+    pub fn clamped(self) -> Self {
+        Self {
+            aurora: self.aurora.clamped(),
+            spectrum: self.spectrum.clamped(),
+            particles: self.particles.clamped(),
+            radial_bars: self.radial_bars.clamped(),
+            radial_line: self.radial_line.clamped(),
+            fluid: self.fluid.clamped(),
+            silk: self.silk.clamped(),
+        }
+    }
+}
+
+/// 主界面歌词区背景动效设置（默认关闭，保持界面素净）
+/// 字段全部 `default`，旧 settings.json 缺字段也不致整份配置解析失败。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SideVizSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub kind: SideVizKind,
+    /// 公共参数按效果各存一份
+    #[serde(default)]
+    pub commons: SideVizCommons,
     /// 「封面流体」专属参数
     #[serde(default)]
     pub fluid: FluidVizParams,
@@ -433,13 +529,7 @@ impl Default for SideVizSettings {
         Self {
             enabled: false,
             kind: SideVizKind::default(),
-            palette: SideVizPalette::default(),
-            color: default_viz_color(),
-            intensity: default_viz_intensity(),
-            opacity: default_viz_opacity(),
-            speed: default_viz_speed(),
-            render_scale: default_viz_render_scale(),
-            fps_cap: default_viz_fps_cap(),
+            commons: SideVizCommons::default(),
             fluid: FluidVizParams::default(),
             silk: SilkVizParams::default(),
             spectrum_ex: SpectrumVizParams::default(),
@@ -455,7 +545,36 @@ pub fn side_viz_lenient<'de, D>(deserializer: D) -> Result<SideVizSettings, D::E
 where
     D: serde::Deserializer<'de>,
 {
-    let v = serde_json::Value::deserialize(deserializer)?;
+    let mut v = serde_json::Value::deserialize(deserializer)?;
+    // 旧配置迁移：顶层散落的公共参数 → commons[旧 kind]（该效果继承旧调参）
+    if let Some(obj) = v.as_object_mut() {
+        if !obj.contains_key("commons") && obj.contains_key("palette") {
+            let kind = obj
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .unwrap_or("aurora")
+                .to_string();
+            let mut common = serde_json::Map::new();
+            for key in [
+                "palette",
+                "color_source",
+                "color",
+                "intensity",
+                "opacity",
+                "speed",
+                "render_scale",
+                "fps_cap",
+            ] {
+                if let Some(val) = obj.get(key) {
+                    common.insert(key.to_string(), val.clone());
+                }
+            }
+            obj.insert(
+                "commons".to_string(),
+                serde_json::json!({ kind: serde_json::Value::Object(common) }),
+            );
+        }
+    }
     Ok(serde_json::from_value(v).unwrap_or_default())
 }
 

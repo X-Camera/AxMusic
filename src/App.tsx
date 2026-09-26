@@ -11,10 +11,11 @@ import { LyricsWindow } from "./features/manage/LyricsWindow";
 import { NowPlayingPage } from "./features/player/NowPlayingPage";
 import { PlaylistsPage } from "./features/playlists/PlaylistsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
+import { VizSettingsWindow } from "./features/visualizer/VizSettingsWindow";
 import { useApp } from "./state/useApp";
 
-function isLyricsWindow(): boolean {
-  return new URLSearchParams(window.location.search).get("win") === "lyrics";
+function windowKind(): string | null {
+  return new URLSearchParams(window.location.search).get("win");
 }
 
 /** 本身已有右边栏的页面：播放列表只替换槽位内容，不再从右挤入 */
@@ -29,9 +30,13 @@ export default function App() {
   /** 浏览页挤内容；管理/设置由本页右栏占位，不挤 */
   const squeeze = sideOpen && !QUEUE_SLOT_ROUTES.has(route);
 
-  // 独立「搜索歌词」子窗口：不渲染主壳
-  if (isLyricsWindow()) {
+  // 独立子窗口：不渲染主壳
+  const win = windowKind();
+  if (win === "lyrics") {
     return <LyricsWindow />;
+  }
+  if (win === "viz-settings") {
+    return <VizSettingsWindow />;
   }
 
   return (

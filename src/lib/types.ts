@@ -213,7 +213,10 @@ export type SideVizKind =
   | "silk";
 
 /** 同一效果的配色风格：素雅（单色白）/ 柔和 / 炫酷（多彩渐变）/ 封面（专辑取色） */
-export type SideVizPalette = "mono" | "soft" | "vivid" | "cover";
+/** 色彩丰富程度：素雅（纯黑白灰）/ 柔和（单色渐变）/ 炫酷（双色渐变） */
+export type SideVizPalette = "mono" | "soft" | "vivid";
+/** 主色来源：跟随主题强调色 / 跟随封面取色 / 自选颜色（color 字段） */
+export type SideVizColorSource = "theme" | "cover" | "custom";
 
 /** 「封面流体」专属参数（0–1，前端映射物理量） */
 export interface FluidVizParams {
@@ -273,11 +276,12 @@ export interface RadialVizParams {
   sensitivity: number;
 }
 
-export interface SideVizSettings {
-  enabled: boolean;
-  kind: SideVizKind;
+/** 每个效果各自一份的公共参数 */
+export interface VizCommonParams {
   palette: SideVizPalette;
-  /** 主色（hex，如 #82aaff）；mono 下几乎不显色 */
+  /** 主色来源 */
+  color_source: SideVizColorSource;
+  /** 主色（hex，如 #82aaff）；color_source=custom 时生效 */
   color: string;
   /** 0–1 强度 */
   intensity: number;
@@ -289,12 +293,22 @@ export interface SideVizSettings {
   render_scale: number;
   /** 帧率上限 30 / 60 */
   fps_cap: number;
+}
+
+export interface SideVizSettings {
+  enabled: boolean;
+  kind: SideVizKind;
+  /** 公共参数按效果各存一份（key = SideVizKind） */
+  commons: Record<SideVizKind, VizCommonParams>;
   fluid: FluidVizParams;
   silk: SilkVizParams;
   spectrum_ex: SpectrumVizParams;
   particles_ex: ParticlesVizParams;
   radial_ex: RadialVizParams;
 }
+
+/** 传给效果层的设置：side_viz 全量 + 当前效果的公共参数摊平 */
+export type EffectiveVizSettings = SideVizSettings & VizCommonParams;
 
 export type SettingsPatch = Partial<
   Omit<AppSettings, "library_root">

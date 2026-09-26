@@ -62,7 +62,7 @@ void main() {
   float v = fbm(p * 1.6 + r * 2.2);
   vec3 col = mix(u_a, u_b, clamp(q.x * 1.4 - 0.2, 0.0, 1.0));
   col = mix(col, u_c, clamp(r.y * 1.4 - 0.2, 0.0, 1.0));
-  float lum = (0.22 + v * 0.95) * (0.5 + u_bright * 0.8) * (0.82 + u_bass * 0.45);
+  float lum = (0.22 + v * 0.95) * (0.5 + u_bright * 0.8) * (0.93 + u_bass * 0.12);
   // 半透明丝绸：暗处透明露出面板底色，明暗双主题都安全
   float alpha = clamp(lum * 0.85, 0.0, 0.8);
   gl_FragColor = vec4(col * max(lum, 0.12), alpha);
@@ -239,7 +239,8 @@ export const SilkCanvas = forwardRef<SilkHandle, { opacity: number }>(function S
             cy + (Math.sin(ang) * len) / 2,
           );
           const wob = (Math.sin(t * 0.9 + i * 2.6) + 1) * 0.5;
-          const alpha = (0.16 + f.settings.intensity * 0.2) * (0.7 + wob * 0.5) * (0.6 + sp.brightness * 0.7) * (0.85 + f.bass * 0.4);
+          // 低音只给轻微呼吸（±6%），不闪
+          const alpha = (0.16 + f.settings.intensity * 0.2) * (0.7 + wob * 0.5) * (0.6 + sp.brightness * 0.7) * (0.94 + f.bass * 0.12);
           g.addColorStop(0, "rgba(0,0,0,0)");
           g.addColorStop(0.35 + wob * 0.2, rgba(palette[i], alpha));
           g.addColorStop(0.65 + wob * 0.1, rgba(palette[(i + 1) % 3], alpha * 0.6));

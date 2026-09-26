@@ -20,13 +20,13 @@ import {
 } from "../lib/playClock";
 import { lyricsDisplayVars } from "../lib/lyricsDisplay";
 import { onLyricsSaved, openLyricsWindow } from "../lib/lyricsWindow";
+import { openVizSettingsWindow } from "../lib/vizSettingsWindow";
 import { useApp } from "../state/useApp";
 import { ContextMenu } from "./ContextMenu";
 import { LyricsStyleDialog } from "../features/player/LyricsStyleDialog";
 import { LyricsView, type LyricsViewHandle } from "../features/player/LyricsView";
 import { pickLyrics } from "../features/player/lrc";
 import { VisualizerLayer } from "../features/visualizer/VisualizerLayer";
-import { VisualizerSettingsDialog } from "../features/visualizer/VisualizerSettingsDialog";
 import { SideVizSwitcher } from "../features/visualizer/SideVizSwitcher";
 import { loadCoverArt, type CoverArt } from "../features/visualizer/coverArt";
 import {
@@ -63,7 +63,6 @@ export function SideLyrics() {
   const [trackGen, setTrackGen] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [styleOpen, setStyleOpen] = useState(false);
-  const [vizOpen, setVizOpen] = useState(false);
   /** 歌词区背景动效（默认关；优先进程缓存，避免面板重开被默认值顶掉） */
   const [viz, setViz] = useState<SideVizSettings>(
     () => getVizCache() ?? SIDE_VIZ_DEFAULT,
@@ -326,7 +325,7 @@ export function SideLyrics() {
         <SideVizSwitcher
           value={viz}
           onChange={patchViz}
-          onOpenSettings={() => setVizOpen(true)}
+          onOpenSettings={() => void openVizSettingsWindow()}
         />
         <LyricsView
           key={path || "idle"}
@@ -392,7 +391,7 @@ export function SideLyrics() {
             role="menuitem"
             onClick={() => {
               setCtxMenu(null);
-              setVizOpen(true);
+              void openVizSettingsWindow();
             }}
           >
             <Sparkles size={14} />
@@ -407,16 +406,6 @@ export function SideLyrics() {
             value={disp}
             onChange={patchDisp}
             onClose={() => setStyleOpen(false)}
-          />,
-          document.body,
-        )}
-
-      {vizOpen &&
-        createPortal(
-          <VisualizerSettingsDialog
-            value={viz}
-            onChange={patchViz}
-            onClose={() => setVizOpen(false)}
           />,
           document.body,
         )}

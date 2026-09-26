@@ -1,4 +1,10 @@
-import type { SideVizKind, SideVizPalette, SideVizSettings } from "../../lib/types";
+import type {
+  SideVizColorSource,
+  SideVizKind,
+  SideVizPalette,
+  SideVizSettings,
+  VizCommonParams,
+} from "../../lib/types";
 
 export const SIDE_VIZ_KINDS: { id: SideVizKind; label: string; hint: string }[] = [
   { id: "fluid", label: "流体", hint: "封面晕染流转" },
@@ -10,25 +16,73 @@ export const SIDE_VIZ_KINDS: { id: SideVizKind; label: string; hint: string }[] 
   { id: "radial-line", label: "环线", hint: "居中环形波形" },
 ];
 
+/** 色彩丰富程度（与主色来源正交） */
 export const SIDE_VIZ_PALETTES: { id: SideVizPalette; label: string; hint: string }[] = [
-  { id: "cover", label: "封面", hint: "取专辑封面三色" },
-  { id: "mono", label: "素雅", hint: "白/灰，几乎不显色" },
-  { id: "soft", label: "柔和", hint: "按主色轻微渐变" },
-  { id: "vivid", label: "炫酷", hint: "主色 + 对比色渐变" },
+  { id: "mono", label: "素雅", hint: "纯黑白灰，不显色" },
+  { id: "soft", label: "柔和", hint: "主色单色轻微渐变" },
+  { id: "vivid", label: "炫酷", hint: "主色 + 对比色双色渐变" },
+];
+
+/** 主色来源（与色彩丰富程度正交） */
+export const SIDE_VIZ_COLOR_SOURCES: { id: SideVizColorSource; label: string; hint: string }[] = [
+  { id: "theme", label: "主题", hint: "跟随当前主题强调色" },
+  { id: "cover", label: "封面", hint: "取当前曲目封面色" },
+  { id: "custom", label: "自选", hint: "使用下方选定颜色" },
+];
+
+/** 主色预设点（面板直排，单击即设） */
+export const VIZ_PRESET_COLORS = [
+  "#82aaff",
+  "#6ec8ff",
+  "#5b8cff",
+  "#9b7bff",
+  "#c44cff",
+  "#ff6b9d",
+  "#ff8a5c",
+  "#ffc857",
+  "#5ddea0",
+  "#4cc9f0",
+  "#e8eef7",
+  "#9aa7b8",
 ];
 
 export const SIDE_VIZ_DEFAULT_COLOR = "#82aaff";
 
+/** 单个效果的公共参数默认值 */
+export function defaultCommon(): VizCommonParams {
+  return {
+    palette: "soft",
+    color_source: "custom",
+    color: SIDE_VIZ_DEFAULT_COLOR,
+    intensity: 0.45,
+    opacity: 0.42,
+    speed: 1,
+    render_scale: 1,
+    fps_cap: 60,
+  };
+}
+
+function defaultCommons(): Record<SideVizKind, VizCommonParams> {
+  return {
+    aurora: defaultCommon(),
+    spectrum: defaultCommon(),
+    particles: defaultCommon(),
+    "radial-bars": defaultCommon(),
+    "radial-line": defaultCommon(),
+    fluid: defaultCommon(),
+    silk: defaultCommon(),
+  };
+}
+
+/** 当前效果的公共参数（缺字段/旧配置时回退默认） */
+export function commonOf(s: SideVizSettings): VizCommonParams {
+  return s.commons?.[s.kind] ?? defaultCommon();
+}
+
 export const SIDE_VIZ_DEFAULT: SideVizSettings = {
   enabled: false,
   kind: "aurora",
-  palette: "soft",
-  color: SIDE_VIZ_DEFAULT_COLOR,
-  intensity: 0.45,
-  opacity: 0.42,
-  speed: 1,
-  render_scale: 1,
-  fps_cap: 60,
+  commons: defaultCommons(),
   fluid: { blur: 0.5, breathe: 0.5, spin: 0.5 },
   silk: { flow: 0.5, complexity: 0.5, brightness: 0.5 },
   spectrum_ex: { bars: 64, glow: 0.5, peaks: true, mirror: false },
@@ -178,29 +232,6 @@ export function setVizCache(v: SideVizSettings) {
   vizCache = clampViz(v);
 }
 
-/** 同一效果的风格预设（只改配色/强度等参数，不切换效果类型） */
-export const SIDE_VIZ_STYLES: {
-  id: "mono" | "soft" | "vivid";
-  label: string;
-  patch: Partial<SideVizSettings>;
-}[] = [
-  {
-    id: "mono",
-    label: "素雅",
-    patch: { palette: "mono", intensity: 0.32, opacity: 0.3, speed: 0.85 },
-  },
-  {
-    id: "soft",
-    label: "标准",
-    patch: { palette: "soft", intensity: 0.5, opacity: 0.42, speed: 1 },
-  },
-  {
-    id: "vivid",
-    label: "炫酷",
-    patch: { palette: "vivid", intensity: 0.88, opacity: 0.68, speed: 1.35 },
-  },
-];
-
 export function normalizeHexColor(input: string, fallback = SIDE_VIZ_DEFAULT_COLOR): string {
   let s = (input || "").trim().toLowerCase();
   if (!s.startsWith("#")) s = `#${s}`;
@@ -252,26 +283,41 @@ function mergeParams<T extends object>(defaults: T, raw: unknown): T {
   return out;
 }
 
+function clampCommon(raw: unknown): VizCommonParams {
+  const r = (raw ?? {}) as Partial<VizCommonParams>;
+  const palette: SideVizPalette =
+    r.palette === "mono" || r.palette === "vivid" ? r.palette : "soft";
+  const color_source: SideVizColorSource =
+    r.color_source === "theme" || r.color_source === "cover" ? r.color_source : "custom";
+  const scaleRaw = Number(r.render_scale);
+  return {
+    palette,
+    color_source,
+    color: normalizeHexColor(r.color ?? SIDE_VIZ_DEFAULT_COLOR),
+    intensity: clamp01(r.intensity, 0.45),
+    opacity: clamp01(r.opacity, 0.42),
+    speed: Math.min(2, Math.max(0.2, Number(r.speed) || 1)),
+    render_scale: scaleRaw <= 0.62 ? 0.5 : scaleRaw <= 0.87 ? 0.75 : 1,
+    fps_cap: Number(r.fps_cap) <= 45 ? 30 : 60,
+  };
+}
+
 export function clampViz(v: SideVizSettings): SideVizSettings {
   // 兼容旧 snake_case / 未知值；识别不出的 kind 回退 aurora
   const raw = String(v.kind ?? "").replace(/_/g, "-") as SideVizKind;
   const kind: SideVizKind = KIND_WHITELIST.includes(raw) ? raw : "aurora";
-  const palette: SideVizPalette =
-    v.palette === "mono" || v.palette === "vivid" || v.palette === "cover"
-      ? v.palette
-      : "soft";
   const d = SIDE_VIZ_DEFAULT;
-  const scaleRaw = Number(v.render_scale);
+  const rawCommons = (v.commons ?? {}) as Partial<Record<SideVizKind, unknown>>;
+  const commons = {} as Record<SideVizKind, VizCommonParams>;
+  for (const k of KIND_WHITELIST) commons[k] = clampCommon(rawCommons[k]);
+  // 旧配置兜底迁移：顶层散落的公共参数 → 当前 kind（Rust 侧已迁，这里兜进程缓存）
+  if (!v.commons) {
+    commons[kind] = clampCommon(v as unknown as Partial<VizCommonParams>);
+  }
   return {
     enabled: !!v.enabled,
     kind,
-    palette,
-    color: normalizeHexColor(v.color),
-    intensity: clamp01(v.intensity),
-    opacity: clamp01(v.opacity),
-    speed: Math.min(2, Math.max(0.2, Number(v.speed) || 1)),
-    render_scale: scaleRaw <= 0.62 ? 0.5 : scaleRaw <= 0.87 ? 0.75 : 1,
-    fps_cap: Number(v.fps_cap) <= 45 ? 30 : 60,
+    commons,
     fluid: (() => {
       const p = mergeParams(d.fluid, v.fluid);
       return { blur: clamp01(p.blur, 0.5), breathe: clamp01(p.breathe, 0.5), spin: clamp01(p.spin, 0.5) };
@@ -370,26 +416,47 @@ export function shiftHue(rgb: Rgb, deg: number): Rgb {
 }
 
 /**
- * 配色：由主色 + palette 推导 a/b/c 三色。
- * palette === "cover" 时用封面提取色（无封面回退 soft 推导）。
+ * source === "theme" 的主色：当前主题的 --accent（CSS 变量）。
+ * 按 主题×皮肤 缓存，切主题/皮肤自动失效重读。
+ */
+let themeAccentCache: { key: string; hex: string } | null = null;
+
+export function themeAccentColor(fallback = SIDE_VIZ_DEFAULT_COLOR): string {
+  const el = document.documentElement;
+  const key = `${el.dataset.theme ?? ""}|${el.dataset.colorScheme ?? ""}`;
+  if (themeAccentCache?.key === key) return themeAccentCache.hex;
+  const raw = getComputedStyle(el).getPropertyValue("--accent").trim();
+  const hex = raw ? normalizeHexColor(raw, fallback) : fallback;
+  themeAccentCache = { key, hex };
+  return hex;
+}
+
+/**
+ * 配色推导：palette（丰富程度）× color_source（主色来源）两个正交维度。
+ * - mono：纯黑白灰，不看主色
+ * - soft：基色 + 轻微色相变体（单色渐变）
+ * - vivid：基色 + 对比色（双色渐变）；封面来源时直接用封面提取三色
+ * 基色解析：theme → 主题强调色；cover → 封面主色（无封面回退 color）；custom → color
  */
 export function vizPaletteColors(
   palette: SideVizPalette,
+  source: SideVizColorSource,
   color = SIDE_VIZ_DEFAULT_COLOR,
   coverColors?: VizColors | null,
 ): VizColors {
-  const base = hexToRgb(color);
   if (palette === "mono") {
     // 素雅：压成中性白灰
     return { a: [235, 238, 245], b: [180, 188, 200], c: [140, 150, 165] };
   }
-  if (palette === "cover" && coverColors) {
-    return coverColors;
+  if (source === "cover" && coverColors) {
+    if (palette === "vivid") return coverColors;
+    const base = coverColors.a;
+    return { a: base, b: shiftHue(base, 18), c: shiftHue(base, -14) };
   }
+  const base = hexToRgb(source === "theme" ? themeAccentColor(color) : color);
   if (palette === "vivid") {
     return { a: base, b: shiftHue(base, 70), c: shiftHue(base, -55) };
   }
-  // soft：主色 + 轻微色相/明度变体
   return {
     a: base,
     b: shiftHue(base, 18),

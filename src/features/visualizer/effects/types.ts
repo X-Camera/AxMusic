@@ -1,4 +1,4 @@
-import type { SideVizSettings } from "../../../lib/types";
+import type { EffectiveVizSettings } from "../../../lib/types";
 import type { VizColors } from "../sideViz";
 
 /** 每帧分发给效果的统一数据包（宿主构建一次，对象复用避免 GC） */
@@ -22,7 +22,8 @@ export interface VizFrame {
   live: boolean;
   playing: boolean;
   colors: VizColors;
-  settings: SideVizSettings;
+  /** side_viz 全量 + 当前效果的公共参数已摊平（intensity/speed/... 直接读） */
+  settings: EffectiveVizSettings;
   /** 舞台坐标系焦点（当前句槽位）；环形效果围绕它画 */
   focus: { x: number; y: number } | null;
   /** 当前封面纹理（无封面 null；data URL 不 taint） */

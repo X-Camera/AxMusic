@@ -244,20 +244,7 @@ pub fn update_settings(
     if let Some(v) = patch.side_viz {
         guard.side_viz.enabled = v.enabled;
         guard.side_viz.kind = v.kind;
-        guard.side_viz.palette = v.palette;
-        let color = v.color.trim();
-        if crate::settings::is_hex_color(color) {
-            guard.side_viz.color = color.to_ascii_lowercase();
-        }
-        guard.side_viz.intensity = v.intensity.clamp(0.0, 1.0);
-        guard.side_viz.opacity = v.opacity.clamp(0.0, 1.0);
-        guard.side_viz.speed = v.speed.clamp(0.2, 2.0);
-        guard.side_viz.render_scale = match v.render_scale {
-            s if s <= 0.62 => 0.5,
-            s if s <= 0.87 => 0.75,
-            _ => 1.0,
-        };
-        guard.side_viz.fps_cap = if v.fps_cap <= 45 { 30 } else { 60 };
+        guard.side_viz.commons = v.commons.clamped();
         guard.side_viz.fluid = v.fluid.clamped();
         guard.side_viz.silk = v.silk.clamped();
         guard.side_viz.spectrum_ex = v.spectrum_ex.clamped();
