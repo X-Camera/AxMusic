@@ -1,4 +1,4 @@
-import { Captions, FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2 } from "lucide-react";
+import { Captions, FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, formatTime } from "../lib/api";
@@ -9,6 +9,7 @@ import {
   createPlayClock,
 } from "../lib/playClock";
 import { nextRepeat, REPEAT_TITLE } from "../lib/playMode";
+import { DEFAULT_VOLUME, LOW_VOLUME_THRESHOLD } from "../lib/volume";
 import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
 import "./MiniPlayer.css";
@@ -106,7 +107,7 @@ export function MiniPlayer() {
   }
 
   const duration = player?.duration_ms ?? 0;
-  const volume = player?.volume ?? 0.8;
+  const volume = player?.volume ?? DEFAULT_VOLUME;
   const shuffle = player?.shuffle ?? false;
   const repeat = player?.repeat ?? "off";
   const setShuffle = useApp((s) => s.setShuffle);
@@ -114,6 +115,29 @@ export function MiniPlayer() {
   const playing = player?.status === "Playing";
   const queueLen = player?.queue?.length ?? 0;
   const trackPath = track?.path ?? "";
+  /** 静音前音量：点喇叭恢复用 */
+  const lastVolRef = useRef(DEFAULT_VOLUME);
+  /** 静音意图：不依赖 setVolume 回填前的旧 volume，避免连点切换失效 */
+  const mutedRef = useRef(false);
+
+  /** 点喇叭：静音 ↔ 恢复到静音前音量 */
+  function toggleMute() {
+    if (!mutedRef.current && volume > 0) {
+      lastVolRef.current = volume;
+      mutedRef.current = true;
+      void setVolume(0);
+    } else {
+      mutedRef.current = false;
+      void setVolume(lastVolRef.current);
+    }
+  }
+
+  /** 音量图标：静音 / 低 / 正常（避免 JSX 嵌套三元） */
+  function renderVolumeIcon() {
+    if (volume <= 0) return <VolumeX size={15} />;
+    if (volume < LOW_VOLUME_THRESHOLD) return <Volume1 size={15} />;
+    return <Volume2 size={15} />;
+  }
 
   // 轮询快照只作锚点；拖动中跟 seekMs；播放中由 rAF 外推
   useEffect(() => {
@@ -312,7 +336,15 @@ export function MiniPlayer() {
           {repeat === "one" ? <Repeat1 size={15} /> : <Repeat size={15} />}
         </button>
         <div className="mp-volume">
-          <Volume2 size={15} className="tertiary" />
+          <button
+            type="button"
+            className="mp-icon mp-vol-btn"
+            title={volume > 0 ? "静音" : "恢复音量"}
+            aria-label={volume > 0 ? "静音" : "恢复音量"}
+            onClick={toggleMute}
+          >
+            {renderVolumeIcon()}
+          </button>
           <input
             className="mp-slider mp-vol"
             type="range"
@@ -321,7 +353,14 @@ export function MiniPlayer() {
             step={0.01}
             value={volume}
             aria-label="音量"
-            onChange={(e) => void setVolume(Number(e.target.value))}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (v > 0) {
+                lastVolRef.current = v;
+                mutedRef.current = false;
+              }
+              void setVolume(v);
+            }}
             style={{
               ["--pct" as string]: String(volume * 100),
               ["--thumb-w" as string]: "12px",

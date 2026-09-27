@@ -7,7 +7,6 @@ import { api } from "../lib/api";
 import type {
   AppSettings,
   LyricsCurrent,
-  LyricsFont,
   LyricsPrefer,
   SideVizSettings,
 } from "../lib/types";
@@ -18,7 +17,7 @@ import {
   createPlayClock,
   type PlayClock,
 } from "../lib/playClock";
-import { lyricsDisplayVars } from "../lib/lyricsDisplay";
+import { lyricsDisplayVars, SIDE_LYRICS_DISP_DEFAULT, sideLyricsDisp, type LyricsDisp } from "../lib/lyricsDisplay";
 import { onLyricsSaved, openLyricsWindow } from "../lib/lyricsWindow";
 import { openVizSettingsWindow } from "../lib/vizSettingsWindow";
 import { useApp } from "../state/useApp";
@@ -55,11 +54,7 @@ export function SideLyrics() {
   const info = lyricState.path === path ? lyricState.info : null;
   const [prefer, setPrefer] = useState<LyricsPrefer>("sidecar");
   /** 主界面歌词显示参数（设置页「主界面歌词」/ 右键「歌词样式」） */
-  const [disp, setDisp] = useState({
-    fontScale: 1,
-    font: "display" as LyricsFont,
-    lineHeight: 1.25,
-  });
+  const [disp, setDisp] = useState<LyricsDisp>(SIDE_LYRICS_DISP_DEFAULT);
   const [trackGen, setTrackGen] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [styleOpen, setStyleOpen] = useState(false);
@@ -99,11 +94,7 @@ export function SideLyrics() {
       .then((s) => {
         if (cancelled) return;
         setPrefer(s.lyrics_prefer);
-        setDisp({
-          fontScale: s.side_lyrics_font_scale ?? 1,
-          font: s.side_lyrics_font ?? "display",
-          lineHeight: s.side_lyrics_line_height ?? 1.25,
-        });
+        setDisp(sideLyricsDisp(s));
         if (s.side_viz) {
           const next = clampViz(s.side_viz);
           setVizCache(next);
@@ -116,17 +107,20 @@ export function SideLyrics() {
     };
   }, []);
 
-  // 设置页/其它入口改了 side_viz 时同步到本格
+  // 设置页/其它入口改了 side_viz / 歌词样式时同步到本格（自身 patch 的回声等值重放，幂等）
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listen<AppSettings>("settings://changed", (e) => {
       if (cancelled) return;
-      if (e.payload.side_viz) {
-        const next = clampViz(e.payload.side_viz);
+      const s = e.payload;
+      if (s.side_viz) {
+        const next = clampViz(s.side_viz);
         setVizCache(next);
         setViz(next);
       }
+      setPrefer(s.lyrics_prefer);
+      setDisp(sideLyricsDisp(s));
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;

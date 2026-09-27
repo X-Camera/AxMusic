@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import {
   Pause,
   Play,
@@ -16,10 +17,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { api, formatTime } from "../../lib/api";
-import { lyricsDisplayVars } from "../../lib/lyricsDisplay";
+import {
+  FULL_LYRICS_DISP_DEFAULT,
+  fullLyricsDisp,
+  lyricsDisplayVars,
+  type LyricsDisp,
+} from "../../lib/lyricsDisplay";
 import { exitTrueFullscreen, toggleTrueFullscreen } from "../../lib/trueFullscreen";
 import { nextRepeat, REPEAT_TITLE } from "../../lib/playMode";
-import type { LyricsFont } from "../../lib/types";
+import type { AppSettings } from "../../lib/types";
+import { DEFAULT_VOLUME, LOW_VOLUME_THRESHOLD } from "../../lib/volume";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import {
   clockNow,
@@ -147,24 +154,35 @@ export function NowPlayingPage() {
 
   const [lyricsPrefer, setLyricsPrefer] = useState<"sidecar" | "embed">("sidecar");
   /** 满窗歌词显示参数（设置页「满窗歌词」） */
-  const [lyricsDisp, setLyricsDisp] = useState({
-    fontScale: 1,
-    font: "display" as LyricsFont,
-    lineHeight: 1.25,
-  });
+  const [lyricsDisp, setLyricsDisp] = useState<LyricsDisp>(FULL_LYRICS_DISP_DEFAULT);
   useEffect(() => {
     let cancelled = false;
     void api.getSettings().then((s) => {
       if (cancelled) return;
       setLyricsPrefer(s.lyrics_prefer);
-      setLyricsDisp({
-        fontScale: s.lyrics_font_scale ?? 1,
-        font: s.lyrics_font ?? "display",
-        lineHeight: s.lyrics_line_height ?? 1.25,
-      });
+      setLyricsDisp(fullLyricsDisp(s));
     });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // 设置页「满窗歌词」改动实时同步（自身样式弹窗 patch 的回声等值重放，幂等）
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<AppSettings>("settings://changed", (e) => {
+      if (cancelled) return;
+      const s = e.payload;
+      setLyricsPrefer(s.lyrics_prefer);
+      setLyricsDisp(fullLyricsDisp(s));
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
   const { lines, plain, synced } = useMemo(
@@ -329,7 +347,27 @@ export function NowPlayingPage() {
   const title = info?.title || track?.title || info?.filename || "未在播放";
   const artist = info?.artist || info?.album_artist || "";
   const cover = info?.cover_data ?? null;
-  const vol = player?.volume ?? 0.8;
+  const vol = player?.volume ?? DEFAULT_VOLUME;
+  /** 静音前音量 + 静音意图：与迷你条同一套语义 */
+  const lastVolRef = useRef(DEFAULT_VOLUME);
+  const mutedRef = useRef(false);
+
+  function toggleMute() {
+    if (!mutedRef.current && vol > 0) {
+      lastVolRef.current = vol;
+      mutedRef.current = true;
+      void setVolume(0);
+    } else {
+      mutedRef.current = false;
+      void setVolume(lastVolRef.current);
+    }
+  }
+
+  function renderVolumeIcon() {
+    if (vol <= 0) return <VolumeX size={15} />;
+    if (vol < LOW_VOLUME_THRESHOLD) return <Volume1 size={15} />;
+    return <Volume2 size={15} />;
+  }
 
   function seekFromEvent(e: React.MouseEvent<HTMLElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -459,16 +497,11 @@ export function NowPlayingPage() {
           <div className="np-vol">
             <button
               className="np-icon np-vol-btn"
-              title="静音/恢复"
-              onClick={() => void setVolume(vol > 0 ? 0 : 0.8)}
+              title={vol > 0 ? "静音" : "恢复音量"}
+              aria-label={vol > 0 ? "静音" : "恢复音量"}
+              onClick={toggleMute}
             >
-              {vol <= 0 ? (
-                <VolumeX size={15} />
-              ) : vol < 0.45 ? (
-                <Volume1 size={15} />
-              ) : (
-                <Volume2 size={15} />
-              )}
+              {renderVolumeIcon()}
             </button>
             <input
               type="range"
@@ -477,7 +510,14 @@ export function NowPlayingPage() {
               step={0.01}
               value={vol}
               aria-label="音量"
-              onChange={(e) => void setVolume(Number(e.target.value))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (v > 0) {
+                  lastVolRef.current = v;
+                  mutedRef.current = false;
+                }
+                void setVolume(v);
+              }}
               style={{ ["--pct" as string]: `${vol * 100}%` }}
             />
           </div>

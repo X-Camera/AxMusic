@@ -276,6 +276,19 @@
   flex-shrink: 0;
 }
 
+/* 喇叭：静音/恢复；比模式钮再收一档，不抢滑杆 */
+.mp-icon.mp-vol-btn {
+  width: 28px;
+  height: 28px;
+  color: var(--text-tertiary);
+  background: transparent;
+}
+
+.mp-icon.mp-vol-btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
 .mp-queue-wrap {
   position: relative;
   display: flex;
@@ -330,14 +343,16 @@
   outline: none;
 }
 
-/* 轨道固定高度，圆点用 margin-top 垂直居中；填充宽度按圆点半宽补偿，末点对齐圆心 */
+/* 轨道固定高度，圆点用 margin-top 垂直居中；填充宽度按圆点半宽补偿，末点对齐圆心。
+   0% 时不加半宽补偿，否则静音后左侧仍留一截色条。
+   契约：--pct 必须是无单位 0–100 数值（写 "50%" 会让 min() 静默失效） */
 .mp-slider::-webkit-slider-runnable-track {
   height: var(--track-h);
   border-radius: 999px;
   background-color: var(--bg-hover);
   background-image: linear-gradient(var(--accent), var(--accent));
   background-repeat: no-repeat;
-  background-size: calc(var(--pct) * (100% - var(--thumb-w)) / 100 + var(--thumb-w) / 2) 100%;
+  background-size: calc(var(--pct) * (100% - var(--thumb-w)) / 100 + var(--thumb-w) / 2 * min(var(--pct), 1)) 100%;
 }
 
 .mp-slider::-webkit-slider-thumb {

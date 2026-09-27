@@ -62,84 +62,8 @@
   --dur-slow: 180ms;
 }
 
-/* ═══════════ 暗色：表面中性灰（全皮肤共用），只换 accent ═══════════ */
+/* ═══════════ 浅色（默认）：表面中性浅灰（全皮肤共用） ═══════════ */
 :root,
-[data-theme="dark"] {
-  --bg-rgb: 11, 12, 15;
-  --bg-elevated: #12141a;
-  --bg-card: #181b23;
-  --bg-hover: #222632;
-  --bg-placeholder: linear-gradient(145deg, #1a1d26 0%, #222632 100%);
-  --border-rgb: 42, 47, 58;
-  --text: #f2f4f8;
-  --text-secondary: #a8b0be;
-  --text-tertiary: #6b7385;
-  --text-lyrics: #f2f4f8;
-  --text-lyrics-dim: #a8b0be;
-  /* 默认星云紫 */
-  --accent-rgb: 124, 106, 242;
-  --accent: #7c6af2;
-  --accent-solid: #7c6af2;
-  --accent-strong: #6a58e8;
-  --on-accent: #ffffff;
-}
-
-/* ── 暗色 · 皮肤只覆盖 accent 家族 ── */
-[data-theme="dark"][data-color-scheme="sky"],
-:not([data-theme])[data-color-scheme="sky"] {
-  --accent-rgb: 91, 157, 255;
-  --accent: #5b9dff;
-  --accent-solid: #5b9dff;
-  --accent-strong: #4580e6;
-  --on-accent: #ffffff;
-}
-
-[data-theme="dark"][data-color-scheme="jade"],
-:not([data-theme])[data-color-scheme="jade"] {
-  --accent-rgb: 52, 211, 153;
-  --accent: #34d399;
-  --accent-solid: #34d399;
-  --accent-strong: #2bbf8a;
-  --on-accent: #06281c;
-}
-
-[data-theme="dark"][data-color-scheme="rose"],
-:not([data-theme])[data-color-scheme="rose"] {
-  --accent-rgb: 244, 114, 182;
-  --accent: #f472b6;
-  --accent-solid: #f472b6;
-  --accent-strong: #ec4899;
-  --on-accent: #3d0a28;
-}
-
-[data-theme="dark"][data-color-scheme="amber"],
-:not([data-theme])[data-color-scheme="amber"] {
-  --accent-rgb: 245, 165, 36;
-  --accent: #f5a524;
-  --accent-solid: #f5a524;
-  --accent-strong: #e09400;
-  --on-accent: #211600;
-}
-
-[data-theme="dark"][data-color-scheme="coral"],
-:not([data-theme])[data-color-scheme="coral"] {
-  --accent-rgb: 255, 122, 92;
-  --accent: #ff7a5c;
-  --accent-solid: #ff7a5c;
-  --accent-strong: #f06543;
-  --on-accent: #2b1208;
-}
-
-[data-theme="dark"][data-color-scheme="graphite"],
-:not([data-theme])[data-color-scheme="graphite"] {
-  --accent-rgb: 168, 176, 190;
-  --accent: #a8b0be;
-  --accent-solid: #c5cad3;
-  --accent-strong: #8b93a5;
-  --on-accent: #1a1d26;
-}
-
-/* ═══════════ 浅色：表面中性浅灰（全皮肤共用） ═══════════ */
 [data-theme="light"] {
   --bg-rgb: 247, 248, 250;
   --bg-elevated: #ffffff;
@@ -153,24 +77,7 @@
   /* 主界面歌词墨色：比 --text 略收，浅色下避免近黑发硬 */
   --text-lyrics: #2c3344;
   --text-lyrics-dim: #6b7388;
-  /* 默认星云紫：文字用加深版保证对比，实心块用亮版避免「太深」 */
-  --accent-rgb: 106, 88, 232;
-  --accent: #6a58e8;
-  --accent-solid: #7c6af2;
-  --accent-strong: #5b4bd4;
-  --on-accent: #ffffff;
-}
-
-/* ── 浅色 · 皮肤只覆盖 accent 家族 ── */
-[data-theme="light"][data-color-scheme="sky"] {
-  --accent-rgb: 59, 130, 246;
-  --accent: #3b82f6;
-  --accent-solid: #5b9dff;
-  --accent-strong: #2563eb;
-  --on-accent: #ffffff;
-}
-
-[data-theme="light"][data-color-scheme="jade"] {
+  /* 默认翡翠绿：文字用加深版保证对比，实心块用亮版避免「太深」 */
   --accent-rgb: 16, 185, 129;
   --accent: #10b981;
   --accent-solid: #34d399;
@@ -178,7 +85,36 @@
   --on-accent: #06281c;
 }
 
-[data-theme="light"][data-color-scheme="rose"] {
+/* ── 浅色 · 皮肤只覆盖 accent 家族 ── */
+[data-theme="light"][data-color-scheme="nebula"],
+:root[data-color-scheme="nebula"]:not([data-theme]) {
+  --accent-rgb: 106, 88, 232;
+  --accent: #6a58e8;
+  --accent-solid: #7c6af2;
+  --accent-strong: #5b4bd4;
+  --on-accent: #ffffff;
+}
+
+[data-theme="light"][data-color-scheme="sky"],
+:root[data-color-scheme="sky"]:not([data-theme]) {
+  --accent-rgb: 59, 130, 246;
+  --accent: #3b82f6;
+  --accent-solid: #5b9dff;
+  --accent-strong: #2563eb;
+  --on-accent: #ffffff;
+}
+
+[data-theme="light"][data-color-scheme="jade"],
+:root[data-color-scheme="jade"]:not([data-theme]) {
+  --accent-rgb: 16, 185, 129;
+  --accent: #10b981;
+  --accent-solid: #34d399;
+  --accent-strong: #059669;
+  --on-accent: #06281c;
+}
+
+[data-theme="light"][data-color-scheme="rose"],
+:root[data-color-scheme="rose"]:not([data-theme]) {
   --accent-rgb: 219, 39, 119;
   --accent: #db2777;
   --accent-solid: #f472b6;
@@ -186,7 +122,8 @@
   --on-accent: #3d0a28;
 }
 
-[data-theme="light"][data-color-scheme="amber"] {
+[data-theme="light"][data-color-scheme="amber"],
+:root[data-color-scheme="amber"]:not([data-theme]) {
   --accent-rgb: 217, 119, 6;
   --accent: #d97706;
   --accent-solid: #f5a524;
@@ -194,7 +131,8 @@
   --on-accent: #211600;
 }
 
-[data-theme="light"][data-color-scheme="coral"] {
+[data-theme="light"][data-color-scheme="coral"],
+:root[data-color-scheme="coral"]:not([data-theme]) {
   --accent-rgb: 234, 88, 12;
   --accent: #ea580c;
   --accent-solid: #ff7a5c;
@@ -202,12 +140,91 @@
   --on-accent: #2b1208;
 }
 
-[data-theme="light"][data-color-scheme="graphite"] {
+[data-theme="light"][data-color-scheme="graphite"],
+:root[data-color-scheme="graphite"]:not([data-theme]) {
   --accent-rgb: 92, 101, 120;
   --accent: #5c6578;
   --accent-solid: #8b93a5;
   --accent-strong: #4a5263;
   --on-accent: #ffffff;
+}
+
+/* ═══════════ 暗色：表面中性灰（全皮肤共用），只换 accent ═══════════ */
+[data-theme="dark"] {
+  --bg-rgb: 11, 12, 15;
+  --bg-elevated: #12141a;
+  --bg-card: #181b23;
+  --bg-hover: #222632;
+  --bg-placeholder: linear-gradient(145deg, #1a1d26 0%, #222632 100%);
+  --border-rgb: 42, 47, 58;
+  --text: #f2f4f8;
+  --text-secondary: #a8b0be;
+  --text-tertiary: #6b7385;
+  --text-lyrics: #f2f4f8;
+  --text-lyrics-dim: #a8b0be;
+  /* 默认翡翠绿 */
+  --accent-rgb: 52, 211, 153;
+  --accent: #34d399;
+  --accent-solid: #34d399;
+  --accent-strong: #2bbf8a;
+  --on-accent: #06281c;
+}
+
+/* ── 暗色 · 皮肤只覆盖 accent 家族 ── */
+[data-theme="dark"][data-color-scheme="nebula"] {
+  --accent-rgb: 124, 106, 242;
+  --accent: #7c6af2;
+  --accent-solid: #7c6af2;
+  --accent-strong: #6a58e8;
+  --on-accent: #ffffff;
+}
+
+[data-theme="dark"][data-color-scheme="sky"] {
+  --accent-rgb: 91, 157, 255;
+  --accent: #5b9dff;
+  --accent-solid: #5b9dff;
+  --accent-strong: #4580e6;
+  --on-accent: #ffffff;
+}
+
+[data-theme="dark"][data-color-scheme="jade"] {
+  --accent-rgb: 52, 211, 153;
+  --accent: #34d399;
+  --accent-solid: #34d399;
+  --accent-strong: #2bbf8a;
+  --on-accent: #06281c;
+}
+
+[data-theme="dark"][data-color-scheme="rose"] {
+  --accent-rgb: 244, 114, 182;
+  --accent: #f472b6;
+  --accent-solid: #f472b6;
+  --accent-strong: #ec4899;
+  --on-accent: #3d0a28;
+}
+
+[data-theme="dark"][data-color-scheme="amber"] {
+  --accent-rgb: 245, 165, 36;
+  --accent: #f5a524;
+  --accent-solid: #f5a524;
+  --accent-strong: #e09400;
+  --on-accent: #211600;
+}
+
+[data-theme="dark"][data-color-scheme="coral"] {
+  --accent-rgb: 255, 122, 92;
+  --accent: #ff7a5c;
+  --accent-solid: #ff7a5c;
+  --accent-strong: #f06543;
+  --on-accent: #2b1208;
+}
+
+[data-theme="dark"][data-color-scheme="graphite"] {
+  --accent-rgb: 168, 176, 190;
+  --accent: #a8b0be;
+  --accent-solid: #c5cad3;
+  --accent-strong: #8b93a5;
+  --on-accent: #1a1d26;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -66,9 +66,9 @@ pub enum CloseBehavior {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorScheme {
-    #[default]
     Nebula,
     Sky,
+    #[default]
     Jade,
     Rose,
     Amber,
@@ -77,13 +77,13 @@ pub enum ColorScheme {
     Graphite,
 }
 
-/// 外观：暗色 / 浅色
+/// 外观：浅色 / 暗色
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     #[default]
-    Dark,
     Light,
+    Dark,
 }
 
 /// 满窗歌词字体（Windows 常见中文字体）
@@ -639,8 +639,8 @@ pub struct AppSettings {
     /// 主界面歌词字体
     #[serde(default)]
     pub side_lyrics_font: LyricsFont,
-    /// 主界面歌词行间距（1.0..=2.0）
-    #[serde(default = "default_lyrics_line_height")]
+    /// 主界面歌词行间距（1.0..=2.0，与满窗独立）
+    #[serde(default = "default_side_lyrics_line_height")]
     pub side_lyrics_line_height: f32,
     /// 主界面歌词区背景动效（默认关）
     #[serde(default, deserialize_with = "side_viz_lenient")]
@@ -671,8 +671,14 @@ fn default_lyrics_font_scale() -> f32 {
     1.0
 }
 
+/// 满窗歌词默认行距
 fn default_lyrics_line_height() -> f32 {
-    1.25
+    1.5
+}
+
+/// 主界面歌词默认行距（与满窗独立，当前同为 1.5）
+fn default_side_lyrics_line_height() -> f32 {
+    1.5
 }
 
 impl Default for AppSettings {
@@ -692,7 +698,7 @@ impl Default for AppSettings {
             lyrics_line_height: default_lyrics_line_height(),
             side_lyrics_font_scale: default_lyrics_font_scale(),
             side_lyrics_font: LyricsFont::default(),
-            side_lyrics_line_height: default_lyrics_line_height(),
+            side_lyrics_line_height: default_side_lyrics_line_height(),
             side_viz: SideVizSettings::default(),
             songs_view: SongsView::default(),
             close_behavior: CloseBehavior::default(),

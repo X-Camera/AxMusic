@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
@@ -8,14 +8,17 @@ import { LYRICS_FONTS } from "../../lib/lyricsDisplay";
 import type {
   AppSettings,
   CloseBehavior,
+  ColorScheme,
   LyricsFont,
   LyricsPrefer,
   LyricsSaveMode,
   PathsInfo,
   RepeatMode,
+  SettingsPatch,
   SongsView,
   ThemeMode,
 } from "../../lib/types";
+import { DEFAULT_VOLUME } from "../../lib/volume";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { BrandMark } from "../../components/BrandMark";
@@ -47,6 +50,39 @@ const CLOSE_BEHAVIORS: { id: CloseBehavior; label: string }[] = [
   { id: "tray", label: "缩到托盘" },
   { id: "exit", label: "退出" },
 ];
+
+type SectionKey = "playback" | "lyrics" | "sideLyrics" | "fullLyrics" | "ui";
+
+/** 与 Rust `AppSettings::default()` 对齐；恢复默认按钮按区块回放 */
+const SECTION_DEFAULTS: Record<SectionKey, SettingsPatch> = {
+  playback: {
+    volume: DEFAULT_VOLUME,
+    shuffle: false,
+    repeat: "off" as RepeatMode,
+    restore_volume: true,
+  },
+  lyrics: {
+    lyrics_save_mode: "sidecar" as LyricsSaveMode,
+    lyrics_prefer: "sidecar" as LyricsPrefer,
+    lyrics_sources: { lrclib: true, netease: true, qq: true },
+  },
+  sideLyrics: {
+    side_lyrics_font_scale: 1,
+    side_lyrics_font: "display" as LyricsFont,
+    side_lyrics_line_height: 1.5,
+  },
+  fullLyrics: {
+    lyrics_font_scale: 1,
+    lyrics_font: "display" as LyricsFont,
+    lyrics_line_height: 1.5,
+  },
+  ui: {
+    songs_view: "list" as SongsView,
+    close_behavior: "ask" as CloseBehavior,
+    theme_mode: "light" as ThemeMode,
+    color_scheme: "jade" as ColorScheme,
+  },
+};
 
 const FEATURES = [
   "任意路径本地播放，专辑 · 歌曲 · 歌手一站浏览",
@@ -165,14 +201,29 @@ function RangeCtrl({
 
 function Section({
   title,
+  onReset,
   children,
 }: {
   title: string;
+  onReset?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <section className="set-section">
-      <h2 className="set-section-title">{title}</h2>
+      <div className="set-section-head">
+        <h2 className="set-section-title">{title}</h2>
+        {onReset && (
+          <button
+            type="button"
+            className="set-reset-btn"
+            title="恢复默认"
+            aria-label={`恢复「${title}」默认`}
+            onClick={onReset}
+          >
+            <RotateCcw size={13} strokeWidth={1.75} />
+          </button>
+        )}
+      </div>
       <div className="set-card">{children}</div>
     </section>
   );
@@ -299,7 +350,7 @@ export function SettingsPage() {
     return () => unlisten?.();
   }, []);
 
-  const patch = useCallback(async (p: Parameters<typeof api.updateSettings>[0]) => {
+  const patch = useCallback(async (p: SettingsPatch) => {
     try {
       const next = await api.updateSettings(p);
       setSettings(next);
@@ -308,6 +359,24 @@ export function SettingsPage() {
       setError(String(e));
     }
   }, []);
+
+  /** 恢复某区块默认；播放区走 useApp 通道（含写序保护与 player://state 即时回写） */
+  const resetSection = useCallback(
+    (key: SectionKey) => {
+      const defaults = SECTION_DEFAULTS[key];
+      if (key === "playback") {
+        void useApp.getState().setVolume(defaults.volume ?? DEFAULT_VOLUME);
+        void useApp.getState().setShuffle(defaults.shuffle ?? false);
+        void useApp.getState().setRepeat((defaults.repeat ?? "off") as RepeatMode);
+      }
+      if (key === "ui") {
+        applyThemeMode((defaults.theme_mode ?? "light") as ThemeMode);
+        applyColorScheme((defaults.color_scheme ?? "jade") as ColorScheme);
+      }
+      void patch(defaults);
+    },
+    [patch],
+  );
 
   if (!settings) {
     return (
@@ -332,7 +401,7 @@ export function SettingsPage() {
         <div className="set-main">
           {error && <div className="error-line set-error">{error}</div>}
 
-            <Section title="播放">
+            <Section title="播放" onReset={() => resetSection("playback")}>
               <Row label="默认音量" hint="迷你条/满窗共用，调节后即时记住">
                 <div className="set-vol">
                   <input
@@ -383,7 +452,7 @@ export function SettingsPage() {
               </Row>
             </Section>
 
-            <Section title="歌词">
+            <Section title="歌词" onReset={() => resetSection("lyrics")}>
               <Row label="默认保存" hint="搜索歌词后写入方式，可逐次改">
                 <Segmented
                   value={settings.lyrics_save_mode}
@@ -434,7 +503,7 @@ export function SettingsPage() {
               </Row>
             </Section>
 
-            <Section title="主界面歌词">
+            <Section title="主界面歌词" onReset={() => resetSection("sideLyrics")}>
               <Row label="字号" hint="右边栏歌词大小；与满窗歌词分开保存">
                 <RangeCtrl
                   min={0.75}
@@ -465,7 +534,7 @@ export function SettingsPage() {
                   min={1}
                   max={2}
                   step={0.05}
-                  value={settings.side_lyrics_line_height ?? 1.25}
+                  value={settings.side_lyrics_line_height ?? 1.5}
                   label="主界面歌词行距"
                   format={(v) => v.toFixed(2)}
                   onChange={(v) => void patch({ side_lyrics_line_height: v })}
@@ -473,7 +542,7 @@ export function SettingsPage() {
               </Row>
             </Section>
 
-            <Section title="满窗歌词">
+            <Section title="满窗歌词" onReset={() => resetSection("fullLyrics")}>
               <Row label="字号" hint="相对默认大小缩放；满窗右键「歌词样式」可边看边调">
                 <RangeCtrl
                   min={0.75}
@@ -504,7 +573,7 @@ export function SettingsPage() {
                   min={1}
                   max={2}
                   step={0.05}
-                  value={settings.lyrics_line_height ?? 1.25}
+                  value={settings.lyrics_line_height ?? 1.5}
                   label="行距"
                   format={(v) => v.toFixed(2)}
                   onChange={(v) => void patch({ lyrics_line_height: v })}
@@ -529,7 +598,7 @@ export function SettingsPage() {
               </Row>
             </Section>
 
-            <Section title="界面">
+            <Section title="界面" onReset={() => resetSection("ui")}>
               <Row label="歌曲页视图" hint="默认列表或卡片网格">
                 <Segmented
                   value={settings.songs_view}
@@ -546,7 +615,7 @@ export function SettingsPage() {
               </Row>
               <Row label="外观" hint="深色 / 浅色整套切换">
                 <Segmented
-                  value={(settings.theme_mode ?? "dark") as ThemeMode}
+                  value={(settings.theme_mode ?? "light") as ThemeMode}
                   options={THEME_MODES}
                   onChange={(v) => {
                     applyThemeMode(v);
@@ -557,19 +626,20 @@ export function SettingsPage() {
               <Row label="皮肤" hint="强调色（表面中性不偏色）；满窗播放随封面，不跟皮肤">
                 <div className="set-swatches" role="radiogroup" aria-label="皮肤">
                   {COLOR_SCHEMES.map((s) => {
-                    const mode = settings.theme_mode === "light" ? "light" : "dark";
+                    const mode = settings.theme_mode === "dark" ? "dark" : "light";
                     const preview = s[mode];
                     const surface = mode === "light" ? "#f7f8fa" : "#12141a";
                     const card = mode === "light" ? "#ffffff" : "#181b23";
+                    const selected = settings.color_scheme === s.id;
                     return (
                       <button
                         key={s.id}
                         type="button"
                         role="radio"
-                        aria-checked={settings.color_scheme === s.id}
+                        aria-checked={selected}
                         title={s.label}
-                        className={`set-swatch${settings.color_scheme === s.id ? " active" : ""}`}
-                        style={{ background: surface }}
+                        className={`set-swatch${selected ? " active" : ""}`}
+                        style={{ background: selected ? preview.solid : surface }}
                         onClick={() => {
                           applyColorScheme(s.id);
                           void patch({ color_scheme: s.id });
@@ -577,7 +647,10 @@ export function SettingsPage() {
                       >
                         <span
                           className="set-swatch-card"
-                          style={{ background: card, borderColor: preview.solid }}
+                          style={{
+                            background: card,
+                            borderColor: selected ? "rgba(255,255,255,0.55)" : preview.solid,
+                          }}
                         />
                         <span
                           className="set-swatch-accent"

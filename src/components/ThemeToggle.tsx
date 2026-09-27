@@ -2,18 +2,16 @@ import { Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
-import { applyThemeMode } from "../lib/colorScheme";
+import { applyThemeMode, readThemeMode } from "../lib/colorScheme";
 import type { ThemeMode } from "../lib/types";
 
 /** 顶栏深浅色快捷切换（设置页「外观」同一份 theme_mode）。 */
 export function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>(() =>
-    document.documentElement.dataset.theme === "light" ? "light" : "dark",
-  );
+  const [mode, setMode] = useState<ThemeMode>(readThemeMode);
 
   useEffect(() => {
     const sync = () => {
-      setMode(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+      setMode(readThemeMode());
     };
     sync();
     const obs = new MutationObserver(sync);

@@ -373,7 +373,7 @@
   user-select: none;
   /* 设置页「满窗歌词」可调：字号缩放 / 字体 / 行距 */
   --lyrics-scale: 1;
-  --lyrics-lh: 1.25;
+  --lyrics-lh: 1.5;
   --lyrics-font: var(--font-display);
   /* 边界溶进背景：上下更长的软渐隐 */
   mask-image: linear-gradient(
@@ -647,7 +647,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(clamp(18px, 2vh, 28px) * var(--lyrics-lh) / 1.25);
+  gap: calc(clamp(18px, 2vh, 28px) * var(--lyrics-lh) / 1.5);
   padding: 0 12px;
 }
 
@@ -759,8 +759,9 @@
 }
 
 /* 边栏紧凑版：同一套动效；字号缩小、居中对齐、渐隐更浅 */
+/* 基准 19px：设置 100% 时比原 15px 大两号，缩放仍从 100% 起算 */
 .np-lyrics.synced.compact {
-  --lyrics-base: 15px;
+  --lyrics-base: 19px;
   font-size: calc(var(--lyrics-base) * var(--lyrics-scale));
 }
 
@@ -781,12 +782,12 @@
 }
 
 .np-lyrics.compact .np-lines {
-  gap: calc(12px * var(--lyrics-lh) / 1.25);
+  gap: calc(12px * var(--lyrics-lh) / 1.5);
   padding: 0 6px;
 }
 
 .np-lyrics.compact .np-line.plain .np-main {
-  font-size: calc(13px * var(--lyrics-scale));
+  font-size: calc(17px * var(--lyrics-scale));
   text-align: center;
 }
 

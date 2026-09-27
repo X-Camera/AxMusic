@@ -68,6 +68,10 @@ export const COLOR_SCHEMES: ColorSchemeMeta[] = [
   },
 ];
 
+/** 外观与皮肤的兜底默认（与 Rust `AppSettings::default()` 对齐） */
+export const DEFAULT_THEME_MODE: ThemeMode = "light";
+export const DEFAULT_COLOR_SCHEME: ColorScheme = "jade";
+
 /** 外观：暗色 / 浅色 */
 export function applyThemeMode(mode: ThemeMode | string) {
   document.documentElement.dataset.theme = mode === "light" ? "light" : "dark";
@@ -84,17 +88,22 @@ export function applyAppearance(theme: ThemeMode | string, scheme: ColorScheme |
   applyColorScheme(scheme);
 }
 
+/** 读取当前 DOM 主题（未设置 data-theme 时按默认浅色） */
+export function readThemeMode(): ThemeMode {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+
 /** 启动时拉设置并应用；监听 settings://changed 保持多窗口一致 */
 export function bootstrapTheme() {
   void api
     .getSettings()
     .then((s: AppSettings) =>
-      applyAppearance(s.theme_mode ?? "dark", s.color_scheme ?? "nebula"),
+      applyAppearance(s.theme_mode ?? DEFAULT_THEME_MODE, s.color_scheme ?? DEFAULT_COLOR_SCHEME),
     )
-    .catch(() => applyAppearance("dark", "nebula"));
+    .catch(() => applyAppearance(DEFAULT_THEME_MODE, DEFAULT_COLOR_SCHEME));
 
   void listen<AppSettings>("settings://changed", (e) => {
     const s = e.payload;
-    applyAppearance(s.theme_mode ?? "dark", s.color_scheme ?? "nebula");
+    applyAppearance(s.theme_mode ?? DEFAULT_THEME_MODE, s.color_scheme ?? DEFAULT_COLOR_SCHEME);
   });
 }

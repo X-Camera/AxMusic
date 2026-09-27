@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-import type { LyricsFont } from "./types";
+import type { AppSettings, LyricsFont } from "./types";
 
 /** 满窗歌词字体选项（Windows 常见中文字体，label 中文短名） */
 export const LYRICS_FONTS: { id: LyricsFont; label: string; stack: string }[] = [
@@ -24,7 +24,46 @@ export function lyricsFontStack(font: LyricsFont | undefined): string {
   return LYRICS_FONTS.find((f) => f.id === font)?.stack ?? LYRICS_FONTS[0].stack;
 }
 
-/** 满窗歌词显示参数 → CSS 自定义属性（挂在 .np-lyrics） */
+/** 歌词显示参数（字号缩放 / 字体 / 行距） */
+export interface LyricsDisp {
+  fontScale: number;
+  font: LyricsFont;
+  lineHeight: number;
+}
+
+/** 主界面歌词默认显示参数（与满窗独立） */
+export const SIDE_LYRICS_DISP_DEFAULT: LyricsDisp = {
+  fontScale: 1,
+  font: "display",
+  lineHeight: 1.5,
+};
+
+/** 满窗歌词默认显示参数 */
+export const FULL_LYRICS_DISP_DEFAULT: LyricsDisp = {
+  fontScale: 1,
+  font: "display",
+  lineHeight: 1.5,
+};
+
+/** 设置快照 → 主界面歌词显示参数（初始加载与 settings://changed 共用） */
+export function sideLyricsDisp(s: AppSettings): LyricsDisp {
+  return {
+    fontScale: s.side_lyrics_font_scale ?? SIDE_LYRICS_DISP_DEFAULT.fontScale,
+    font: s.side_lyrics_font ?? SIDE_LYRICS_DISP_DEFAULT.font,
+    lineHeight: s.side_lyrics_line_height ?? SIDE_LYRICS_DISP_DEFAULT.lineHeight,
+  };
+}
+
+/** 设置快照 → 满窗歌词显示参数 */
+export function fullLyricsDisp(s: AppSettings): LyricsDisp {
+  return {
+    fontScale: s.lyrics_font_scale ?? FULL_LYRICS_DISP_DEFAULT.fontScale,
+    font: s.lyrics_font ?? FULL_LYRICS_DISP_DEFAULT.font,
+    lineHeight: s.lyrics_line_height ?? FULL_LYRICS_DISP_DEFAULT.lineHeight,
+  };
+}
+
+/** 歌词显示参数 → CSS 自定义属性（挂在 .np-lyrics） */
 export function lyricsDisplayVars(opts: {
   fontScale: number;
   font: LyricsFont;
@@ -36,3 +75,4 @@ export function lyricsDisplayVars(opts: {
     ["--lyrics-font" as string]: lyricsFontStack(opts.font),
   } as CSSProperties;
 }
+
