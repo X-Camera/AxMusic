@@ -36,6 +36,18 @@ interface AppState {
   setRepeat: (r: RepeatMode) => Promise<void>;
 }
 
+const emptyReplayGain = () => ({
+  active: false,
+  applied_gain_db: 0,
+  source: "none" as const,
+  track_gain_db: null,
+  album_gain_db: null,
+  track_peak: null,
+  album_peak: null,
+  peak_limited: false,
+  requested_gain_db: 0,
+});
+
 const emptyPlayer = (): PlayerSnapshot => ({
   status: "Stopped",
   position_ms: 0,
@@ -46,6 +58,7 @@ const emptyPlayer = (): PlayerSnapshot => ({
   queue_index: null,
   shuffle: false,
   repeat: "off",
+  replaygain: emptyReplayGain(),
 });
 
 /** 播放器操作序号：轮询结果不得覆盖更新的点播/控制操作 */
@@ -127,6 +140,8 @@ export const useApp = create<AppState>((set, get) => ({
             queue_index: start,
             shuffle: prev?.shuffle ?? false,
             repeat: prev?.repeat ?? "off",
+            // 乐观帧先不带增益，等后端快照回填（避免旧曲标识残留）
+            replaygain: emptyReplayGain(),
           },
         });
       }

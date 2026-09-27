@@ -13,6 +13,7 @@ import type {
   LyricsPrefer,
   LyricsSaveMode,
   PathsInfo,
+  ReplayGainMode,
   RepeatMode,
   SettingsPatch,
   ShellMenuStatus,
@@ -29,6 +30,12 @@ const REPEAT_MODES: { id: RepeatMode; label: string }[] = [
   { id: "off", label: "关闭" },
   { id: "all", label: "列表循环" },
   { id: "one", label: "单曲" },
+];
+
+const REPLAYGAIN_MODES: { id: ReplayGainMode; label: string }[] = [
+  { id: "off", label: "关闭" },
+  { id: "track", label: "按曲目" },
+  { id: "album", label: "按专辑" },
 ];
 
 const LYRICS_SAVE: { id: LyricsSaveMode; label: string }[] = [
@@ -61,6 +68,7 @@ const SECTION_DEFAULTS: Record<SectionKey, SettingsPatch> = {
     shuffle: false,
     repeat: "off" as RepeatMode,
     restore_volume: true,
+    replaygain_mode: "track" as ReplayGainMode,
   },
   lyrics: {
     lyrics_save_mode: "sidecar" as LyricsSaveMode,
@@ -384,7 +392,10 @@ export function SettingsPage() {
         applyThemeMode((defaults.theme_mode ?? "light") as ThemeMode);
         applyColorScheme((defaults.color_scheme ?? "jade") as ColorScheme);
       }
-      void patch(defaults);
+      // playback 含 replaygain_mode：patch 后刷新 player，让 dB 标识立刻对准默认值
+      void patch(defaults).then(() => {
+        if (key === "playback") void useApp.getState().refreshPlayer();
+      });
     },
     [patch],
   );
@@ -459,6 +470,20 @@ export function SettingsPage() {
                 <Toggle
                   checked={settings.restore_volume}
                   onChange={(v) => void patch({ restore_volume: v })}
+                />
+              </Row>
+              <Row
+                label="响度均衡"
+                hint="按标签把不同歌曲拉到接近音量；有增益时播放条显示 dB 标识，悬浮可看说明"
+              >
+                <Segmented
+                  value={settings.replaygain_mode}
+                  options={REPLAYGAIN_MODES}
+                  onChange={(v) =>
+                    void patch({ replaygain_mode: v }).then(() =>
+                      useApp.getState().refreshPlayer(),
+                    )
+                  }
                 />
               </Row>
             </Section>

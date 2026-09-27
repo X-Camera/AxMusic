@@ -162,6 +162,7 @@ pub struct SettingsPatch {
     pub shuffle: Option<bool>,
     pub repeat: Option<crate::settings::RepeatMode>,
     pub restore_volume: Option<bool>,
+    pub replaygain_mode: Option<crate::settings::ReplayGainMode>,
     pub lyrics_save_mode: Option<crate::settings::LyricsSaveMode>,
     pub lyrics_prefer: Option<crate::settings::LyricsPrefer>,
     pub lyrics_sources: Option<crate::settings::LyricsSources>,
@@ -193,6 +194,8 @@ pub fn update_settings(
 ) -> Result<crate::settings::AppSettings, String> {
     // 锁序约定：全局只允许 settings → player 这一层嵌套方向（player_set_* 均不嵌套）
     let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    // 响度均衡要读盘重算，放到锁外再做，避免持两把全局锁做 I/O
+    let mut rg_mode_changed: Option<crate::settings::ReplayGainMode> = None;
     if let Some(v) = patch.volume {
         guard.volume = v.clamp(0.0, 1.0);
     }
@@ -210,6 +213,10 @@ pub fn update_settings(
     }
     if let Some(v) = patch.restore_volume {
         guard.restore_volume = v;
+    }
+    if let Some(m) = patch.replaygain_mode {
+        guard.replaygain_mode = m;
+        rg_mode_changed = Some(m);
     }
     if let Some(m) = patch.lyrics_save_mode {
         guard.lyrics_save_mode = m;
@@ -267,6 +274,16 @@ pub fn update_settings(
     let snapshot = guard.clone();
     drop(guard);
     let _ = app.emit("settings://changed", &snapshot);
+
+    // 锁外重算当前曲增益，并广播 player://state，让徽标立刻对准新模式
+    if let Some(m) = rg_mode_changed {
+        let snap = {
+            let mut player = state.player.lock().map_err(|e| e.to_string())?;
+            player.set_replaygain_mode(m);
+            player.snapshot()
+        };
+        let _ = app.emit("player://state", &snap);
+    }
     Ok(snapshot)
 }
 

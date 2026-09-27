@@ -77,6 +77,9 @@ pub enum ColorScheme {
     Graphite,
 }
 
+/// 响度均衡模式（定义在 player::replaygain，设置直接复用避免双份枚举）
+pub use crate::player::replaygain::ReplayGainMode;
+
 /// 外观：浅色 / 暗色
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -615,6 +618,9 @@ pub struct AppSettings {
     /// 启动时恢复上次音量
     #[serde(default = "default_true")]
     pub restore_volume: bool,
+    /// 响度均衡：off / track / album（默认按曲目拉平）
+    #[serde(default)]
+    pub replaygain_mode: ReplayGainMode,
     /// 歌词默认保存：外挂 .lrc / 内嵌
     #[serde(default)]
     pub lyrics_save_mode: LyricsSaveMode,
@@ -690,6 +696,7 @@ impl Default for AppSettings {
             repeat: RepeatMode::default(),
             play_mode: None,
             restore_volume: true,
+            replaygain_mode: ReplayGainMode::default(),
             lyrics_save_mode: LyricsSaveMode::default(),
             lyrics_prefer: LyricsPrefer::default(),
             lyrics_sources: LyricsSources::default(),

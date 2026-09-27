@@ -2,6 +2,29 @@ export type PlayStatus = "Stopped" | "Playing" | "Paused";
 /** 循环模式（与随机正交）：关 → 列表循环 → 单曲循环 */
 export type RepeatMode = "off" | "all" | "one";
 
+/** 响度均衡模式：关 / 按曲目 / 按专辑 */
+export type ReplayGainMode = "off" | "track" | "album";
+
+/** 增益来源标签 */
+export type ReplayGainSource = "none" | "track" | "album";
+
+/** 本曲响度均衡状态（播放条标识用） */
+export interface ReplayGainInfo {
+  /** 是否启用了补偿（模式非关且读到标签） */
+  active: boolean;
+  /** 实际应用的增益 (dB)；未启用为 0 */
+  applied_gain_db: number;
+  source: ReplayGainSource;
+  track_gain_db: number | null;
+  album_gain_db: number | null;
+  track_peak: number | null;
+  album_peak: number | null;
+  /** 峰值限幅把增益收紧过（防削波） */
+  peak_limited: boolean;
+  /** 限幅前的原始增益 (dB) */
+  requested_gain_db: number;
+}
+
 export interface TrackInfo {
   path: string;
   title: string;
@@ -26,6 +49,8 @@ export interface PlayerSnapshot {
   queue_index: number | null;
   shuffle: boolean;
   repeat: RepeatMode;
+  /** 响度均衡状态（未启用/无标签为默认零值） */
+  replaygain: ReplayGainInfo;
 }
 
 export interface LibraryRoot {
@@ -188,6 +213,8 @@ export interface AppSettings {
   shuffle: boolean;
   repeat: RepeatMode;
   restore_volume: boolean;
+  /** 响度均衡：off / track / album */
+  replaygain_mode: ReplayGainMode;
   lyrics_save_mode: LyricsSaveMode;
   lyrics_prefer: LyricsPrefer;
   lyrics_sources: LyricsSources;

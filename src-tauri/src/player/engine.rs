@@ -23,6 +23,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::sample::{i24, u24};
 use symphonia::core::units::Time;
 
+use super::replaygain::{self, ReplayGainInfo, ReplayGainMode};
 use super::viz::{self, VizTap};
 use super::{PlayerEngine, PlayStatus, PlayerSnapshot, QueueItem, RepeatMode, TrackInfo};
 
@@ -66,6 +67,12 @@ struct Shared {
     sample_rate: AtomicU64,
     duration_ms: AtomicU64,
     volume_bits: AtomicU32,
+    /// 响度均衡线性倍数（与用户音量相乘；1.0 = 不补偿）
+    rg_linear_bits: AtomicU32,
+    /// 响度均衡模式：0 off / 1 track / 2 album
+    rg_mode: AtomicU8,
+    /// UI 展示用的本曲增益状态
+    rg_info: Mutex<ReplayGainInfo>,
     track_ended: AtomicBool,
     /// 音频世代号：每次「应丢弃已缓冲音频」（seek/切歌/显式 flush）+1。
     /// 块带世代戳、回调只播当前世代——单布尔标志会把 flush 后新到的有效块一并冲掉
@@ -95,6 +102,9 @@ impl Shared {
             sample_rate: AtomicU64::new(0),
             duration_ms: AtomicU64::new(0),
             volume_bits: AtomicU32::new(0.8f32.to_bits()),
+            rg_linear_bits: AtomicU32::new(1.0f32.to_bits()),
+            rg_mode: AtomicU8::new(1), // 默认按曲目
+            rg_info: Mutex::new(ReplayGainInfo::default()),
             track_ended: AtomicBool::new(false),
             audio_gen: Arc::new(AtomicU64::new(0)),
             switch_seq: AtomicU64::new(0),
@@ -133,6 +143,49 @@ impl Shared {
 
     fn volume(&self) -> f32 {
         f32::from_bits(self.volume_bits.load(Ordering::SeqCst))
+    }
+
+    fn rg_linear(&self) -> f32 {
+        f32::from_bits(self.rg_linear_bits.load(Ordering::SeqCst))
+    }
+
+    fn rg_mode(&self) -> ReplayGainMode {
+        match self.rg_mode.load(Ordering::SeqCst) {
+            1 => ReplayGainMode::Track,
+            2 => ReplayGainMode::Album,
+            _ => ReplayGainMode::Off,
+        }
+    }
+
+    fn set_rg_mode(&self, mode: ReplayGainMode) {
+        let raw = match mode {
+            ReplayGainMode::Off => 0,
+            ReplayGainMode::Track => 1,
+            ReplayGainMode::Album => 2,
+        };
+        self.rg_mode.store(raw, Ordering::SeqCst);
+    }
+
+    fn set_replaygain(&self, info: ReplayGainInfo) {
+        let lin = info.linear();
+        // 成对写入：命令线程与解码线程都可能写，交错会让 linear 与 info 来自不同版本
+        match self.rg_info.lock() {
+            Ok(mut g) => {
+                *g = info;
+                self.rg_linear_bits.store(lin.to_bits(), Ordering::SeqCst);
+            }
+            Err(p) => {
+                *p.into_inner() = info;
+                self.rg_linear_bits.store(lin.to_bits(), Ordering::SeqCst);
+            }
+        }
+    }
+
+    fn replaygain(&self) -> ReplayGainInfo {
+        match self.rg_info.lock() {
+            Ok(g) => g.clone(),
+            Err(p) => p.into_inner().clone(),
+        }
     }
 
     fn position_ms(&self) -> u64 {
@@ -239,6 +292,18 @@ impl SymphoniaPlayer {
             queue_index,
             shuffle: self.shared.shuffle(),
             repeat: self.shared.repeat(),
+            replaygain: self.shared.replaygain(),
+        }
+    }
+
+    /// 响度均衡模式；改完立刻按当前曲重算增益
+    pub fn set_replaygain_mode(&mut self, mode: ReplayGainMode) {
+        self.shared.set_rg_mode(mode);
+        if let Some(track) = self.current_track() {
+            let info = replaygain::compute_for_path(Path::new(&track.path), mode);
+            self.shared.set_replaygain(info);
+        } else {
+            self.shared.set_replaygain(ReplayGainInfo::default());
         }
     }
 
@@ -281,6 +346,11 @@ impl SymphoniaPlayer {
         if let Ok(mut t) = self.shared.track.lock() {
             *t = Some(info.clone());
         }
+        self.shared
+            .set_replaygain(replaygain::compute_for_path(
+                Path::new(&item.path),
+                self.shared.rg_mode(),
+            ));
         self.shared
             .duration_ms
             .store(info.duration_ms.max(1), Ordering::SeqCst);
@@ -413,6 +483,11 @@ impl SymphoniaPlayer {
                 *t = Some(info.clone());
             }
             self.shared
+                .set_replaygain(replaygain::compute_for_path(
+                    Path::new(&info.path),
+                    self.shared.rg_mode(),
+                ));
+            self.shared
                 .duration_ms
                 .store(info.duration_ms.max(1), Ordering::SeqCst);
         }
@@ -437,6 +512,8 @@ impl SymphoniaPlayer {
         if let Ok(mut t) = self.shared.track.lock() {
             *t = Some(info.clone());
         }
+        self.shared
+            .set_replaygain(replaygain::compute_for_path(path, self.shared.rg_mode()));
         self.shared
             .duration_ms
             .store(info.duration_ms.max(1), Ordering::SeqCst);
@@ -742,7 +819,7 @@ impl AudioOut {
             self.pos = 0;
             // 切歌/seek 的 ring 清理由 viz 线程监听 audio_gen 完成（producer 侧无 clear）
         }
-        let vol = self.shared.volume();
+        let vol = self.shared.volume() * self.shared.rg_linear();
         let paused = self.shared.status.load(Ordering::SeqCst) != STATUS_PLAYING;
         let ch = self.out_channels;
         let frames = data.len() / ch;
@@ -900,6 +977,8 @@ fn open_track_full(
             if let Ok(mut qi) = shared.queue_index.lock() {
                 *qi = index;
             }
+            // 读标签算响度增益（含峰值限幅）；UI 标识随 snapshot 带出
+            shared.set_replaygain(replaygain::compute_for_path(path, shared.rg_mode()));
             set_error(shared, None);
             Some(DecoderState2 {
                 inner: st,
@@ -912,6 +991,7 @@ fn open_track_full(
             if let Ok(mut t) = shared.track.lock() {
                 *t = None;
             }
+            shared.set_replaygain(ReplayGainInfo::default());
             shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
             None
         }

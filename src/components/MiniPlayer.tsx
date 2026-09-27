@@ -12,6 +12,7 @@ import { nextRepeat, REPEAT_TITLE } from "../lib/playMode";
 import { DEFAULT_VOLUME, LOW_VOLUME_THRESHOLD } from "../lib/volume";
 import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
+import { ReplayGainBadge } from "./ReplayGainBadge";
 import "./MiniPlayer.css";
 
 export function MiniPlayer() {
@@ -265,6 +266,7 @@ export function MiniPlayer() {
             >
               {track?.title ?? "未在播放"}
             </button>
+            <ReplayGainBadge info={player?.replaygain} />
             {track && (
               <FavoriteHeart
                 item={{

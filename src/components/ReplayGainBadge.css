@@ -1,0 +1,38 @@
+/* 响度均衡标识：迷你条 / 满窗共用 */
+.rg-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: help;
+  user-select: none;
+}
+
+.rg-badge.rg-badge-md {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* 调高：暖色强调 */
+.rg-badge-up {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: rgba(var(--accent-rgb), 0.35);
+}
+
+/* 调低：次级冷色 */
+.rg-badge-down {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}

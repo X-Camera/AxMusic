@@ -78,6 +78,7 @@ pub fn run() {
             };
             player.engine.set_volume_f32(boot_vol);
             player.set_shuffle(app_settings.shuffle);
+            player.set_replaygain_mode(app_settings.replaygain_mode);
             player.set_repeat(match app_settings.repeat {
                 settings::RepeatMode::Off => player::RepeatMode::Off,
                 settings::RepeatMode::All => player::RepeatMode::All,

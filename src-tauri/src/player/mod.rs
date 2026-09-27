@@ -7,9 +7,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub mod engine;
+pub mod replaygain;
 pub mod viz;
 
 pub use engine::SymphoniaPlayer;
+pub use replaygain::{ReplayGainInfo, ReplayGainMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackInfo {
@@ -62,6 +64,9 @@ pub struct PlayerSnapshot {
     /// 循环模式
     #[serde(default)]
     pub repeat: RepeatMode,
+    /// 响度均衡状态（UI 标识用；未启用/无标签为默认）
+    #[serde(default)]
+    pub replaygain: ReplayGainInfo,
 }
 
 /// Swappable playback engine surface (thin).
@@ -141,6 +146,11 @@ impl Player {
 
     pub fn set_repeat(&mut self, mode: RepeatMode) {
         self.engine.set_repeat(mode);
+    }
+
+    /// 响度均衡模式；改完立刻按当前曲重算增益
+    pub fn set_replaygain_mode(&mut self, mode: ReplayGainMode) {
+        self.engine.set_replaygain_mode(mode);
     }
 
     /// Called periodically: auto-advance when track finished.
