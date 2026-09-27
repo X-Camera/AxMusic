@@ -500,6 +500,14 @@
   color: var(--text-secondary);
 }
 
+/* 右键菜单注册状态：固定短标签 + 两枚按钮 */
+.set-shell-menu-state {
+  flex: 0 0 auto;
+  min-width: 3.5em;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 /* 字体下拉：贴合 set-seg 控件密度 */
 .set-select {
   height: 32px;

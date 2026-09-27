@@ -288,6 +288,65 @@ pub fn open_path(path: String) -> Result<(), String> {
     }
 }
 
+// ── 资源管理器右键菜单 ────────────────────────────────────────────
+
+#[tauri::command]
+pub fn shell_menu_status() -> crate::shell_menu::ShellMenuStatus {
+    crate::shell_menu::status()
+}
+
+#[tauri::command]
+pub fn shell_menu_register() -> Result<crate::shell_menu::ShellMenuStatus, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = crate::shell_menu::strip_extended_prefix(&exe);
+    crate::shell_menu::register(&exe).map_err(|e| e.to_string())?;
+    Ok(crate::shell_menu::status())
+}
+
+#[tauri::command]
+pub fn shell_menu_unregister() -> Result<crate::shell_menu::ShellMenuStatus, String> {
+    crate::shell_menu::unregister().map_err(|e| e.to_string())?;
+    Ok(crate::shell_menu::status())
+}
+
+/// 右键「播放 / 入队」落到播放器。多选 play 在归并窗口内视为追加，避免逐文件清空队列。
+pub fn apply_ctx_action(app: &AppHandle, action: crate::shell_menu::CtxAction, paths: Vec<PathBuf>) {
+    use crate::shell_menu::{mark_play_burst, play_burst_active, queue_item_from_path, CtxAction};
+
+    // 只读判断同批多选；真正落地成功后才 mark，失败不会把下一首误并成入队
+    let burst = action == CtxAction::Play && play_burst_active();
+
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let items: Vec<QueueItem> = paths.iter().map(|p| queue_item_from_path(p)).collect();
+    if items.is_empty() {
+        return;
+    }
+    let Ok(mut player) = state.player.lock() else {
+        return;
+    };
+    match action {
+        CtxAction::Play => {
+            let applied = if burst && items.len() == 1 {
+                player.enqueue(items);
+                true
+            } else {
+                player.play_queue(items, 0).is_ok()
+            };
+            if applied {
+                mark_play_burst();
+            }
+        }
+        CtxAction::Enqueue => {
+            player.enqueue(items);
+        }
+    }
+    let snap = player.snapshot();
+    drop(player);
+    emit_player_state(app, &snap);
+}
+
 /// 关闭询问弹窗：缩到托盘 / 退出；remember=true 时记住为默认关闭行为。
 #[tauri::command]
 pub fn resolve_window_close(

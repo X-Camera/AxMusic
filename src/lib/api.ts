@@ -31,6 +31,14 @@ export const api = {
   resolveWindowClose: (action: "tray" | "exit", remember: boolean) =>
     invoke<void>("resolve_window_close", { action, remember }),
 
+  /** 资源管理器右键菜单：查询 / 注册 / 卸载（HKCU，无需管理员） */
+  shellMenuStatus: () =>
+    invoke<import("./types").ShellMenuStatus>("shell_menu_status"),
+  shellMenuRegister: () =>
+    invoke<import("./types").ShellMenuStatus>("shell_menu_register"),
+  shellMenuUnregister: () =>
+    invoke<import("./types").ShellMenuStatus>("shell_menu_unregister"),
+
   getLibraryRoot: () => invoke<LibraryRoot | null>("get_library_root"),
   initLibrary: (req: {
     mode: "new" | "existing";

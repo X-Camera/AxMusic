@@ -66,6 +66,8 @@ windows = { version = "0.58", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# 资源管理器右键菜单（HKCU 写入，无需管理员）
+winreg = "0.55"
 
 [profile.release]
 opt-level = 1          # 默认 3,降到 1 编译快一倍+,exe 稍大几 MB 但运行无感

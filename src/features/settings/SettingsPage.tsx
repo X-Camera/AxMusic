@@ -15,6 +15,7 @@ import type {
   PathsInfo,
   RepeatMode,
   SettingsPatch,
+  ShellMenuStatus,
   SongsView,
   ThemeMode,
 } from "../../lib/types";
@@ -323,6 +324,8 @@ export function SettingsPage() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [shellMenu, setShellMenu] = useState<ShellMenuStatus | null>(null);
+  const [shellBusy, setShellBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -334,6 +337,14 @@ export function SettingsPage() {
         setAppInfo(a);
       })
       .catch((e) => !cancelled && setError(String(e)));
+    void api
+      .shellMenuStatus()
+      .then((s) => {
+        if (!cancelled) setShellMenu(s);
+      })
+      .catch(() => {
+        if (!cancelled) setShellMenu({ supported: false, registered: false });
+      });
     return () => {
       cancelled = true;
     };
@@ -593,6 +604,63 @@ export function SettingsPage() {
                     title="到管理页更换库根或初始化"
                   >
                     <FolderOpen size={14} /> 管理页
+                  </button>
+                </div>
+              </Row>
+            </Section>
+
+            <Section title="系统">
+              <Row
+                label="资源管理器右键菜单"
+                hint={
+                  shellMenu?.supported === false
+                    ? "仅 Windows 支持"
+                    : "音频文件右键：「使用 AxMusic 播放」「添加到 AxMusic 播放队列」。Windows 11 在「显示更多选项」里；移动程序位置后请重新注册"
+                }
+              >
+                <div className="set-path">
+                  <span className="set-shell-menu-state">
+                    {!shellMenu
+                      ? "…"
+                      : !shellMenu.supported
+                        ? "不支持"
+                        : shellMenu.registered
+                          ? "已注册"
+                          : "未注册"}
+                  </span>
+                  <button
+                    className="btn btn-primary"
+                    disabled={!shellMenu?.supported || shellBusy}
+                    onClick={() => {
+                      setShellBusy(true);
+                      void api
+                        .shellMenuRegister()
+                        .then((s) => {
+                          setShellMenu(s);
+                          setError(null);
+                        })
+                        .catch((e) => setError(String(e)))
+                        .finally(() => setShellBusy(false));
+                    }}
+                  >
+                    注册
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={!shellMenu?.supported || shellBusy || !shellMenu?.registered}
+                    onClick={() => {
+                      setShellBusy(true);
+                      void api
+                        .shellMenuUnregister()
+                        .then((s) => {
+                          setShellMenu(s);
+                          setError(null);
+                        })
+                        .catch((e) => setError(String(e)))
+                        .finally(() => setShellBusy(false));
+                    }}
+                  >
+                    卸载
                   </button>
                 </div>
               </Row>

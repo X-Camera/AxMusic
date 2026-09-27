@@ -14,6 +14,7 @@ mod playlists;
 mod scanner;
 mod scraper;
 mod settings;
+mod shell_menu;
 mod tagger;
 mod taskbar;
 mod tray;
@@ -27,7 +28,19 @@ use tauri::{Emitter, Manager};
 pub fn run() {
     tauri::Builder::default()
         // 必须最先注册：二次启动时唤醒已有实例并退出，禁止多开
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // 右键菜单拉起：按动作处理文件，仅「播放」时唤醒主窗口
+            if let Some((action, paths)) = shell_menu::parse_ctx_args(&argv) {
+                shell_menu::dispatch_ctx(app, action, paths);
+                if action == shell_menu::CtxAction::Play {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.unminimize();
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+                return;
+            }
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
@@ -112,6 +125,14 @@ pub fn run() {
             app.manage(state);
             tray::init(app)?;
             taskbar::init(app)?;
+            // 首次启动可能带 --ctx-play / --ctx-enqueue（右键菜单冷启动）
+            // args_os：Windows 路径可能非严格 UTF-8，避免 args() 直接 panic
+            let handle = app.handle().clone();
+            let argv: Vec<String> = std::env::args_os()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect();
+            shell_menu::dispatch_from_args(&handle, &argv);
+            shell_menu::flush_pending(&handle);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -220,6 +241,9 @@ pub fn run() {
             commands::playlist_clean_missing,
             commands::favorite_paths,
             commands::favorite_toggle,
+            commands::shell_menu_status,
+            commands::shell_menu_register,
+            commands::shell_menu_unregister,
         ])
         .build(tauri::generate_context!())
         .expect("error while building AxMusic")

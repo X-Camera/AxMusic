@@ -279,6 +279,7 @@ dependencies = [
  "thiserror 2.0.20",
  "walkdir",
  "windows 0.58.0",
+ "winreg",
 ]
 
 [[package]]

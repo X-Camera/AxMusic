@@ -143,6 +143,12 @@ export interface PathsInfo {
   settings_path: string;
 }
 
+/** 资源管理器右键菜单注册状态（仅 Windows 可注册） */
+export interface ShellMenuStatus {
+  supported: boolean;
+  registered: boolean;
+}
+
 export type LyricsSaveMode = "sidecar" | "embed";
 export type LyricsPrefer = "sidecar" | "embed";
 export type SongsView = "list" | "grid";
