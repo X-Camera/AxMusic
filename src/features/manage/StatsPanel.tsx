@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderCheck, Loader2, FileAudio, FileText, File, Folder } from "lucide-react";
+import { FolderCheck, FolderInput, Loader2, FileAudio, FileText, File, Folder } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../../lib/api";
-import type { LibraryRootScan, LibraryStats } from "../../lib/types";
+import type { ImportPreview, ImportResult, LibraryRootScan, LibraryStats } from "../../lib/types";
+import { ImportLibraryPanel, ImportResultBanner } from "./ImportLibraryPanel";
 import "./StatsPanel.css";
 
 const KIND_ICON: Record<string, typeof Folder> = {
@@ -19,10 +21,21 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /** 右栏常驻面板：未选中曲目时显示库统计（选中后切换为 文件 vs catalog 对比）。 */
-export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
+export function StatsPanel({
+  stats,
+  onImported,
+}: {
+  stats: LibraryStats | null;
+  /** 导入完成后刷新列表/统计 */
+  onImported?: () => void;
+}) {
   const [rootScan, setRootScan] = useState<LibraryRootScan | null>(null);
   const [organizing, setOrganizing] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [picking, setPicking] = useState(false);
   const aliveRef = useRef(true);
 
   const pct =
@@ -69,6 +82,28 @@ export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
     }
   }, [reloadScan]);
 
+  const pickImportLibrary = useCallback(async () => {
+    setPicking(true);
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: "选择要导入的 AxMusic 库目录",
+      });
+      // 取消选择：保留上次结果横幅/错误，不清空
+      if (!picked || Array.isArray(picked)) return;
+      const preview = await api.libraryImportPreview(picked);
+      if (!aliveRef.current) return;
+      setImportError(null);
+      setImportResult(null);
+      setImportPreview(preview);
+    } catch (e) {
+      if (aliveRef.current) setImportError(String(e));
+    } finally {
+      if (aliveRef.current) setPicking(false);
+    }
+  }, []);
+
   return (
     <aside className="stats-panel" aria-label="库统计">
       <header className="stats-head">
@@ -78,6 +113,13 @@ export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
         <div className="tertiary">加载中…</div>
       ) : (
         <>
+          {importResult && (
+            <ImportResultBanner
+              result={importResult}
+              onClose={() => setImportResult(null)}
+            />
+          )}
+
           <section className="stats-block">
             <div className="stats-block-title">刮削进度</div>
             <div className="stats-big">
@@ -131,6 +173,27 @@ export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
           </section>
 
           <section className="stats-block">
+            <div className="stats-block-title">库迁移</div>
+            {importError && <div className="error-line">{importError}</div>}
+            <div className="tertiary stats-note">
+              从另一个 AxMusic 库导入刮削数据库、歌曲、歌词、封面、歌单
+            </div>
+            <button
+              className="btn"
+              disabled={picking}
+              title="选择其他 AxMusic 库目录，对比后选择性导入"
+              onClick={() => void pickImportLibrary()}
+            >
+              {picking ? (
+                <Loader2 size={14} className="spin" />
+              ) : (
+                <FolderInput size={14} />
+              )}
+              导入其他库
+            </button>
+          </section>
+
+          <section className="stats-block">
             <div className="stats-block-title">库文件扫描</div>
             {scanError && <div className="error-line">{scanError}</div>}
             {!rootScan && <div className="tertiary">扫描中…</div>}
@@ -169,6 +232,19 @@ export function StatsPanel({ stats }: { stats: LibraryStats | null }) {
             </div>
           </section>
         </>
+      )}
+
+      {importPreview && (
+        <ImportLibraryPanel
+          preview={importPreview}
+          onClose={() => setImportPreview(null)}
+          onImported={(r) => {
+            setImportPreview(null);
+            setImportResult(r);
+            void reloadScan();
+            onImported?.();
+          }}
+        />
       )}
     </aside>
   );

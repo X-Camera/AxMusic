@@ -132,6 +132,8 @@
   color: var(--text);
 }
 
-.stats-panel .btn-primary {
+/* 仅作用于统计面板自身的按钮，不波及弹窗（ImportLibraryPanel 在面板内渲染） */
+.stats-panel > .stats-block > .btn,
+.stats-panel > .stats-block > .btn-primary {
   align-self: flex-start;
 }

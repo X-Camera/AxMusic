@@ -1876,6 +1876,54 @@ pub fn library_root_organize(
     Ok(result)
 }
 
+/// 识别其他 AxMusic 库并生成对比预览（管理页「导入其他库」）。
+/// 识别失败返回 Err（不是 AxMusic 库 / 与当前库相同 / 打不开数据库）。
+/// 重 IO（全量对比 + 逐文件 stat）：`command(async)` 移出主线程；独立 DB 连接，不占 state.db 锁。
+#[tauri::command(async)]
+pub fn library_import_preview(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<crate::import::ImportPreview, String> {
+    let current = require_library_root(&state)?;
+    let db_path = crate::paths::library_db_path(Path::new(&current));
+    let db = LibraryDb::open(&db_path).map_err(|e| format!("{e:#}"))?;
+    crate::import::preview(Path::new(&path), Path::new(&current), &db)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// 按勾选范围执行导入。默认全不选；catalog 导入后会自动字段匹配未刮削曲目。
+/// 与 refresh_scan 共用 `state.scanning` 互斥（导入会大量写库/拷文件，不能与扫描并发）。
+#[tauri::command(async)]
+pub fn library_import_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    selection: crate::import::ImportSelection,
+) -> Result<crate::import::ImportResult, String> {
+    let current = require_library_root(&state)?;
+    {
+        let mut flag = state.scanning.lock().map_err(|e| e.to_string())?;
+        if *flag {
+            return Err("扫描/导入已在进行中".into());
+        }
+        *flag = true;
+    }
+    let result = (|| -> Result<crate::import::ImportResult, String> {
+        // 重 IO + 大量写库：独立连接，不长期持有 state.db 锁
+        let db_path = crate::paths::library_db_path(Path::new(&current));
+        let db = LibraryDb::open(&db_path).map_err(|e| format!("{e:#}"))?;
+        crate::import::run(Path::new(&path), Path::new(&current), &db, &selection)
+            .map_err(|e| format!("{e:#}"))
+    })();
+    {
+        let mut flag = state.scanning.lock().map_err(|e| e.to_string())?;
+        *flag = false;
+    }
+    // 无论成败都广播：中途失败时封面/catalog 可能已提交部分变更
+    let _ = app.emit("library://changed", ());
+    result
+}
+
 // ���� scrape (MusicBrainz / Cover Art Archive) ������������������������������������������
 
 use crate::scraper::{self, ApplyPlan, CatalogTrackDraft, FieldChange, ScrapeCandidate, TrackPlan};

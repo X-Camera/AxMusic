@@ -577,3 +577,60 @@ export interface OrganizeResult {
   moved: string[];
   failed: string[];
 }
+
+// ── 导入其他库 ──────────────────────────────────────────────────────
+
+/** 一类可导入内容的对比数字 */
+export interface ImportItemStats {
+  /** 源库条目总数 */
+  source_total: number;
+  /** 与当前库重复（导入时跳过） */
+  duplicate: number;
+  /** 将新增 */
+  new: number;
+  /** 源文件缺失，无法复制（仅「歌曲」会非 0） */
+  missing: number;
+}
+
+/** 导入预览：源库识别结果 + 与当前库对比 */
+export interface ImportPreview {
+  source_root: string;
+  current_root: string;
+  /** 已刮削数据库（catalog） */
+  catalog: ImportItemStats;
+  /** 歌曲（音频文件 + tracks 记录） */
+  songs: ImportItemStats;
+  /** 外挂歌词（lrc/） */
+  lyrics: ImportItemStats;
+  /** 封面（covers/） */
+  covers: ImportItemStats;
+  /** 歌单（playlists/*.m3u8） */
+  playlists: ImportItemStats;
+}
+
+/** 用户勾选的导入范围（默认全不选） */
+export interface ImportSelection {
+  catalog: boolean;
+  songs: boolean;
+  lyrics: boolean;
+  covers: boolean;
+  playlists: boolean;
+}
+
+/** 导入执行结果 */
+export interface ImportResult {
+  catalog_added: number;
+  catalog_skipped: number;
+  songs_added: number;
+  songs_skipped: number;
+  songs_failed: number;
+  lyrics_added: number;
+  lyrics_skipped: number;
+  covers_added: number;
+  covers_skipped: number;
+  playlists_added: number;
+  playlists_skipped: number;
+  /** 导入后 auto_match 关联上的曲目数 */
+  tracks_linked: number;
+  errors: string[];
+}

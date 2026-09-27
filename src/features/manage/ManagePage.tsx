@@ -416,7 +416,7 @@ export function ManagePage() {
                     }}
                   />
                 ) : (
-                  <StatsPanel stats={stats} />
+                  <StatsPanel stats={stats} onImported={() => void reloadTracks()} />
                 )}
               </div>
               <div className="side-actions">

@@ -218,6 +218,12 @@ export const api = {
   /** 杂项全部挪进 Unarchived/ */
   libraryRootOrganize: () =>
     invoke<import("./types").OrganizeResult>("library_root_organize"),
+  /** 识别其他 AxMusic 库并生成对比预览 */
+  libraryImportPreview: (path: string) =>
+    invoke<import("./types").ImportPreview>("library_import_preview", { path }),
+  /** 按勾选范围执行导入 */
+  libraryImportRun: (path: string, selection: import("./types").ImportSelection) =>
+    invoke<import("./types").ImportResult>("library_import_run", { path, selection }),
 
   // ── playlists (m3u8，存 <库>/playlists/) ────────────────────────
   playlistList: () => invoke<PlaylistSummary[]>("playlist_list"),

@@ -2,6 +2,7 @@
 
 mod commands;
 mod folder_meta;
+mod import;
 mod library;
 mod lyrics;
 mod paths;
@@ -205,6 +206,8 @@ pub fn run() {
             commands::archive_normalize_issue,
             commands::library_root_scan,
             commands::library_root_organize,
+            commands::library_import_preview,
+            commands::library_import_run,
             commands::playlist_list,
             commands::playlist_create,
             commands::playlist_rename,

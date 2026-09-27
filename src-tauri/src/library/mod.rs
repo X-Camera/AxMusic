@@ -306,6 +306,11 @@ impl LibraryDb {
         Ok(self.conn.unchecked_transaction()?)
     }
 
+    /// 底层连接（只读查询/对比用；写入走具名方法）。
+    pub fn raw_conn(&self) -> &Connection {
+        &self.conn
+    }
+
     // ── library roots ──────────────────────────────────────────────
 
     #[allow(dead_code)] // 预留：读取当前库根（初始化页/调试）
