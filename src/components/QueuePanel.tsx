@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 
 import type { QueueItem } from "../lib/types";
 import { api, formatTime } from "../lib/api";
+import { QUEUE_DROP_ZONE } from "../lib/dropOpen";
 import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
 import { VirtualList, QUEUE_ROW_HEIGHT } from "./VirtualList";
@@ -44,7 +45,7 @@ export function QueuePanel() {
   }
 
   return (
-    <div className="queue-panel" aria-label="播放队列">
+    <div className="queue-panel" aria-label="播放队列" data-drop-zone={QUEUE_DROP_ZONE}>
       <div className="queue-panel-head">
         <span>播放队列 · {queueLen} 首</span>
         <div className="queue-panel-head-actions">

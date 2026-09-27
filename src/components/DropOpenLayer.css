@@ -1,0 +1,95 @@
+/* 系统文件拖放提示层：body.drop-dragging 时浮现
+   层级需高于满窗播放的右键菜单(130)/歌词样式弹窗(140) */
+.drop-open-overlay {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+body.drop-dragging .drop-open-overlay {
+  display: flex;
+}
+
+.drop-open-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-5) var(--space-6);
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius-card);
+  background: var(--bg-glass);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  text-align: center;
+  max-width: 420px;
+}
+
+.drop-open-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.drop-open-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* 落点模式：默认「替换」，命中队列时切「追加」 */
+.drop-open-mode {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.drop-open-mode--queue {
+  display: none;
+}
+
+body.drop-over-queue .drop-open-mode {
+  display: none;
+}
+
+body.drop-over-queue .drop-open-mode--queue {
+  display: inline;
+}
+
+/* 队列面板命中高亮 */
+body.drop-over-queue .queue-panel {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
+
+body.drop-over-queue .drop-open-card {
+  border-style: solid;
+}
+
+.drop-open-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--miniplayer-height) + 16px);
+  transform: translateX(-50%);
+  z-index: 165;
+  padding: 8px 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+}
+
+.drop-open-toast--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}

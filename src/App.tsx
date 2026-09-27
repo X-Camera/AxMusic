@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 
 import { CloseDialog } from "./components/CloseDialog";
+import { DropOpenLayer } from "./components/DropOpenLayer";
 import { MiniPlayer } from "./components/MiniPlayer";
 import { RightDock } from "./components/RightDock";
 import { Sidebar } from "./components/Sidebar";
@@ -71,6 +72,7 @@ export default function App() {
       <MiniPlayer />
       {fullPlayer && <NowPlayingPage />}
       <CloseDialog />
+      <DropOpenLayer />
     </div>
   );
 }

@@ -1243,19 +1243,93 @@ fn folder_file_fast(p: &Path) -> FolderFile {
 }
 
 fn list_audio_files_in_dir(dir: &Path) -> Vec<FolderFile> {
+    list_audio_files_in_dir_limited(dir, usize::MAX)
+}
+
+/// 收集目录一层音频；`limit` 到达即停，避免超大目录全量 stat/分配
+fn list_audio_files_in_dir_limited(dir: &Path, limit: usize) -> Vec<FolderFile> {
     let mut files = Vec::new();
+    if limit == 0 {
+        return files;
+    }
     let Ok(rd) = std::fs::read_dir(dir) else {
         return files;
     };
     let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
+        if files.len() >= limit {
+            break;
+        }
         let p = e.path();
         if p.is_file() && is_audio_path(&p) {
             files.push(folder_file_fast(&p));
         }
     }
     files
+}
+
+/// 拖放解析上限：避免超大文件夹拖进来时标签读取卡住 IPC
+const DROP_RESOLVE_LIMIT: usize = 500;
+/// 超过该数量跳过标签补全（文件名当标题），保证响应
+const DROP_META_LIMIT: usize = 200;
+
+/// 系统拖放入口：把文件/文件夹路径解析成可播放条目。
+/// 文件夹只取本层音频（不递归子目录）；同 path 去重，保持拖放顺序。
+#[tauri::command]
+pub async fn resolve_drop_paths(paths: Vec<String>) -> Result<Vec<FolderFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::collections::HashSet;
+
+        let mut files: Vec<FolderFile> = Vec::new();
+        // Windows 路径不区分大小写，去重 key 归一化（原始 f.path 保留展示）
+        let mut seen: HashSet<String> = HashSet::new();
+        for path in &paths {
+            if files.len() >= DROP_RESOLVE_LIMIT {
+                break;
+            }
+            let p = PathBuf::from(path);
+            let remaining = DROP_RESOLVE_LIMIT.saturating_sub(files.len());
+            let collected = if p.is_dir() {
+                list_audio_files_in_dir_limited(&p, remaining)
+            } else if p.is_file() && is_audio_path(&p) {
+                vec![folder_file_fast(&p)]
+            } else {
+                Vec::new()
+            };
+            for f in collected {
+                if seen.insert(f.path.to_lowercase()) {
+                    files.push(f);
+                }
+            }
+        }
+        if files.is_empty() {
+            return Ok(files);
+        }
+        // 标题/时长补全（有缓存；过大集合跳过，文件名兜底）
+        if files.len() <= DROP_META_LIMIT {
+            let meta_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+            match crate::folder_meta::read_and_cache(&meta_paths) {
+                Ok(metas) => {
+                    let map: std::collections::HashMap<String, crate::folder_meta::FolderMeta> =
+                        metas.into_iter().map(|m| (m.path.clone(), m)).collect();
+                    for f in &mut files {
+                        if let Some(m) = map.get(&f.path) {
+                            if !m.title.is_empty() {
+                                f.title = m.title.clone();
+                            }
+                            f.artist = m.artist.clone();
+                            f.duration_ms = m.duration_ms;
+                        }
+                    }
+                }
+                Err(e) => eprintln!("[AxMusic] 拖放标签补全跳过: {e}"),
+            }
+        }
+        Ok(files)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn list_dirs_in_dir(dir: &Path) -> Vec<FolderDir> {

@@ -100,6 +100,9 @@ export const api = {
   /** 单层目录：子文件夹 + 本层音频（withFiles=false 时只要子目录，给树展开用） */
   listDirTree: (path: string, withFiles = true) =>
     invoke<import("./types").FolderListing>("list_dir_tree", { path, withFiles }),
+  /** 系统拖放：文件/文件夹路径 → 可播放条目（文件夹只取一层，不递归） */
+  resolveDropPaths: (paths: string[]) =>
+    invoke<import("./types").FolderFile[]>("resolve_drop_paths", { paths }),
   /** 递归收集音频（含子文件夹，后端有上限，不读标签） */
   listDirAudioRecursive: (path: string) =>
     invoke<import("./types").FolderFile[]>("list_dir_audio_recursive", { path }),

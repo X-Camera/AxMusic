@@ -182,6 +182,7 @@ pub fn run() {
             commands::list_dir_audio,
             commands::list_dir_tree,
             commands::list_dir_audio_recursive,
+            commands::resolve_drop_paths,
             commands::folder_meta_lookup,
             commands::folder_meta_read,
             commands::scrape_search_album,
