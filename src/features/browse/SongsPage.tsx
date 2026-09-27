@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LayoutGrid, List, ListEnd, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
@@ -6,6 +6,7 @@ import type { PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
+import { VirtualList, LIST_ROW_HEIGHT } from "../../components/VirtualList";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import { AlbumCover } from "./AlbumCover";
 import "./Songs.css";
@@ -13,6 +14,16 @@ import "./Songs.css";
 type ViewMode = "list" | "grid";
 
 const SONGS_LIMIT = 10000;
+
+/** 把一维曲目切成网格行（每行 cols 个），供按行虚拟化 */
+function chunkRows(items: TrackRow[], cols: number): TrackRow[][] {
+  const n = Math.max(1, cols);
+  const out: TrackRow[][] = [];
+  for (let i = 0; i < items.length; i += n) {
+    out.push(items.slice(i, i + n));
+  }
+  return out;
+}
 
 export function SongsPage() {
   const playQueue = useApp((s) => s.playQueue);
@@ -25,6 +36,9 @@ export function SongsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [gridCols, setGridCols] = useState(5);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +108,34 @@ export function SongsPage() {
     window.setTimeout(() => setToast(null), 2000);
   }
 
+  /** 卡片网格：量出列数，行高 = 封面(正方形≈列宽) + 文案，按「行」虚拟化 */
+  const gridRows = useMemo(
+    () => chunkRows(filtered, gridCols),
+    [filtered, gridCols],
+  );
+
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || viewMode !== "grid") return;
+    const measure = () => {
+      const w = el.clientWidth;
+      // 与 CSS minmax(160px,1fr) / gap 16 对齐
+      const cols = Math.max(1, Math.floor((w + 16) / 176));
+      setGridCols(cols);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewMode]);
+
+  const gridRowHeight = useMemo(() => {
+    const w = gridRef.current?.clientWidth ?? 800;
+    const colW = (w - (gridCols - 1) * 16) / gridCols;
+    // 封面(1:1) + gap 8 + 标题行 + 副标题 + 行距
+    return Math.round(colW + 8 + 22 + 18 + 16);
+  }, [gridCols, viewMode]);
+
   const viewToggle = (
     <div className="view-toggle" role="group" aria-label="显示模式">
       <button
@@ -142,7 +184,7 @@ export function SongsPage() {
           </>
         }
       />
-      <div className="page-scroll">
+      <div className="page-scroll" ref={scrollRef}>
         {truncated && (
           <div className="notice-line">
             库共 {totalCount} 首，这里仅显示前 {tracks.length} 首；用顶部搜索缩小范围。
@@ -184,80 +226,104 @@ export function SongsPage() {
               <span />
               <span>时长</span>
             </div>
-            {filtered.map((t, idx) => (
-              <div
-                key={t.id}
-                className="song-row"
-                title="播放"
-                onClick={() => playOne(t)}
-              >
-                <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
-                <span className="fav-col">
-                  <FavoriteHeart item={trackRowToAddItem(t)} />
-                </span>
-                <span className="ellipsis">{t.title || t.filename}</span>
-                <span className="tertiary ellipsis">{t.artist || "—"}</span>
-                <span className="tertiary ellipsis">{t.album || "—"}</span>
-                <span className="song-actions">
-                  <button
-                    className="link-btn"
-                    title="加入歌单"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPickerItems([trackRowToAddItem(t)]);
-                    }}
-                  >
-                    <ListPlus size={13} />
-                  </button>
-                </span>
-                <span className="tertiary mono">{formatTime(t.duration_ms)}</span>
-              </div>
-            ))}
+            <VirtualList
+              items={filtered}
+              rowHeight={LIST_ROW_HEIGHT}
+              getItemKey={(t) => t.id}
+              getScrollElement={() => scrollRef.current}
+              renderRow={(t, idx) => (
+                <div
+                  className="song-row"
+                  title="播放"
+                  onClick={() => playOne(t)}
+                >
+                  <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                  <span className="fav-col">
+                    <FavoriteHeart item={trackRowToAddItem(t)} />
+                  </span>
+                  <span className="ellipsis">{t.title || t.filename}</span>
+                  <span className="tertiary ellipsis">{t.artist || "—"}</span>
+                  <span className="tertiary ellipsis">{t.album || "—"}</span>
+                  <span className="song-actions">
+                    <button
+                      className="link-btn"
+                      title="加入歌单"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPickerItems([trackRowToAddItem(t)]);
+                      }}
+                    >
+                      <ListPlus size={13} />
+                    </button>
+                  </span>
+                  <span className="tertiary mono">{formatTime(t.duration_ms)}</span>
+                </div>
+              )}
+            />
           </div>
         ) : (
-          <div className="songs-grid" key="grid">
-            {filtered.map((t) => (
-              <div
-                key={t.id}
-                className="song-card"
-                title="播放"
-                onClick={() => playOne(t)}
-              >
-                <div className="song-card-cover">
-                  <AlbumCover
-                    path={t.path}
-                    mtime={t.mtime}
-                    hasCover={t.has_cover}
-                    initial={(t.title || t.filename || "?").slice(0, 1).toUpperCase()}
-                  />
-                  <span className="song-card-play" aria-hidden>
-                    <Play size={36} fill="currentColor" strokeWidth={0} />
-                  </span>
-                  <button
-                    type="button"
-                    className="song-card-add"
-                    title="加入队列"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void enqueue([trackRowToQueueItem(t)]);
-                    }}
-                  >
-                    <ListEnd size={14} />
-                  </button>
+          <div ref={gridRef} key="grid">
+            <VirtualList
+              items={gridRows}
+              rowHeight={gridRowHeight}
+              getScrollElement={() => scrollRef.current}
+              renderRow={(rowItems) => (
+                <div
+                  className="songs-grid"
+                  style={
+                    {
+                      "--grid-cols": gridCols,
+                      display: "grid",
+                      gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+                      gap: "var(--space-4)",
+                    } as React.CSSProperties
+                  }
+                >
+                  {rowItems.map((t) => (
+                    <div
+                      key={t.id}
+                      className="song-card"
+                      title="播放"
+                      onClick={() => playOne(t)}
+                    >
+                      <div className="song-card-cover">
+                        <AlbumCover
+                          path={t.path}
+                          mtime={t.mtime}
+                          hasCover={t.has_cover}
+                          initial={(t.title || t.filename || "?").slice(0, 1).toUpperCase()}
+                        />
+                        <span className="song-card-play" aria-hidden>
+                          <Play size={36} fill="currentColor" strokeWidth={0} />
+                        </span>
+                        <button
+                          type="button"
+                          className="song-card-add"
+                          title="加入队列"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void enqueue([trackRowToQueueItem(t)]);
+                          }}
+                        >
+                          <ListEnd size={14} />
+                        </button>
+                      </div>
+                      <div className="song-card-title-row">
+                        <FavoriteHeart item={trackRowToAddItem(t)} />
+                        <div className="song-card-title">{t.title || t.filename}</div>
+                      </div>
+                      <div className="song-card-sub tertiary">
+                        <span className="ellipsis">
+                          {t.artist || "—"}
+                          {t.album ? ` · ${t.album}` : ""}
+                        </span>
+                        <span className="mono song-card-dur">{formatTime(t.duration_ms)}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="song-card-title-row">
-                  <FavoriteHeart item={trackRowToAddItem(t)} />
-                  <div className="song-card-title">{t.title || t.filename}</div>
-                </div>
-                <div className="song-card-sub tertiary">
-                  <span className="ellipsis">
-                    {t.artist || "—"}
-                    {t.album ? ` · ${t.album}` : ""}
-                  </span>
-                  <span className="mono song-card-dur">{formatTime(t.duration_ms)}</span>
-                </div>
-              </div>
-            ))}
+              )}
+            />
           </div>
         )}
       </div>

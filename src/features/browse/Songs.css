@@ -32,7 +32,6 @@
 .songs-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   animation: songs-fade-in var(--dur-slow) var(--ease-out);
 }
 
@@ -41,15 +40,17 @@
   grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
-  height: 28px;
-  padding: 0 8px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 8px 4px;
   font-size: 11px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
   position: sticky;
   top: 0;
   background: var(--bg);
-  z-index: 1;
+  z-index: 10;
+  /* 吃掉 .page-scroll 顶部 padding，避免虚拟行从表头上沿穿出 */
+  box-shadow: 0 -24px 0 0 var(--bg);
 }
 
 .song-row {
@@ -57,7 +58,8 @@
   grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
-  min-height: 36px;
+  height: 38px; /* 与 VirtualList LIST_ROW_HEIGHT 一致 */
+  box-sizing: border-box;
   padding: 0 8px;
   border-radius: 6px;
   color: var(--text);
@@ -71,7 +73,7 @@
 /* ── 卡片网格 ── */
 .songs-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(var(--grid-cols, 5), minmax(0, 1fr));
   gap: var(--space-4);
   align-items: start;
   animation: songs-fade-in var(--dur-slow) var(--ease-out);

@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search } from "lucide-react";
 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
@@ -41,6 +41,7 @@ export function ManagePage() {
   const [compareVersion, setCompareVersion] = useState(0);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [archiveMap, setArchiveMap] = useState<Record<number, ArchiveStatus> | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const reloadRoot = useCallback(async () => {
     try {
@@ -360,6 +361,7 @@ export function ManagePage() {
 
           <div
             className="page-scroll manage-table-pane"
+            ref={tableScrollRef}
             onClick={(e) => {
               // 点空白处取消选中（行内点击的 target 会落在 tr.row 内）
               if ((e.target as HTMLElement).closest("tr.row") == null) setCompareId(null);
@@ -373,6 +375,7 @@ export function ManagePage() {
                 selected={selected}
                 activeId={compareId}
                 archiveMap={archiveMap}
+                scrollRef={tableScrollRef}
                 onSelectedChange={setSelected}
                 onPlay={(row) => void playQueue([trackRowToQueueItem(row)], 0)}
                 onActivate={(row) =>

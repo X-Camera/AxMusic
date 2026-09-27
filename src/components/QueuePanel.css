@@ -89,6 +89,8 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  height: 40px; /* 与 VirtualList QUEUE_ROW_HEIGHT 一致 */
+  box-sizing: border-box;
   border-radius: var(--radius-control);
 }
 

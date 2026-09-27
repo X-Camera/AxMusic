@@ -6,6 +6,7 @@ import type { AlbumCard, ArtistCard, PlaylistAddItem, TrackRow } from "../../lib
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
+import { VirtualList, LIST_ROW_HEIGHT } from "../../components/VirtualList";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import { AlbumCover } from "./AlbumCover";
 import "./Artists.css";
@@ -23,6 +24,7 @@ export function ArtistsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   /** 加载序号，丢弃过期的详情响应 */
   const loadSeq = useRef(0);
 
@@ -147,7 +149,7 @@ export function ArtistsPage() {
           ) : undefined
         }
       />
-      <div className="page-scroll">
+      <div className="page-scroll" ref={scrollRef}>
         {selected ? (
           <div className="artist-detail" key={selected.name}>
             <div className="artist-hero">
@@ -222,34 +224,39 @@ export function ArtistsPage() {
                         <span />
                         <span>时长</span>
                       </div>
-                      {tracks.map((t, idx) => (
-                        <div
-                          key={t.id}
-                          className="album-track-row"
-                          title="播放"
-                          onClick={() => playTrack(t)}
-                        >
-                          <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
-                          <span className="fav-col">
-                            <FavoriteHeart item={trackRowToAddItem(t)} />
-                          </span>
-                          <span className="ellipsis">{t.title || t.filename}</span>
-                          <span className="tertiary ellipsis">{t.album || "—"}</span>
-                          <span className="song-actions">
-                            <button
-                              className="link-btn"
-                              title="加入歌单"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPickerItems([trackRowToAddItem(t)]);
-                              }}
-                            >
-                              <ListPlus size={13} />
-                            </button>
-                          </span>
-                          <span className="tertiary mono">{formatTime(t.duration_ms)}</span>
-                        </div>
-                      ))}
+                      <VirtualList
+                        items={tracks}
+                        rowHeight={LIST_ROW_HEIGHT}
+                        getItemKey={(t) => t.id}
+                        getScrollElement={() => scrollRef.current}
+                        renderRow={(t, idx) => (
+                          <div
+                            className="album-track-row"
+                            title="播放"
+                            onClick={() => playTrack(t)}
+                          >
+                            <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                            <span className="fav-col">
+                              <FavoriteHeart item={trackRowToAddItem(t)} />
+                            </span>
+                            <span className="ellipsis">{t.title || t.filename}</span>
+                            <span className="tertiary ellipsis">{t.album || "—"}</span>
+                            <span className="song-actions">
+                              <button
+                                className="link-btn"
+                                title="加入歌单"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPickerItems([trackRowToAddItem(t)]);
+                                }}
+                              >
+                                <ListPlus size={13} />
+                              </button>
+                            </span>
+                            <span className="tertiary mono">{formatTime(t.duration_ms)}</span>
+                          </div>
+                        )}
+                      />
                     </div>
                   )}
                 </section>

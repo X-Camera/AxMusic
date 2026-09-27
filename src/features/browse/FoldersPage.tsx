@@ -23,6 +23,7 @@ import {
 import type { FolderDir, FolderFile, PlaylistAddItem } from "../../lib/types";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
+import { VirtualList, LIST_ROW_HEIGHT } from "../../components/VirtualList";
 import { PlaylistPicker } from "../playlists/PlaylistPicker";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import "./Folders.css";
@@ -620,61 +621,66 @@ export function FoldersPage() {
                     <span>文件</span>
                     <span>时长</span>
                   </div>
-                  {files.map((f, idx) => {
-                    const checked = selected.has(f.path);
-                    return (
-                      <div
-                        key={f.path}
-                        data-path={f.path}
-                        className={`folders-row${checked ? " selected" : ""}`}
-                        title="点曲名播放 · 勾选多选 · Shift 连选"
-                        onDoubleClick={() => playOne(f)}
-                      >
-                        {/* 只让 input 的 onChange 切换；span 空白区单独 onClick。
-                            否则点到勾选框会 click+change 各切一次，表现为「点了没反应」 */}
-                        <span
-                          className="folders-check"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (e.target === e.currentTarget) {
-                              toggleOne(idx, e.shiftKey);
-                            }
-                          }}
+                  <VirtualList
+                    items={files}
+                    rowHeight={LIST_ROW_HEIGHT}
+                    getItemKey={(f) => f.path}
+                    getScrollElement={() => listWrapRef.current}
+                    renderRow={(f, idx) => {
+                      const checked = selected.has(f.path);
+                      return (
+                        <div
+                          data-path={f.path}
+                          className={`folders-row${checked ? " selected" : ""}`}
+                          title="点曲名播放 · 勾选多选 · Shift 连选"
+                          onDoubleClick={() => playOne(f)}
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) =>
-                              toggleOne(idx, (e.nativeEvent as MouseEvent).shiftKey)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label={`选择 ${f.name}`}
-                          />
-                        </span>
-                        <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
-                        <span className="fav-col">
-                          <FavoriteHeart
-                            item={{
-                              path: f.path,
-                              title: f.title || f.name,
-                              artist: f.artist,
-                              duration_ms: f.duration_ms,
+                          {/* 只让 input 的 onChange 切换；span 空白区单独 onClick。
+                              否则点到勾选框会 click+change 各切一次，表现为「点了没反应」 */}
+                          <span
+                            className="folders-check"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (e.target === e.currentTarget) {
+                                toggleOne(idx, e.shiftKey);
+                              }
                             }}
-                          />
-                        </span>
-                        <span className="ellipsis folders-title" onClick={() => playOne(f)}>
-                          {f.title || f.name}
-                        </span>
-                        <span className="tertiary ellipsis">{f.artist || "—"}</span>
-                        <span className="tertiary mono ellipsis" title={f.path}>
-                          {f.name}
-                        </span>
-                        <span className="tertiary mono">
-                          {f.duration_ms > 0 ? formatTime(f.duration_ms) : "—"}
-                        </span>
-                      </div>
-                    );
-                  })}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) =>
+                                toggleOne(idx, (e.nativeEvent as MouseEvent).shiftKey)
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`选择 ${f.name}`}
+                            />
+                          </span>
+                          <span className="tertiary mono">{String(idx + 1).padStart(2, "0")}</span>
+                          <span className="fav-col">
+                            <FavoriteHeart
+                              item={{
+                                path: f.path,
+                                title: f.title || f.name,
+                                artist: f.artist,
+                                duration_ms: f.duration_ms,
+                              }}
+                            />
+                          </span>
+                          <span className="ellipsis folders-title" onClick={() => playOne(f)}>
+                            {f.title || f.name}
+                          </span>
+                          <span className="tertiary ellipsis">{f.artist || "—"}</span>
+                          <span className="tertiary mono ellipsis" title={f.path}>
+                            {f.name}
+                          </span>
+                          <span className="tertiary mono">
+                            {f.duration_ms > 0 ? formatTime(f.duration_ms) : "—"}
+                          </span>
+                        </div>
+                      );
+                    }}
+                  />
                 </div>
               )}
             </div>

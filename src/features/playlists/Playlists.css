@@ -63,7 +63,6 @@
 .pl-tracks {
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
 .pl-track-row {
@@ -71,10 +70,16 @@
   grid-template-columns: 32px 28px 1fr 120px 48px auto;
   gap: 8px;
   align-items: center;
-  min-height: 36px;
+  /* 与 VirtualList LIST_ROW_HEIGHT 一致 */
+  height: 38px;
+  box-sizing: border-box;
   padding: 0 8px;
   border-radius: 6px;
   color: var(--text);
+}
+
+.pl-track-row .chip-gap {
+  margin-left: 8px;
 }
 
 /* 系统「喜爱」歌单：置顶 + 与用户歌单视觉区分（未选中时用描边区分，避免像已选中） */

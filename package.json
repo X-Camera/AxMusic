@@ -13,6 +13,7 @@
     "dist:copy": "node scripts/copy-dist.mjs"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "lucide-react": "^0.469.0",

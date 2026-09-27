@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Heart, ListMusic, Play, Plus, Trash2 } from "lucide-react";
 
 import { api, entryToQueueItem, formatTime } from "../../lib/api";
@@ -7,6 +7,7 @@ import { useApp } from "../../state/useApp";
 import { useFavorites } from "../../state/useFavorites";
 import { TopBar } from "../../components/TopBar";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
+import { VirtualList, LIST_ROW_HEIGHT } from "../../components/VirtualList";
 import "./Playlists.css";
 
 export function PlaylistsPage() {
@@ -18,6 +19,7 @@ export function PlaylistsPage() {
   const [noRoot, setNoRoot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -170,7 +172,7 @@ export function PlaylistsPage() {
           </button>
         }
       />
-      <div className="page-scroll">
+      <div className="page-scroll" ref={scrollRef}>
         {noRoot ? (
           <div className="empty-state">
             <div className="display" style={{ fontSize: 20 }}>
@@ -311,80 +313,84 @@ export function PlaylistsPage() {
                       </div>
                     ) : (
                       <div className="pl-tracks">
-                        {detail.entries.map((e, i) => {
-                          const title = e.track?.title || e.title;
-                          const artist = e.track?.artist || e.artist;
-                          return (
-                            <div key={`${e.rel_path}-${i}`} className={`pl-track-row${e.exists ? "" : " missing"}`}>
-                              <span className="tertiary mono">{String(i + 1).padStart(2, "0")}</span>
-                              <span className="fav-col">
-                                <FavoriteHeart
-                                  item={{
-                                    path: e.path,
-                                    title,
-                                    artist,
-                                    duration_ms: e.duration_ms,
-                                  }}
-                                  onToggle={(fav) => {
-                                    if (detail.is_favorites && !fav) {
-                                      const path = e.path;
-                                      setDetail({
-                                        ...detail,
-                                        entries: detail.entries.filter((x) => x.path !== path),
-                                      });
+                        <VirtualList
+                          items={detail.entries}
+                          rowHeight={LIST_ROW_HEIGHT}
+                          getItemKey={(e) => e.path}
+                          getScrollElement={() => scrollRef.current}
+                          renderRow={(e, i) => {
+                            const title = e.track?.title || e.title;
+                            const artist = e.track?.artist || e.artist;
+                            return (
+                              <div className={`pl-track-row${e.exists ? "" : " missing"}`}>
+                                <span className="tertiary mono">{String(i + 1).padStart(2, "0")}</span>
+                                <span className="fav-col">
+                                  <FavoriteHeart
+                                    item={{
+                                      path: e.path,
+                                      title,
+                                      artist,
+                                      duration_ms: e.duration_ms,
+                                    }}
+                                    onToggle={(fav) => {
+                                      if (!detail.is_favorites) return;
+                                      if (!fav) {
+                                        const path = e.path;
+                                        setDetail({
+                                          ...detail,
+                                          entries: detail.entries.filter((x) => x.path !== path),
+                                        });
+                                      }
                                       void reload();
                                       void useFavorites.getState().reload();
-                                    } else if (detail.is_favorites) {
-                                      void reload();
-                                      void useFavorites.getState().reload();
-                                    }
-                                  }}
-                                />
-                              </span>
-                              <span className="ellipsis" title={title}>
-                                {title}
-                                {!e.exists && <span className="chip" style={{ marginLeft: 8 }}>缺失</span>}
-                              </span>
-                              <span className="tertiary ellipsis" title={artist}>
-                                {artist || "—"}
-                              </span>
-                              <span className="tertiary mono">{formatTime(e.duration_ms)}</span>
-                              <span className="pl-track-actions">
-                                <button
-                                  className="link-btn"
-                                  title="播放"
-                                  disabled={!e.exists}
-                                  onClick={() => playOne(e)}
-                                >
-                                  播放
-                                </button>
-                                <button
-                                  className="link-btn"
-                                  title="上移"
-                                  disabled={i === 0}
-                                  onClick={() => void onMove(e, -1)}
-                                >
-                                  <ChevronUp size={13} />
-                                </button>
-                                <button
-                                  className="link-btn"
-                                  title="下移"
-                                  disabled={i === detail.entries.length - 1}
-                                  onClick={() => void onMove(e, 1)}
-                                >
-                                  <ChevronDown size={13} />
-                                </button>
-                                <button
-                                  className="link-btn"
-                                  title="移除"
-                                  onClick={() => void onRemove(e)}
-                                >
-                                  移除
-                                </button>
-                              </span>
-                            </div>
-                          );
-                        })}
+                                    }}
+                                  />
+                                </span>
+                                <span className="ellipsis" title={title}>
+                                  {title}
+                                  {!e.exists && <span className="chip chip-gap">缺失</span>}
+                                </span>
+                                <span className="tertiary ellipsis" title={artist}>
+                                  {artist || "—"}
+                                </span>
+                                <span className="tertiary mono">{formatTime(e.duration_ms)}</span>
+                                <span className="pl-track-actions">
+                                  <button
+                                    className="link-btn"
+                                    title="播放"
+                                    disabled={!e.exists}
+                                    onClick={() => playOne(e)}
+                                  >
+                                    播放
+                                  </button>
+                                  <button
+                                    className="link-btn"
+                                    title="上移"
+                                    disabled={i === 0}
+                                    onClick={() => void onMove(e, -1)}
+                                  >
+                                    <ChevronUp size={13} />
+                                  </button>
+                                  <button
+                                    className="link-btn"
+                                    title="下移"
+                                    disabled={i === detail.entries.length - 1}
+                                    onClick={() => void onMove(e, 1)}
+                                  >
+                                    <ChevronDown size={13} />
+                                  </button>
+                                  <button
+                                    className="link-btn"
+                                    title="移除"
+                                    onClick={() => void onRemove(e)}
+                                  >
+                                    移除
+                                  </button>
+                                </span>
+                              </div>
+                            );
+                          }}
+                        />
                       </div>
                     )}
                   </>

@@ -148,7 +148,6 @@
 .album-track-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
 .album-track-head {
@@ -168,7 +167,8 @@
   grid-template-columns: 36px 28px minmax(120px, 1.4fr) minmax(80px, 1fr) 36px 52px;
   gap: 8px;
   align-items: center;
-  min-height: 36px;
+  height: 38px; /* 与 VirtualList LIST_ROW_HEIGHT 一致 */
+  box-sizing: border-box;
   padding: 0 8px;
   border-radius: 6px;
   color: var(--text);

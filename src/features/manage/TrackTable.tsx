@@ -1,11 +1,15 @@
 import { Music } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import type { ArchiveStatus, TrackRow } from "../../lib/types";
 import { trackRowToAddItem } from "../../lib/api";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
+import { TABLE_ROW_HEIGHT, useTableVirtualizer } from "../../components/VirtualList";
 import { loadCover, observeCover, peekCover, unobserveCover } from "./coverCache";
 import "./TrackTable.css";
+
+/** 与 thead 的 th 数量一致；spacer 行 colSpan 用 */
+const COL_COUNT = 11;
 
 /* ── 与 catalog 的匹配判定：trim + 忽略大小写；年取前 4 位数字特化；轨号按数值 ── */
 const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
@@ -80,6 +84,7 @@ export function TrackTable({
   selected,
   activeId,
   archiveMap,
+  scrollRef,
   onSelectedChange,
   onPlay,
   onActivate,
@@ -89,11 +94,46 @@ export function TrackTable({
   activeId: number | null;
   /** 归档状态 map: track_id → ArchiveStatus */
   archiveMap: Record<number, ArchiveStatus> | null;
+  /** 滚动容器（.page-scroll），虚拟化据此算可视窗口 */
+  scrollRef: RefObject<HTMLElement | null>;
   onSelectedChange: (s: Set<number>) => void;
   onPlay: (row: TrackRow, indexInView: number) => void;
   /** 单击行 → 右侧显示 catalog 字段（再次单击已激活行 → 回到统计） */
   onActivate: (row: TrackRow) => void;
 }) {
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  // tbody 起点相对滚动容器的偏移（表头 + 表格边框），供 virtual-core 对齐 scrollTop
+  useLayoutEffect(() => {
+    const measure = () => {
+      const table = tableRef.current;
+      const scroller = scrollRef.current;
+      if (!table || !scroller) return;
+      const thead = table.tHead;
+      const top =
+        table.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top +
+        scroller.scrollTop +
+        (thead?.offsetHeight ?? 0);
+      setScrollMargin((p) => (p === top ? p : Math.max(0, top)));
+    };
+    measure();
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    return () => ro.disconnect();
+  }, [scrollRef]);
+
+  const { vis, paddingTop, paddingBottom } = useTableVirtualizer({
+    count: rows.length,
+    rowHeight: TABLE_ROW_HEIGHT,
+    scrollRef,
+    scrollMargin,
+    overscan: 15,
+  });
+
   function toggle(id: number) {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
@@ -107,7 +147,7 @@ export function TrackTable({
   }
 
   return (
-    <table className="track-table">
+    <table className="track-table" ref={tableRef}>
       <thead>
         <tr>
           <th style={{ width: 36 }}>
@@ -141,7 +181,15 @@ export function TrackTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((t, idx) => {
+        {paddingTop > 0 && (
+          <tr aria-hidden style={{ height: paddingTop }}>
+            <td colSpan={COL_COUNT} style={{ padding: 0, border: "none", height: paddingTop }} />
+          </tr>
+        )}
+        {vis.map((vi) => {
+          const t = rows[vi.index];
+          if (!t) return null;
+          const idx = vi.index;
           const mTitle = matchStr(t.title, t.catalog_title);
           const mArtist = matchStr(t.artist, t.catalog_artist);
           const mAlbum = matchStr(t.album, t.catalog_album);
@@ -150,6 +198,7 @@ export function TrackTable({
           return (
             <tr
               key={t.id}
+              style={{ height: TABLE_ROW_HEIGHT }}
               className={`row${activeId === t.id ? " active" : ""}${selected.has(t.id) ? " selected" : ""}`}
               onClick={() => onActivate(t)}
               onDoubleClick={() => onPlay(t, idx)}
@@ -241,6 +290,11 @@ export function TrackTable({
             </tr>
           );
         })}
+        {paddingBottom > 0 && (
+          <tr aria-hidden style={{ height: paddingBottom }}>
+            <td colSpan={COL_COUNT} style={{ padding: 0, border: "none", height: paddingBottom }} />
+          </tr>
+        )}
       </tbody>
     </table>
   );

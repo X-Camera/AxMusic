@@ -214,7 +214,9 @@
 }
 
 .folders-row {
-  min-height: 38px;
+  /* 与 VirtualList LIST_ROW_HEIGHT 一致 */
+  height: 38px;
+  box-sizing: border-box;
   color: var(--text);
   border-bottom: 1px solid var(--border-soft);
   cursor: default;
