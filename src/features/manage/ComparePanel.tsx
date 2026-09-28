@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileInput, FolderCheck, ImagePlus, Loader2, Search } from "lucide-react";
+import { FileInput, FolderCheck, ImagePlus, Loader2, Search, Gauge } from "lucide-react";
 import { api } from "../../lib/api";
-import type { ArchiveStatus, CatalogRow, FieldChange, TrackRow } from "../../lib/types";
+import type {
+  ArchiveStatus,
+  CatalogRow,
+  FieldChange,
+  ReplayGainScan,
+  ReplayGainTags,
+  TrackRow,
+} from "../../lib/types";
 import { useFavorites } from "../../state/useFavorites";
 import { CoverPicker } from "./CoverPicker";
 import "./ComparePanel.css";
@@ -82,9 +89,14 @@ export function ComparePanel({
   const [coverOpen, setCoverOpen] = useState(false);
   const [archive, setArchive] = useState<ArchiveStatus | null>(null);
   const [normalizing, setNormalizing] = useState<string | null>(null);
+  const [rgScan, setRgScan] = useState<ReplayGainScan | null>(null);
+  const [rgTags, setRgTags] = useState<ReplayGainTags | null>(null);
+  const [scanningRg, setScanningRg] = useState(false);
+  const [writingRg, setWritingRg] = useState(false);
 
   /** 任一写操作在途即锁住全部写按钮：它们最终都写同一个音频文件，并发会相互覆盖 */
-  const writing = writingField !== null || writingCover || writingTags || normalizing !== null;
+  const writing =
+    writingField !== null || writingCover || writingTags || normalizing !== null || writingRg;
 
   // onWritten 身份随父组件重渲染变化；用 ref 保持加载 effect 稳定
   const onWrittenRef = useRef(onWritten);
@@ -100,6 +112,8 @@ export function ComparePanel({
     setCatalogCover(null);
     setDraft({});
     setArchive(null);
+    setRgScan(null);
+    setRgTags(null);
     (async () => {
       try {
         const d = await api.catalogCompare(trackId);
@@ -123,6 +137,9 @@ export function ComparePanel({
             const map = await api.archiveCheckBatch([trackId]).catch(() => null);
             if (!cancelled && map && map[trackId] != null) setArchive(map[trackId]);
           }
+          // 已有 REPLAYGAIN 标签：选中即显示，不必先扫描
+          const tags = await api.replaygainTags(trackId).catch(() => null);
+          if (!cancelled && tags) setRgTags(tags);
           // 本次比较补上了关联 → 刷列表，让绿字/未关联筛选立刻更新
           if (!cancelled && d.linked_now) onWrittenRef.current();
         }
@@ -265,6 +282,38 @@ export function ComparePanel({
     },
     [trackId, onWritten],
   );
+
+  const scanReplayGain = useCallback(async () => {
+    setScanningRg(true);
+    setError(null);
+    try {
+      const r = await api.replaygainAnalyze(trackId);
+      setRgScan(r);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setScanningRg(false);
+    }
+  }, [trackId]);
+
+  const writeReplayGain = useCallback(async () => {
+    // 0 是合法增益；只排除 null/undefined，与按钮渲染条件同口径
+    if (rgScan?.track_gain_db == null) return;
+    setWritingRg(true);
+    setError(null);
+    try {
+      await api.replaygainWrite(trackId, rgScan.track_gain_db, rgScan.track_peak);
+      // 面板会因 onWritten 换 key 重挂载并重新读标签；这里只通知刷新列表
+      onWritten();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setWritingRg(false);
+    }
+  }, [trackId, rgScan, onWritten]);
+
+  const formatDb = (db: number | null | undefined) =>
+    db === null || db === undefined ? "—" : `${db >= 0 ? "+" : ""}${db.toFixed(2)} dB`;
 
   return (
     <aside className="cmp-panel" role="complementary" aria-label="catalog 字段">
@@ -456,6 +505,99 @@ export function ComparePanel({
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+      )}
+      {/* 响度增益：已有标签常显；扫描估算 → 确认写入（不自动改文件） */}
+      {data && (
+        <div className="cmp-rg">
+          <div className="cmp-fields-title">响度增益</div>
+          <div className="tertiary cmp-hint">
+            文件标签常显；扫描可估算建议增益。写入后播放按「响度均衡」自动拉平音量。
+          </div>
+          <div className="cmp-rg-result">
+            <div className="cmp-field-row">
+              <div className="cmp-field-compact">
+                <span className="cmp-field-label">曲目增益</span>
+                <span className="cmp-field-value mono" title={formatDb(rgTags?.track_gain_db)}>
+                  {formatDb(rgTags?.track_gain_db)}
+                </span>
+              </div>
+              <div className="cmp-field-compact">
+                <span className="cmp-field-label">曲目峰值</span>
+                <span className="cmp-field-value mono">
+                  {rgTags?.track_peak != null ? rgTags.track_peak.toFixed(4) : "—"}
+                </span>
+              </div>
+            </div>
+            <div className="cmp-field-row">
+              <div className="cmp-field-compact">
+                <span className="cmp-field-label">专辑增益</span>
+                <span className="cmp-field-value mono" title="单曲扫描不写专辑增益">
+                  {formatDb(rgTags?.album_gain_db)}
+                </span>
+              </div>
+              <div className="cmp-field-compact">
+                <span className="cmp-field-label">专辑峰值</span>
+                <span className="cmp-field-value mono">
+                  {rgTags?.album_peak != null ? rgTags.album_peak.toFixed(4) : "—"}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="cmp-rg-row">
+            <button
+              className="btn btn-sm"
+              disabled={scanningRg || writing}
+              title="解码分析响度与峰值，不修改文件"
+              onClick={() => void scanReplayGain()}
+            >
+              {scanningRg ? <Loader2 size={12} className="spin" /> : <Gauge size={12} />}
+              {rgScan ? "重新扫描" : "扫描增益"}
+            </button>
+            {rgScan && rgScan.track_gain_db != null && (
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={writing || scanningRg}
+                title="写入 REPLAYGAIN_TRACK_GAIN / TRACK_PEAK（已有曲目增益会被覆盖）"
+                onClick={() => void writeReplayGain()}
+              >
+                {writingRg ? <Loader2 size={12} className="spin" /> : <FileInput size={12} />}
+                写入标签
+              </button>
+            )}
+          </div>
+          {rgScan && (
+            <div className="cmp-rg-result">
+              <div className="cmp-field-row">
+                <div className="cmp-field-compact">
+                  <span className="cmp-field-label">测量响度</span>
+                  <span className="cmp-field-value mono">
+                    {rgScan.measured_lufs != null
+                      ? `${rgScan.measured_lufs.toFixed(1)} LUFS`
+                      : "—"}
+                  </span>
+                </div>
+                <div className="cmp-field-compact">
+                  <span className="cmp-field-label">建议增益</span>
+                  <span className="cmp-field-value mono">{formatDb(rgScan.track_gain_db)}</span>
+                </div>
+              </div>
+              <div className="cmp-field-row">
+                <div className="cmp-field-compact">
+                  <span className="cmp-field-label">测量峰值</span>
+                  <span className="cmp-field-value mono">
+                    {rgScan.track_peak != null ? rgScan.track_peak.toFixed(4) : "—"}
+                  </span>
+                </div>
+                <div className="cmp-field-compact">
+                  <span className="cmp-field-label">写入说明</span>
+                  <span className="cmp-field-value" title="峰值用于播放端防削波">
+                    增益+峰值
+                  </span>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

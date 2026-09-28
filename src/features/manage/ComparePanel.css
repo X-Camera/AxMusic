@@ -280,6 +280,33 @@
   font-size: 11px;
 }
 
+/* 响度增益扫描（与 cmp-archive 同级排版，不吃额外左右 padding） */
+.cmp-rg {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+
+.cmp-rg-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 无写入按钮列：标签+值两格，与 catalog 紧凑双列对齐 */
+.cmp-rg .cmp-field-compact {
+  grid-template-columns: 52px 1fr;
+}
+
+.cmp-rg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

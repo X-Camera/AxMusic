@@ -53,6 +53,8 @@ encoding_rs = "0.8"
 # 内嵌封面缩略图（管理表）：仅 jpeg/png 解码 + 缩放，保持编译轻量
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rustfft = "6"
+# EBU R128 响度分析（扫描估算 ReplayGain）
+ebur128 = "0.1"
 
 # 任务栏缩略图工具栏（ITaskbarList3 播放控制按钮）
 [target.'cfg(windows)'.dependencies]

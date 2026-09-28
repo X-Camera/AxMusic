@@ -8,6 +8,7 @@ const SOURCE_LABEL: Record<ReplayGainSource, string> = {
   none: "无标签",
   track: "曲目标签",
   album: "专辑标签",
+  estimated: "运行时估算",
 };
 
 /** 格式化带符号 dB：+2.3 dB / -1.8 dB / 0 dB（ASCII 负号，便于复制与日志） */

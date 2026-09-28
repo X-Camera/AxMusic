@@ -5,8 +5,8 @@ export type RepeatMode = "off" | "all" | "one";
 /** 响度均衡模式：关 / 按曲目 / 按专辑 */
 export type ReplayGainMode = "off" | "track" | "album";
 
-/** 增益来源标签 */
-export type ReplayGainSource = "none" | "track" | "album";
+/** 增益来源：track/album 来自文件标签；estimated 为无标签时运行时估算（不写文件） */
+export type ReplayGainSource = "none" | "track" | "album" | "estimated";
 
 /** 本曲响度均衡状态（播放条标识用） */
 export interface ReplayGainInfo {
@@ -23,6 +23,28 @@ export interface ReplayGainInfo {
   peak_limited: boolean;
   /** 限幅前的原始增益 (dB) */
   requested_gain_db: number;
+}
+
+/** 单曲扫描估算结果（管理右栏） */
+export interface ReplayGainScan {
+  /** 门限积分响度 LUFS；解码失败或整轨静音为 null */
+  measured_lufs: number | null;
+  /** 建议曲目增益 dB；measured_lufs 为 null 时同为 null */
+  track_gain_db: number | null;
+  /** 样本峰值（线性）；将与增益一并写入标签 */
+  track_peak: number | null;
+  existing_track_gain_db: number | null;
+  existing_track_peak: number | null;
+  /** 曲目增益或峰值任一存在即为 true（非「两者都有」） */
+  has_track_tags: boolean;
+}
+
+/** 文件里已有的 ReplayGain/R128 标签（不解码只读） */
+export interface ReplayGainTags {
+  track_gain_db: number | null;
+  track_peak: number | null;
+  album_gain_db: number | null;
+  album_peak: number | null;
 }
 
 export interface TrackInfo {

@@ -6,10 +6,14 @@
 
 use std::path::Path;
 
+use anyhow::{Context, Result};
 use lofty::file::TaggedFileExt;
 use lofty::prelude::ItemKey;
 use lofty::probe::Probe;
 use serde::{Deserialize, Serialize};
+
+/// ReplayGain 2.0 / 常见播放器目标响度（LUFS，约对应经典 89 dB SPL）
+const TARGET_LUFS: f32 = -18.0;
 
 /// 响度均衡模式（设置页「播放」组）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -32,6 +36,8 @@ pub enum ReplayGainSource {
     None,
     Track,
     Album,
+    /// 无标签时运行时估算（不写文件）
+    Estimated,
 }
 
 /// 供 UI 展示的本曲响度均衡状态
@@ -67,6 +73,11 @@ impl ReplayGainInfo {
 /// 增益安全区间（dB）：防异常标签把线性倍数算成 inf / 0
 const GAIN_DB_MIN: f32 = -60.0;
 const GAIN_DB_MAX: f32 = 24.0;
+
+/// 增益落到安全区间（含非法值归 0）；写标签/缓存共用，保证两侧一致
+pub fn clamp_gain_db_for_write(db: f32) -> f32 {
+    clamp_gain_db(db)
+}
 
 /// dB → 线性振幅倍数（钳制到安全区间）
 pub fn db_to_linear(db: f32) -> f32 {
@@ -121,7 +132,7 @@ fn peak_limit(gain_db: f32, peak: Option<f32>) -> (f32, bool) {
 }
 
 /// 标签里的四组字段
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct GainTags {
     pub track_gain_db: Option<f32>,
     pub track_peak: Option<f32>,
@@ -215,12 +226,350 @@ pub fn compute(tags: &GainTags, mode: ReplayGainMode) -> ReplayGainInfo {
     info
 }
 
-/// 读标签 + 按模式计算（播放打开曲目时调用）
-pub fn compute_for_path(path: &Path, mode: ReplayGainMode) -> ReplayGainInfo {
-    if mode == ReplayGainMode::Off {
-        return ReplayGainInfo::default();
+// ── 运行时估算缓存（无标签时播放中异步分析，不写文件） ──────────────
+
+#[derive(Debug, Clone)]
+struct CachedAnalysis {
+    gain_db: f32,
+    peak: Option<f32>,
+    mtime: u64,
+}
+
+fn file_mtime(path: &Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// 供写标签路径取「刚写完」的 mtime，再交给 cache_put 做强制覆盖
+pub fn file_mtime_for_cache(path: &Path) -> u64 {
+    file_mtime(path)
+}
+
+fn analysis_cache() -> std::sync::MutexGuard<'static, std::collections::HashMap<String, CachedAnalysis>>
+{
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedAnalysis>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
+/// 查运行时估算缓存（mtime 变了则失效）
+pub fn analysis_cache_get(path: &Path) -> Option<(f32, Option<f32>)> {
+    let key = path.to_string_lossy().to_string();
+    let mtime = file_mtime(path);
+    let cache = analysis_cache();
+    let hit = cache.get(&key)?;
+    if hit.mtime != mtime {
+        return None;
     }
-    compute(&read_gain_tags(path), mode)
+    Some((hit.gain_db, hit.peak))
+}
+
+/// 写入估算缓存。`scanned_mtime` = 扫描开始时的文件 mtime；
+/// 若文件已被替换（写标签/外部改动）则丢弃本次结果，避免旧测量顶着新 mtime 入库。
+/// 写标签路径可传当前 mtime 作为强制覆盖。
+pub fn analysis_cache_put(path: &Path, gain_db: f32, peak: Option<f32>, scanned_mtime: u64) {
+    let key = path.to_string_lossy().to_string();
+    let now = file_mtime(path);
+    if now != scanned_mtime {
+        return; // 扫描期间文件已变，结果作废
+    }
+    analysis_cache().insert(
+        key,
+        CachedAnalysis {
+            gain_db,
+            peak,
+            mtime: now,
+        },
+    );
+}
+
+#[allow(dead_code)] // 外部改文件后主动失效；写标签路径走 cache_put 覆盖
+pub fn analysis_cache_invalidate(path: &Path) {
+    analysis_cache().remove(&path.to_string_lossy().to_string());
+}
+
+fn in_flight_set() -> std::sync::MutexGuard<'static, std::collections::HashSet<String>> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    IN_FLIGHT
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
+/// 后台分析去重：true = 可以开扫；结束时必须 analysis_end
+pub fn analysis_begin(path: &Path) -> bool {
+    in_flight_set().insert(path.to_string_lossy().to_string())
+}
+
+pub fn analysis_end(path: &Path) {
+    in_flight_set().remove(&path.to_string_lossy().to_string());
+}
+
+/// 由估算结果构造播放用增益（含峰值限幅）
+pub fn info_from_estimate(gain_db: f32, peak: Option<f32>) -> ReplayGainInfo {
+    let gain = clamp_gain_db(gain_db);
+    let (applied, limited) = peak_limit(gain, peak);
+    ReplayGainInfo {
+        active: true,
+        applied_gain_db: applied,
+        source: ReplayGainSource::Estimated,
+        track_gain_db: Some(gain),
+        album_gain_db: None,
+        track_peak: peak,
+        album_peak: None,
+        peak_limited: limited,
+        requested_gain_db: gain,
+    }
+}
+
+/// 播放解析增益：标签优先，否则查估算缓存。
+/// 返回 (info, needs_analyze)：needs_analyze = 应开后台分析（无标签且缓存未命中）
+pub fn resolve_for_playback(
+    path: &Path,
+    mode: ReplayGainMode,
+) -> (ReplayGainInfo, bool) {
+    if mode == ReplayGainMode::Off {
+        return (ReplayGainInfo::default(), false);
+    }
+    let tags = read_gain_tags(path);
+    let from_tags = compute(&tags, mode);
+    if from_tags.active {
+        return (from_tags, false);
+    }
+    if let Some((gain, peak)) = analysis_cache_get(path) {
+        return (info_from_estimate(gain, peak), false);
+    }
+    (ReplayGainInfo::default(), true)
+}
+
+// ── 扫描估算（解码量响度 → 建议增益）与写回标签 ────────────────────
+
+/// 单曲扫描结果（供右栏展示；写回前用户确认）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayGainScan {
+    /// 门限积分响度（LUFS）；失败/静音为 None
+    pub measured_lufs: Option<f32>,
+    /// 建议写入的曲目增益 (dB) = 目标 − 测量
+    pub track_gain_db: Option<f32>,
+    /// 样本峰值（线性，0..=1+）
+    pub track_peak: Option<f32>,
+    /// 文件里已有的曲目增益/峰值
+    pub existing_track_gain_db: Option<f32>,
+    pub existing_track_peak: Option<f32>,
+    /// 已有任一 REPLAYGAIN/R128 曲目字段
+    pub has_track_tags: bool,
+}
+
+/// 解码整轨 PCM 并用 EBU R128 测积分响度与样本峰值
+fn analyze_loudness(path: &Path) -> Result<(Option<f32>, Option<f32>)> {
+    use symphonia::core::audio::AudioBufferRef;
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::errors::Error as SymError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use symphonia::core::sample::{i24, u24};
+
+    let file = std::fs::File::open(path).with_context(|| format!("无法打开 {}", path.display()))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .context("无法解析音频容器")?;
+    let mut reader = probed.format;
+    let track = reader
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .context("无可用音频轨")?
+        .clone();
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100).max(1);
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .context("不支持的编解码器")?;
+
+    // 解码端统一立体声交错；ebur128 按 2ch 累计
+    let mut meter = ebur128::EbuR128::new(
+        2,
+        sample_rate,
+        ebur128::Mode::I | ebur128::Mode::SAMPLE_PEAK,
+    )
+    .context("初始化响度计失败")?;
+
+    // 与播放引擎相同的交错立体声转换（直接内联，避免依赖 engine 私有函数）
+    fn pack_stereo(buf: &AudioBufferRef<'_>) -> Vec<f32> {
+        fn conv_planes<T: Copy>(planes: &[&[T]], f: impl Fn(T) -> f32) -> Vec<f32> {
+            match planes {
+                [] => Vec::new(),
+                [mono] => {
+                    let mut out = Vec::with_capacity(mono.len() * 2);
+                    for &s in *mono {
+                        let v = f(s);
+                        out.push(v);
+                        out.push(v);
+                    }
+                    out
+                }
+                [l, r, ..] => {
+                    let n = l.len().min(r.len());
+                    let mut out = Vec::with_capacity(n * 2);
+                    for i in 0..n {
+                        out.push(f(l[i]));
+                        out.push(f(r[i]));
+                    }
+                    out
+                }
+            }
+        }
+        match buf {
+            AudioBufferRef::F32(b) => conv_planes(b.planes().planes(), |s: f32| s),
+            AudioBufferRef::U8(b) => {
+                conv_planes(b.planes().planes(), |s: u8| (s as f32 - 128.0) / 128.0)
+            }
+            AudioBufferRef::U16(b) => {
+                conv_planes(b.planes().planes(), |s: u16| s as f32 / 32768.0 - 1.0)
+            }
+            AudioBufferRef::U24(b) => {
+                conv_planes(b.planes().planes(), |s: u24| {
+                    (s.inner() as f32 / 8_388_608.0) - 1.0
+                })
+            }
+            AudioBufferRef::U32(b) => {
+                conv_planes(b.planes().planes(), |s: u32| s as f32 / 2_147_483_648.0 - 1.0)
+            }
+            AudioBufferRef::S8(b) => {
+                conv_planes(b.planes().planes(), |s: i8| s as f32 / 128.0)
+            }
+            AudioBufferRef::S16(b) => {
+                conv_planes(b.planes().planes(), |s: i16| s as f32 / 32768.0)
+            }
+            AudioBufferRef::S24(b) => {
+                conv_planes(b.planes().planes(), |s: i24| s.inner() as f32 / 8_388_608.0)
+            }
+            AudioBufferRef::S32(b) => {
+                conv_planes(b.planes().planes(), |s: i32| s as f32 / 2_147_483_648.0)
+            }
+            AudioBufferRef::F64(b) => conv_planes(b.planes().planes(), |s: f64| s as f32),
+        }
+    }
+
+    loop {
+        let packet = match reader.next_packet() {
+            Ok(p) => p,
+            Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(SymError::ResetRequired) => break,
+            Err(e) => return Err(e.into()),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(buf) => {
+                let samples = pack_stereo(&buf);
+                if !samples.is_empty() {
+                    meter
+                        .add_frames_f32(&samples)
+                        .context("响度累计失败")?;
+                }
+            }
+            Err(SymError::DecodeError(_)) => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let lufs = meter
+        .loudness_global()
+        .ok()
+        .filter(|v| v.is_finite())
+        .map(|v| v as f32);
+    let peak = (0..2)
+        .filter_map(|ch| meter.sample_peak(ch).ok())
+        .fold(None::<f64>, |acc, p| {
+            Some(acc.map_or(p, |a: f64| a.max(p)))
+        })
+        .filter(|p| p.is_finite())
+        .map(|p| p as f32);
+    Ok((lufs, peak))
+}
+
+/// 扫描单曲：量响度/峰值，对照目标给出建议增益，并带上文件里已有标签。
+/// 成功后写入估算缓存（mtime 以扫描开始时为准），避免播放侧重复解码。
+pub fn scan_track(path: &Path) -> Result<ReplayGainScan> {
+    let mtime_at_start = file_mtime(path);
+    let existing = read_gain_tags(path);
+    let (measured_lufs, track_peak) = analyze_loudness(path)?;
+    let track_gain_db = measured_lufs.map(|lufs| clamp_gain_db(TARGET_LUFS - lufs));
+    if let Some(gain) = track_gain_db {
+        analysis_cache_put(path, gain, track_peak, mtime_at_start);
+    }
+    Ok(ReplayGainScan {
+        measured_lufs,
+        track_gain_db,
+        track_peak,
+        existing_track_gain_db: existing.track_gain_db,
+        existing_track_peak: existing.track_peak,
+        has_track_tags: existing.track_gain_db.is_some() || existing.track_peak.is_some(),
+    })
+}
+
+/// 把曲目增益/峰值写进标签（临时副本 + rename，与 tagger 同安全契约）
+pub fn write_track_gain(path: &Path, gain_db: f32, peak: Option<f32>) -> Result<()> {
+    use lofty::config::WriteOptions;
+    use lofty::file::{AudioFile, FileType, TaggedFileExt as _};
+
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+    let ft = FileType::from_ext(ext).context("无法识别音频格式")?;
+    let tmp = crate::paths::temp_path_for(path);
+    let result = (|| -> Result<()> {
+        std::fs::copy(path, &tmp).context("创建临时副本失败")?;
+        let mut tagged = Probe::open(&tmp)
+            .context("打开失败")?
+            .set_file_type(ft)
+            .read()
+            .context("解析失败")?;
+        if tagged.primary_tag().is_none() {
+            let primary = tagged.primary_tag_type();
+            tagged.insert_tag(lofty::tag::Tag::new(primary));
+        }
+        let tag = tagged.primary_tag_mut().context("无标签容器")?;
+        let gain = clamp_gain_db(gain_db);
+        tag.insert_text(
+            ItemKey::ReplayGainTrackGain,
+            format!("{gain:.2} dB"),
+        );
+        if let Some(p) = peak.filter(|p| p.is_finite() && *p > 0.0) {
+            tag.insert_text(ItemKey::ReplayGainTrackPeak, format!("{p:.6}"));
+        }
+        tagged
+            .save_to_path(&tmp, WriteOptions::default())
+            .context("写回失败")?;
+        std::fs::rename(&tmp, path).context("替换失败")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -294,5 +643,20 @@ mod tests {
         let info = compute(&tags, ReplayGainMode::Off);
         assert!(!info.active);
         assert_eq!(info.linear(), 1.0);
+    }
+
+    #[test]
+    fn cache_put_rejects_stale_mtime() {
+        let dir = std::env::temp_dir().join("axmusic-rg-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("stale.wav");
+        std::fs::write(&path, b"RIFF").unwrap();
+        let mtime = file_mtime(&path);
+        analysis_cache_put(&path, -3.0, Some(0.5), mtime);
+        assert!(analysis_cache_get(&path).is_some());
+        // 伪造「扫描开始于更早 mtime」：文件已被替换后旧结果不得入库
+        analysis_cache_invalidate(&path);
+        analysis_cache_put(&path, -9.0, None, mtime.saturating_sub(10));
+        assert!(analysis_cache_get(&path).is_none());
     }
 }

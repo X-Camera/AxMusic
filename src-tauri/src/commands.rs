@@ -2774,6 +2774,83 @@ pub fn track_write_tags(
     Ok(track_id)
 }
 
+/// 单曲扫描估算 ReplayGain（解码量响度，不写文件）
+/// 重 IO：`command(async)` 移出主线程
+#[tauri::command(async)]
+pub fn replaygain_analyze(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<crate::player::replaygain::ReplayGainScan, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    crate::player::replaygain::scan_track(Path::new(&path)).map_err(|e| format!("{e:#}"))
+}
+
+/// 只读文件里已有的 ReplayGain/R128 标签（不解码，管理右栏常显用）
+/// 切歌会频繁调用：`command(async)` 避免主线程解析标签
+#[tauri::command(async)]
+pub fn replaygain_tags(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<crate::player::replaygain::GainTags, String> {
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    Ok(crate::player::replaygain::read_gain_tags(Path::new(&path)))
+}
+
+/// 将扫描得到的曲目增益/峰值写入音频标签（临时副本 + 原子替换）
+/// 整文件 copy+写回：`command(async)` 移出主线程
+#[tauri::command(async)]
+pub fn replaygain_write(
+    state: State<'_, AppState>,
+    track_id: i64,
+    track_gain_db: f32,
+    track_peak: Option<f32>,
+) -> Result<(), String> {
+    if !track_gain_db.is_finite() {
+        return Err("增益值非法".into());
+    }
+    if let Some(p) = track_peak {
+        if !p.is_finite() || p < 0.0 {
+            return Err("峰值值非法".into());
+        }
+    }
+    let path = {
+        let guard = require_db(&state)?;
+        let db = db_ref(&guard)?;
+        db.get_track_by_id(track_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("曲目不存在")?
+            .path
+    };
+    let path = Path::new(&path);
+    // 与 write_track_gain 同一钳制，保证标签与缓存一致
+    let gain = crate::player::replaygain::clamp_gain_db_for_write(track_gain_db);
+    let peak = track_peak.filter(|p| p.is_finite() && *p > 0.0);
+    crate::player::replaygain::write_track_gain(path, gain, peak)
+        .map_err(|e| format!("{e:#}"))?;
+    // 写完同步估算缓存（mtime 与刚写入的文件一致，强制覆盖在途旧扫描）
+    crate::player::replaygain::analysis_cache_put(
+        path,
+        gain,
+        peak,
+        crate::player::replaygain::file_mtime_for_cache(path),
+    );
+    Ok(())
+}
+
 /// Write selected catalog fields into the audio file (tags + optional cover from covers/).
 /// Only fields listed in `fields` are written; empty catalog values never overwrite tags.
 /// `write_cover` 在未关联 catalog 时也可用（读 `covers/track-{id}.jpg`）。

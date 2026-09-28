@@ -13,6 +13,8 @@ import type {
   PlaylistDetail,
   PlaylistSummary,
   QueueItem,
+  ReplayGainScan,
+  ReplayGainTags,
   ScanResult,
   SettingsPatch,
   TrackFilter,
@@ -156,6 +158,21 @@ export const api = {
   /** 用户编辑文件标签写回（空值不覆盖）；写后会再试一次 catalog 字段关联 */
   trackWriteTags: (trackId: number, changes: { field: string; old: string; new: string }[]) =>
     invoke<number>("track_write_tags", { trackId, changes }),
+
+  // ── replaygain 扫描估算 ─────────────────────────────────────────
+  /** 只读文件已有 REPLAYGAIN/R128 标签（不解码） */
+  replaygainTags: (trackId: number) =>
+    invoke<ReplayGainTags>("replaygain_tags", { trackId }),
+  /** 解码量响度，返回建议增益（不写文件；结果会进运行时缓存） */
+  replaygainAnalyze: (trackId: number) =>
+    invoke<ReplayGainScan>("replaygain_analyze", { trackId }),
+  /** 写入 REPLAYGAIN_TRACK_GAIN；trackPeak 为 null 时不写峰值、也不删已有 PEAK */
+  replaygainWrite: (trackId: number, trackGainDb: number, trackPeak: number | null) =>
+    invoke<void>("replaygain_write", {
+      trackId,
+      trackGainDb,
+      trackPeak,
+    }),
   catalogMatchOne: (trackId: number) =>
     invoke<number | null>("catalog_match_one", { trackId }),
   catalogMatchAll: () => invoke<number>("catalog_match_all"),

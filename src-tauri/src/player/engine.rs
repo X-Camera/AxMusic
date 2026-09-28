@@ -200,6 +200,46 @@ impl Shared {
     fn request_flush(&self) {
         self.audio_gen.fetch_add(1, Ordering::SeqCst);
     }
+
+    fn current_track_path(&self) -> Option<String> {
+        self.track
+            .lock()
+            .ok()
+            .and_then(|t| t.as_ref().map(|t| t.path.clone()))
+    }
+}
+
+/// 为 path 解析并应用响度增益；无标签时后台异步估算（不写文件），完成后再平滑接入
+fn apply_replaygain_for_path(shared: &Arc<Shared>, path: &Path) {
+    let mode = shared.rg_mode();
+    let (info, needs_analyze) = replaygain::resolve_for_playback(path, mode);
+    shared.set_replaygain(info);
+    if needs_analyze {
+        spawn_rg_analyze(Arc::clone(shared), path.to_path_buf());
+    }
+}
+
+fn spawn_rg_analyze(shared: Arc<Shared>, path: PathBuf) {
+    if !replaygain::analysis_begin(&path) {
+        return; // 该文件已在扫
+    }
+    let _ = std::thread::Builder::new()
+        .name("axmusic-rg-scan".into())
+        .spawn(move || {
+            let result = replaygain::scan_track(&path);
+            replaygain::analysis_end(&path);
+            // scan_track 已在结果有效时写入估算缓存（带 mtime 门禁）
+            let Ok(scan) = result else { return };
+            let Some(gain) = scan.track_gain_db else { return };
+            // 仍是当前曲才应用（用户可能已切歌）
+            let same = shared
+                .current_track_path()
+                .map(|p| p == path.to_string_lossy())
+                .unwrap_or(false);
+            if same && shared.rg_mode() != ReplayGainMode::Off {
+                shared.set_replaygain(replaygain::info_from_estimate(gain, scan.track_peak));
+            }
+        });
 }
 
 pub struct SymphoniaPlayer {
@@ -296,12 +336,11 @@ impl SymphoniaPlayer {
         }
     }
 
-    /// 响度均衡模式；改完立刻按当前曲重算增益
+    /// 响度均衡模式；改完立刻按当前曲重算增益（缺标签则后台估算）
     pub fn set_replaygain_mode(&mut self, mode: ReplayGainMode) {
         self.shared.set_rg_mode(mode);
         if let Some(track) = self.current_track() {
-            let info = replaygain::compute_for_path(Path::new(&track.path), mode);
-            self.shared.set_replaygain(info);
+            apply_replaygain_for_path(&self.shared, Path::new(&track.path));
         } else {
             self.shared.set_replaygain(ReplayGainInfo::default());
         }
@@ -346,11 +385,7 @@ impl SymphoniaPlayer {
         if let Ok(mut t) = self.shared.track.lock() {
             *t = Some(info.clone());
         }
-        self.shared
-            .set_replaygain(replaygain::compute_for_path(
-                Path::new(&item.path),
-                self.shared.rg_mode(),
-            ));
+        apply_replaygain_for_path(&self.shared, Path::new(&item.path));
         self.shared
             .duration_ms
             .store(info.duration_ms.max(1), Ordering::SeqCst);
@@ -482,11 +517,7 @@ impl SymphoniaPlayer {
             if let Ok(mut t) = self.shared.track.lock() {
                 *t = Some(info.clone());
             }
-            self.shared
-                .set_replaygain(replaygain::compute_for_path(
-                    Path::new(&info.path),
-                    self.shared.rg_mode(),
-                ));
+            apply_replaygain_for_path(&self.shared, Path::new(&info.path));
             self.shared
                 .duration_ms
                 .store(info.duration_ms.max(1), Ordering::SeqCst);
@@ -512,8 +543,7 @@ impl SymphoniaPlayer {
         if let Ok(mut t) = self.shared.track.lock() {
             *t = Some(info.clone());
         }
-        self.shared
-            .set_replaygain(replaygain::compute_for_path(path, self.shared.rg_mode()));
+        apply_replaygain_for_path(&self.shared, path);
         self.shared
             .duration_ms
             .store(info.duration_ms.max(1), Ordering::SeqCst);
@@ -707,6 +737,7 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>, viz_tap: VizTap) {
         out_channels,
         viz_prod: viz_tap.producer,
         viz_active: viz_tap.active,
+        rg_smooth: 1.0,
     };
 
     let stream = match default_config.sample_format() {
@@ -783,6 +814,8 @@ struct AudioOut {
     /// 频谱动效分接（mono f32，wait-free push；满则丢帧）
     viz_prod: ringbuf::HeapProd<f32>,
     viz_active: Arc<AtomicBool>,
+    /// 响度增益平滑值（向 shared.rg_linear 靠拢，避免异步估算结果突然变响/变轻）
+    rg_smooth: f32,
 }
 
 impl AudioOut {
@@ -819,11 +852,15 @@ impl AudioOut {
             self.pos = 0;
             // 切歌/seek 的 ring 清理由 viz 线程监听 audio_gen 完成（producer 侧无 clear）
         }
-        let vol = self.shared.volume() * self.shared.rg_linear();
+        let user_vol = self.shared.volume();
+        let rg_target = self.shared.rg_linear();
         let paused = self.shared.status.load(Ordering::SeqCst) != STATUS_PLAYING;
         let ch = self.out_channels;
         let frames = data.len() / ch;
         let mut frames_written = 0u64;
+        // 增益平滑：约 80ms 时间常数（异步估算/切标签时不跳变）
+        let sr = self.shared.sample_rate.load(Ordering::SeqCst).max(1) as f32;
+        let rg_coeff = 1.0 - (-1.0 / (0.08 * sr)).exp();
         // 频谱分接缓冲（栈上，回调结束一次 push_slice；不分配不锁）
         let viz_on = !paused && self.viz_active.load(Ordering::Relaxed);
         let mut tap = [0.0f32; 4096];
@@ -852,6 +889,9 @@ impl AudioOut {
                         tap_n = 0;
                     }
                 }
+                // 逐帧平滑增益，异步估算落地时不产生音量台阶
+                self.rg_smooth += (rg_target - self.rg_smooth) * rg_coeff;
+                let vol = user_vol * self.rg_smooth;
                 let l = ls * vol;
                 let r = rs * vol;
                 match ch {
@@ -935,7 +975,7 @@ fn open_decoder(path: &Path) -> Result<DecoderState> {
 
 /// `flush`：是否丢弃已缓冲音频。显式切歌/seek 要；EOF 自动连播不要（保留队尾，无缝衔接）。
 fn open_track_full(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     path: &Path,
     index: Option<usize>,
     queue_item: Option<&QueueItem>,
@@ -977,8 +1017,8 @@ fn open_track_full(
             if let Ok(mut qi) = shared.queue_index.lock() {
                 *qi = index;
             }
-            // 读标签算响度增益（含峰值限幅）；UI 标识随 snapshot 带出
-            shared.set_replaygain(replaygain::compute_for_path(path, shared.rg_mode()));
+            // 读标签/缓存算响度增益；无标签时后台估算（含峰值限幅），UI 标识随 snapshot 带出
+            apply_replaygain_for_path(shared, path);
             set_error(shared, None);
             Some(DecoderState2 {
                 inner: st,
