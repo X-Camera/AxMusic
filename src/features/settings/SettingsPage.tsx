@@ -94,11 +94,16 @@ const SECTION_DEFAULTS: Record<SectionKey, SettingsPatch> = {
 };
 
 const FEATURES = [
-  "任意路径本地播放，专辑 · 歌曲 · 歌手一站浏览",
-  "满窗歌词滚动，点句跳转；支持外挂 .lrc 与内嵌标签",
-  "洗库工作区：标签 / 封面 / 歌词批量维护",
-  "MusicBrainz 刮削入 catalog，对比确认后写回文件",
-  "m3u8 歌单，绿色便携，数据全部留在本机",
+  "本地播放：任意路径 FLAC / MP3 / M4A / Opus，无缝切歌与响度均衡",
+  "满窗歌词滚动、点句跳转；外挂 .lrc / 内嵌标签，多源搜索",
+  "整理：标签 / 封面 / 歌词 / 归档，MusicBrainz 刮削、导入其他库",
+  "听歌统计：近 7 天 / 30 天时段图与常听榜单",
+  "系统集成：拖放打开、资源管理器右键播放",
+];
+
+const REPOS = [
+  "https://gitee.com/coder_xu/ax-music",
+  "https://github.com/X-Camera/AxMusic",
 ];
 
 function Segmented<T extends string>({
@@ -261,12 +266,8 @@ function AboutPanel({
 
       <div className="set-about-body">
         <p>
-          AxMusic 是一款 Windows 本地音乐播放器与管理工具。以 FLAC
-          为主，兼顾 MP3 / M4A / Opus。打开就能听——任意路径文件皆可播放；
-          侧栏「管理」是洗库工作区，用来整理标签、封面、歌词，并支持从
-          MusicBrainz 刮削元数据。
+          Windows 本地音乐播放器 + 洗库管理工具。打开就能听；侧栏「管理」整理标签、封面、歌词与归档。绿色便携，数据全部留在本机。
         </p>
-        <p>不上传音频，不绑账号，绿色单文件解压即用。</p>
       </div>
 
       <div className="set-about-block">
@@ -307,6 +308,35 @@ function AboutPanel({
               {paths?.db_path || "未初始化"}
             </dd>
           </div>
+        </dl>
+      </div>
+
+      <div className="set-about-block">
+        <h3>项目</h3>
+        <dl className="set-about-meta">
+          <div>
+            <dt>作者</dt>
+            <dd>coder_xu</dd>
+          </div>
+          <div>
+            <dt>仓库</dt>
+            <dd className="set-about-links">
+              {REPOS.map((url) => (
+                <a
+                  key={url}
+                  className="set-about-link"
+                  href={url}
+                  title={url}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void api.openUrl(url).catch(() => {});
+                  }}
+                >
+                  {url}
+                </a>
+              ))}
+            </dd>
+          </div>
           <div>
             <dt>许可</dt>
             <dd>MIT License</dd>
@@ -315,7 +345,7 @@ function AboutPanel({
       </div>
 
       <p className="set-about-copy tertiary">
-        © {new Date().getFullYear()} AxMusic · MIT License
+        © {new Date().getFullYear()} coder_xu
       </p>
     </div>
   );

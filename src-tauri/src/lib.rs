@@ -178,6 +178,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::open_path,
+            commands::open_url,
             commands::resolve_window_close,
             commands::enter_true_fullscreen,
             commands::exit_true_fullscreen,

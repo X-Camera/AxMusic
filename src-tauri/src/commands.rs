@@ -366,6 +366,27 @@ pub fn open_path(path: String) -> Result<(), String> {
     }
 }
 
+/// 用系统默认浏览器打开网页（设置页「关于」仓库链接）。
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("仅支持打开网页链接".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = url;
+        Err("暂不支持打开链接".into())
+    }
+}
+
 // ── 资源管理器右键菜单 ────────────────────────────────────────────
 
 #[tauri::command]

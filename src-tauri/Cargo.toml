@@ -1,6 +1,6 @@
 [package]
 name = "axmusic"
-version = "0.0.2"
+version = "0.0.3"
 description = "AxMusic — local music player with library management"
 authors = ["AxMusic"]
 license = "MIT"
