@@ -20,30 +20,41 @@ export function PlaylistsPage() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** 列表/详情请求代次：快速切换歌单时丢弃过期响应 */
+  const listSeqRef = useRef(0);
+  const detailSeqRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const seq = ++listSeqRef.current;
     setLoading(true);
     setError(null);
     try {
-      setList(await api.playlistList());
+      const list = await api.playlistList();
+      if (seq !== listSeqRef.current) return;
+      setList(list);
       setNoRoot(false);
     } catch (e) {
+      if (seq !== listSeqRef.current) return;
       const msg = String(e);
       setList([]);
       setNoRoot(msg.includes("尚未初始化"));
       if (!msg.includes("尚未初始化")) setError(msg);
     } finally {
-      setLoading(false);
+      if (seq === listSeqRef.current) setLoading(false);
     }
   }, []);
 
   const loadDetail = useCallback(async (name: string) => {
+    const seq = ++detailSeqRef.current;
     try {
-      setDetail(await api.playlistGet(name));
+      const d = await api.playlistGet(name);
+      if (seq !== detailSeqRef.current) return;
+      setDetail(d);
       // 打开详情会做失效条目重匹配自愈；心形对照键跟着刷
       void useFavorites.getState().reload();
       setError(null);
     } catch (e) {
+      if (seq !== detailSeqRef.current) return;
       setDetail(null);
       setError(String(e));
     }
@@ -62,7 +73,10 @@ export function PlaylistsPage() {
 
   useEffect(() => {
     if (selected) void loadDetail(selected);
-    else setDetail(null);
+    else {
+      detailSeqRef.current += 1;
+      setDetail(null);
+    }
   }, [selected, loadDetail]);
 
   // 迷你条/满窗/其它列表改喜爱时，刷新左侧计数；若正开着「喜爱」则同步曲目

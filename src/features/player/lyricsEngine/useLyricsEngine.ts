@@ -148,6 +148,10 @@ export function useLyricsEngine(opts: UseLyricsEngineOpts) {
     if (inertiaRafRef.current) {
       cancelAnimationFrame(inertiaRafRef.current);
       inertiaRafRef.current = 0;
+      // 打断惯性必须收尾，否则后续点一下（不拖）会把 interacting 卡在 inertia
+      if (stRef.current.interacting === "inertia") {
+        endInteraction(stRef.current);
+      }
     }
   }
 
@@ -282,6 +286,8 @@ export function useLyricsEngine(opts: UseLyricsEngineOpts) {
       if (e.button !== 0 || !st.measured) return;
       stopInertia();
       window.clearTimeout(wheelTimerRef.current);
+      // 打断滚轮空闲计时也要收尾，避免 interacting 停在 wheel
+      if (st.interacting === "wheel") endInteraction(st);
       st.drag = {
         startY: e.clientY,
         startOffset: st.offset,
@@ -324,6 +330,8 @@ export function useLyricsEngine(opts: UseLyricsEngineOpts) {
       if (!d) return;
       st.drag = null;
       if (!d.moved) {
+        // 点一下空白/句子：若先前打断了惯性/滚轮，这里兜底收尾
+        if (st.interacting !== "none") endInteraction(st);
         // 点击句子 → 跳转（AM 操作逻辑）
         const lineEl = (e.target as Element | null)?.closest?.("[data-i]");
         if (lineEl && box.contains(lineEl)) {
@@ -364,7 +372,7 @@ export function useLyricsEngine(opts: UseLyricsEngineOpts) {
     const onPointerCancel = () => {
       const d = st.drag;
       st.drag = null;
-      if (d?.moved) endInteraction(st);
+      if (d?.moved || st.interacting !== "none") endInteraction(st);
     };
 
     box.addEventListener("wheel", onWheel, { passive: false });
@@ -393,7 +401,32 @@ export function useLyricsEngine(opts: UseLyricsEngineOpts) {
       raf = requestAnimationFrame(tick);
       const dtS = Math.min((now - lastT) / 1000, MAX_FRAME_S);
       lastT = now;
-      if (dtS <= 0 || !st.measured) return;
+      if (dtS <= 0) return;
+      // 首次布局测量可能因 DOM 未齐失败：主循环里补测并就地建弹簧
+      if (!st.measured) {
+        if (!measure()) return;
+        const lines = optsRef.current.lines;
+        const n = lines.length;
+        if (st.springs.length !== n) {
+          const idx0 = findLrcIndex(lines, optsRef.current.getTimeMs());
+          st.lastIdx = idx0;
+          setActiveIdx(idx0);
+          const focus0 = Math.min(Math.max(0, idx0), n - 1);
+          const base0 = st.boxH * ALIGN_POS - (st.prefix[focus0] + st.heights[focus0] / 2);
+          st.springs = lines.map((_, i) => {
+            const s = new Spring(0, POS_Y_PARAMS);
+            const y0 = base0 + st.prefix[i];
+            s.setPosition(y0);
+            const el = st.els[i];
+            if (el) el.style.transform = `translateY(${y0.toFixed(1)}px)`;
+            return s;
+          });
+          st.scaleSprings = lines.map(() => new Spring(1, SCALE_PARAMS));
+          st.lastY = lines.map((_, i) => st.springs[i].getCurrentPosition());
+          st.lastScale = lines.map(() => 1);
+          st.lastBlur = lines.map(() => Number.NaN);
+        }
+      }
       const box = containerRef.current;
       if (!box) return;
 

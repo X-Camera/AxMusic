@@ -182,14 +182,16 @@ export const api = {
     invoke<TrackRow | null>("get_track_by_path", { path }),
 
   /** 多源并发搜索（歌手/歌名可改，非空才生效）；结果经 lyrics://batch 流式推送，lyrics://done 收尾。
-   *  库外文件只传 path（trackId 传 null/0），事件 trackId 为 0。 */
+   *  `searchId` 由前端生成，事件按它过滤过期批次；库外文件只传 path（trackId 传 null/0）。 */
   lyricsSearch: (
+    searchId: number,
     trackId: number | null,
     artist?: string,
     title?: string,
     path?: string | null,
   ) =>
     invoke<void>("lyrics_search", {
+      searchId,
       trackId: trackId && trackId > 0 ? trackId : null,
       path: path ?? null,
       artist: artist ?? null,

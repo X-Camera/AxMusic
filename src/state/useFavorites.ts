@@ -79,7 +79,13 @@ export const useFavorites = create<FavState>((set, get) => ({
       set({ keys: cur, rev: get().rev + 1 });
       return res.favorited;
     } catch (e) {
-      set({ keys: prev });
+      // 只回退本键：全量 prev 会把并发 toggle 的其它歌曲一并冲掉
+      set((s) => {
+        const next = new Set(s.keys);
+        if (willFav) next.delete(k);
+        else next.add(k);
+        return { keys: next };
+      });
       throw e;
     }
   },

@@ -3,6 +3,7 @@ import { ListPlus, Play, UserRound } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { AlbumCard, ArtistCard, PlaylistAddItem, TrackRow } from "../../lib/types";
+import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
@@ -23,7 +24,7 @@ export function ArtistsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
   const scrollRef = useRef<HTMLDivElement>(null);
   /** 加载序号，丢弃过期的详情响应 */
   const loadSeq = useRef(0);
@@ -107,11 +108,6 @@ export function ArtistsPage() {
   /** 点单曲：只播这一首，并替换当前播放队列 */
   function playTrack(t: TrackRow) {
     void playQueue([trackRowToQueueItem(t)], 0);
-  }
-
-  function showToast(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2000);
   }
 
   const artistInitial = (name: string) => (name || "?").slice(0, 1).toUpperCase();

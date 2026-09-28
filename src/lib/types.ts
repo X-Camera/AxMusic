@@ -515,6 +515,8 @@ export interface LyricsCurrent {
 }
 
 export interface LyricsBatch {
+  /** 前端生成的搜索代次，用于丢弃过期批次（库外 trackId 恒 0 不可作代次） */
+  searchId: number;
   trackId: number;
   source: string;
   items: LyricsCandidate[];

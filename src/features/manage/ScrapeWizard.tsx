@@ -3,6 +3,7 @@ import { Loader2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
+import { nextSearchId } from "../../lib/async";
 import type { ApplyPlan, ScrapeBatch, ScrapeCandidate, TrackRow } from "../../lib/types";
 import "./ScrapeWizard.css";
 
@@ -58,8 +59,10 @@ export function ScrapeWizard({
   const [onlyChanged, setOnlyChanged] = useState(false);
   /** 各源错误（source → 错误信息），不打断其它源 */
   const [sourceErrs, setSourceErrs] = useState<Record<string, string>>({});
-  /** 搜索代次：每次搜索 +1，事件按它过滤过期批次 */
+  /** 当前搜索代次（全局 id，向导重开后不与上一轮撞车） */
   const searchIdRef = useRef(0);
+  /** 候选/远程曲目请求序号：连点只认最后一次 plan */
+  const planSeqRef = useRef(0);
 
   const seedAlbum = useMemo(
     () => ({ album: track.album || "", artist: track.album_artist || track.artist || "" }),
@@ -123,8 +126,9 @@ export function ScrapeWizard({
   }
 
   async function doSearch() {
-    searchIdRef.current += 1;
-    const sid = searchIdRef.current;
+    planSeqRef.current += 1;
+    const sid = nextSearchId();
+    searchIdRef.current = sid;
     setLoading(true);
     setError(null);
     setPlan(null);
@@ -145,6 +149,7 @@ export function ScrapeWizard({
   }
 
   async function pickCandidate(c: ScrapeCandidate) {
+    const seq = ++planSeqRef.current;
     setSelectedCand(c);
     setPlan(null);
     setSavedCount(null);
@@ -152,18 +157,21 @@ export function ScrapeWizard({
     setError(null);
     try {
       const p = await api.scrapeBuildPlan(c.source, c.release_id, [track.id], mode);
+      if (seq !== planSeqRef.current) return;
       setPlan(p);
     } catch (e) {
+      if (seq !== planSeqRef.current) return;
       setPlan(null);
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (seq === planSeqRef.current) setLoading(false);
     }
   }
 
   /** 自动匹配失败/匹配不对时，从专辑曲目列表手动指定本地曲目对应的一首。 */
   async function pickRemoteTrack(trackNo: number) {
     if (!selectedCand) return;
+    const seq = ++planSeqRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -174,11 +182,13 @@ export function ScrapeWizard({
         mode,
         trackNo,
       );
+      if (seq !== planSeqRef.current) return;
       setPlan(p);
     } catch (e) {
+      if (seq !== planSeqRef.current) return;
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (seq === planSeqRef.current) setLoading(false);
     }
   }
 

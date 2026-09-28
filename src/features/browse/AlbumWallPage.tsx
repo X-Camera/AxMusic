@@ -3,6 +3,7 @@ import { Disc3, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { AlbumCard, PlaylistAddItem, TrackRow } from "../../lib/types";
+import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
@@ -22,7 +23,7 @@ export function AlbumWallPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
   const scrollRef = useRef<HTMLDivElement>(null);
   /** 加载序号，丢弃过期的 getAlbumTracks 响应 */
   const loadSeq = useRef(0);
@@ -91,11 +92,6 @@ export function AlbumWallPage() {
   /** 点单曲：只播这一首，并替换当前播放队列 */
   function playTrack(t: TrackRow) {
     void playQueue([trackRowToQueueItem(t)], 0);
-  }
-
-  function showToast(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2000);
   }
 
   const albumInitial = (a: AlbumCard) =>

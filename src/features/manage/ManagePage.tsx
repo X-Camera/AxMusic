@@ -42,6 +42,8 @@ export function ManagePage() {
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [archiveMap, setArchiveMap] = useState<Record<number, ArchiveStatus> | null>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  /** 曲目列表请求代次：扫描/筛选/写回并发刷新时丢弃过期响应 */
+  const tracksSeqRef = useRef(0);
 
   const reloadRoot = useCallback(async () => {
     try {
@@ -52,6 +54,7 @@ export function ManagePage() {
   }, []);
 
   const reloadTracks = useCallback(async () => {
+    const seq = ++tracksSeqRef.current;
     try {
       // 统计与列表同刷：扫描/写回/刮削/补歌词后都会走到这里
       const [list, st] = await Promise.all([
@@ -62,6 +65,7 @@ export function ManagePage() {
         }),
         api.getLibraryStats(),
       ]);
+      if (seq !== tracksSeqRef.current) return;
       setTracks(list);
       setStats(st);
       setError(null);
@@ -69,11 +73,12 @@ export function ManagePage() {
       const linkedIds = list.filter((t) => t.catalog_id != null).map((t) => t.id);
       if (linkedIds.length > 0) {
         const map = await api.archiveCheckBatch(linkedIds).catch(() => null);
-        setArchiveMap(map);
+        if (seq === tracksSeqRef.current) setArchiveMap(map);
       } else {
         setArchiveMap(null);
       }
     } catch (e) {
+      if (seq !== tracksSeqRef.current) return;
       // 失败保留旧列表（避免瞬时故障把表格清空），错误条单独提示
       setError(String(e));
     }

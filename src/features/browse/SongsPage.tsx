@@ -3,6 +3,7 @@ import { LayoutGrid, List, ListEnd, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { PlaylistAddItem, TrackRow } from "../../lib/types";
+import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
@@ -35,10 +36,12 @@ export function SongsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridCols, setGridCols] = useState(5);
+  /** 列表请求代次：连点刷新丢弃过期响应 */
+  const reloadSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +54,7 @@ export function SongsPage() {
   }, []);
 
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -58,13 +62,15 @@ export function SongsPage() {
         api.getTracks({ sort: "title", limit: SONGS_LIMIT }),
         api.getTrackCount(),
       ]);
+      if (seq !== reloadSeqRef.current) return;
       setTracks(list);
       setTotalCount(total);
     } catch (e) {
+      if (seq !== reloadSeqRef.current) return;
       // 保留旧列表，错误单独提示；空态与故障态分开
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, []);
 
@@ -101,11 +107,6 @@ export function SongsPage() {
   function switchView(mode: ViewMode) {
     setViewMode(mode);
     void api.updateSettings({ songs_view: mode }).catch(() => {});
-  }
-
-  function showToast(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2000);
   }
 
   /** 卡片网格：量出列数，行高 = 封面(正方形≈列宽) + 文案，按「行」虚拟化 */

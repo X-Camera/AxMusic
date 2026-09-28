@@ -3,6 +3,7 @@ import { Download, FileInput, FileOutput, Loader2, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, formatTime } from "../../lib/api";
+import { nextSearchId } from "../../lib/async";
 import type {
   LyricsBatch,
   LyricsCandidate,
@@ -62,6 +63,10 @@ export function LyricsPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const aliveRef = useRef(true);
+  /** 当前搜索代次（全局 id，换曲重挂后不与上一轮撞车） */
+  const searchIdRef = useRef(0);
+  /** 预览请求序号：连点候选只认最后一次 */
+  const pickSeqRef = useRef(0);
 
   const refreshCurrent = useCallback(async (t: LyricsTarget) => {
     try {
@@ -88,7 +93,7 @@ export function LyricsPanel({
 
     (async () => {
       unBatch = await listen<LyricsBatch>("lyrics://batch", (e) => {
-        if (cancelled || e.payload.trackId !== track.id) return;
+        if (cancelled || e.payload.searchId !== searchIdRef.current) return;
         if (e.payload.error) {
           setSourceDone((m) => ({ ...m, [e.payload.source]: "err" }));
           return;
@@ -98,8 +103,8 @@ export function LyricsPanel({
           setCandidates((prev) => [...prev, ...e.payload.items]);
         }
       });
-      unDone = await listen<{ trackId: number }>("lyrics://done", (e) => {
-        if (cancelled || e.payload.trackId !== track.id) return;
+      unDone = await listen<{ searchId: number; trackId: number }>("lyrics://done", (e) => {
+        if (cancelled || e.payload.searchId !== searchIdRef.current) return;
         setSourceDone((m) => {
           const next = { ...m };
           for (const s of ALL_SOURCES) if (next[s] === "run") next[s] = "ok";
@@ -126,34 +131,43 @@ export function LyricsPanel({
       setError("歌手和歌名至少填一个");
       return;
     }
+    const sid = nextSearchId();
+    searchIdRef.current = sid;
+    // 作废在途预览：否则旧候选的 lyricsFetch 可能在新搜索开始后才落地
+    pickSeqRef.current += 1;
     setError(null);
     setMessage(null);
     setSearched(true);
     setCandidates([]);
     setCandId(null);
     setPreview(null);
+    setPreviewLoading(false);
     setSourceDone(Object.fromEntries(ALL_SOURCES.map((s) => [s, "run"])));
     try {
       const { trackId, path } = lyricsRef(track);
-      await api.lyricsSearch(trackId, artist, title, path);
+      await api.lyricsSearch(sid, trackId, artist, title, path);
     } catch (e) {
+      if (sid !== searchIdRef.current) return;
       setError(String(e));
       setSourceDone({});
     }
   }
 
   async function pickCandidate(c: LyricsCandidate) {
+    const seq = ++pickSeqRef.current;
     setCandId(c.id);
+    // 换候选先清旧预览，避免上一首歌词短暂顶着新高亮
+    setPreview(null);
     setPreviewLoading(true);
     setError(null);
     try {
       const content = await api.lyricsFetch(c.id);
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || seq !== pickSeqRef.current) return;
       setPreview(content);
     } catch (e) {
-      if (aliveRef.current) setError(String(e));
+      if (aliveRef.current && seq === pickSeqRef.current) setError(String(e));
     } finally {
-      if (aliveRef.current) setPreviewLoading(false);
+      if (aliveRef.current && seq === pickSeqRef.current) setPreviewLoading(false);
     }
   }
 

@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { FolderOpen, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { COLOR_SCHEMES, THEME_MODES, applyColorScheme, applyThemeMode } from "../../lib/colorScheme";
@@ -334,17 +334,22 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [shellMenu, setShellMenu] = useState<ShellMenuStatus | null>(null);
   const [shellBusy, setShellBusy] = useState(false);
+  /** 设置装载代次：启动 getSettings 与 settings://changed 竞态时以新事件为准 */
+  const settingsGenRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    const gen = ++settingsGenRef.current;
     void Promise.all([api.getSettings(), api.getPaths(), api.getAppInfo()])
       .then(([s, p, a]) => {
-        if (cancelled) return;
+        if (cancelled || gen !== settingsGenRef.current) return;
         setSettings(s);
         setPaths(p);
         setAppInfo(a);
       })
-      .catch((e) => !cancelled && setError(String(e)));
+      .catch((e) => {
+        if (!cancelled && gen === settingsGenRef.current) setError(String(e));
+      });
     void api
       .shellMenuStatus()
       .then((s) => {
@@ -360,18 +365,26 @@ export function SettingsPage() {
 
   // 顶栏主题开关等外部改设置时，保持本页 Segmented 同步
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<AppSettings>("settings://changed", (e) => setSettings(e.payload)).then(
-      (f) => {
-        unlisten = f;
-      },
-    );
-    return () => unlisten?.();
+    void listen<AppSettings>("settings://changed", (e) => {
+      settingsGenRef.current += 1;
+      if (!cancelled) setSettings(e.payload);
+    }).then((f) => {
+      if (cancelled) f();
+      else unlisten = f;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   const patch = useCallback(async (p: SettingsPatch) => {
     try {
       const next = await api.updateSettings(p);
+      // 作废启动 getSettings：慢响应不得把刚改完的设置盖回去
+      settingsGenRef.current += 1;
       setSettings(next);
       setError(null);
     } catch (e) {

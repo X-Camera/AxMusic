@@ -21,6 +21,7 @@ import {
   formatTime,
 } from "../../lib/api";
 import type { FolderDir, FolderFile, PlaylistAddItem } from "../../lib/types";
+import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { VirtualList, LIST_ROW_HEIGHT } from "../../components/VirtualList";
@@ -84,7 +85,7 @@ export function FoldersPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
   const lastClickIdx = useRef<number | null>(null);
   /** 启动默认根只拉一次 */
@@ -448,11 +449,6 @@ export function FoldersPage() {
       return;
     }
     await openRoot(listingParent);
-  }
-
-  function showToast(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2000);
   }
 
   /** 树宽拖拽（记 localStorage，目录深时可拉宽） */

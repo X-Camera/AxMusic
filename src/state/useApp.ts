@@ -81,8 +81,9 @@ function queueItemToTrack(item: QueueItem): TrackInfo {
     path: item.path,
     title: item.title,
     duration_ms: item.duration_ms,
+    // 0 = 未知（QueueItem 不携带音频参数），UI 不得渲染成 0 kHz / 2 声道
     sample_rate: 0,
-    channels: 2,
+    channels: 0,
   };
 }
 
@@ -206,12 +207,19 @@ export const useApp = create<AppState>((set, get) => ({
   },
   seek: async (ms) => {
     const rev = beginWrite();
-    // 乐观对准目标进度；seek 是异步的，返回值也可能仍偏旧，以本次目标为准
+    // 乐观对准目标进度；失败/越界以服务端为准回退
     const prev = get().player;
+    const prevPos = prev?.position_ms ?? 0;
     if (prev) set({ player: { ...prev, position_ms: ms } });
     try {
       const p = await api.playerSeek(ms);
-      if (rev === playerRev) set({ player: { ...p, position_ms: ms } });
+      // 以服务端快照为准（越界会被钳制），不强行回显目标
+      if (rev === playerRev) set({ player: p });
+    } catch {
+      // 只回退进度字段，避免冲掉并发控制的其它结果
+      if (rev === playerRev) {
+        set((s) => (s.player ? { player: { ...s.player, position_ms: prevPos } } : s));
+      }
     } finally {
       endWrite();
     }

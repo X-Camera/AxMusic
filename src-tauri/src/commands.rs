@@ -1608,12 +1608,14 @@ pub fn get_track_by_path(
 
 /// Fan out a lyrics search to ALL sources concurrently.
 /// Returns immediately; each source pushes its batch via `lyrics://batch`
-/// ({trackId, source, items}) and a final `lyrics://done` ({trackId})
-/// fires when all sources have reported. 库外文件 trackId 恒为 0。
+/// ({searchId, trackId, source, items}) and a final `lyrics://done` ({searchId, trackId})
+/// fires when all sources have reported. `search_id` 由前端生成用于过滤过期批次
+/// （库外文件 trackId 恒为 0，不能靠它区分窗口/搜索）。库外文件 trackId 恒为 0。
 #[tauri::command]
 pub async fn lyrics_search(
     app: AppHandle,
     state: State<'_, AppState>,
+    search_id: i64,
     track_id: Option<i64>,
     path: Option<String>,
     artist: Option<String>,
@@ -1688,6 +1690,7 @@ pub async fn lyrics_search(
                         let _ = app.emit(
                             "lyrics://batch",
                             serde_json::json!({
+                                "searchId": search_id,
                                 "trackId": track_id,
                                 "source": source,
                                 "items": items,
@@ -1698,6 +1701,7 @@ pub async fn lyrics_search(
                         let _ = app.emit(
                             "lyrics://batch",
                             serde_json::json!({
+                                "searchId": search_id,
                                 "trackId": track_id,
                                 "source": source,
                                 "items": [],
@@ -1708,7 +1712,10 @@ pub async fn lyrics_search(
                 }
             }
         }
-        let _ = app.emit("lyrics://done", serde_json::json!({ "trackId": track_id }));
+        let _ = app.emit(
+            "lyrics://done",
+            serde_json::json!({ "searchId": search_id, "trackId": track_id }),
+        );
     });
 
     Ok(())
