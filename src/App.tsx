@@ -10,6 +10,7 @@ import { AlbumWallPage } from "./features/browse/AlbumWallPage";
 import { ArtistsPage } from "./features/browse/ArtistsPage";
 import { FoldersPage } from "./features/browse/FoldersPage";
 import { SongsPage } from "./features/browse/SongsPage";
+import { HistoryPage } from "./features/history/HistoryPage";
 import { ManagePage } from "./features/manage/ManagePage";
 import { LyricsWindow } from "./features/manage/LyricsWindow";
 import { NowPlayingPage } from "./features/player/NowPlayingPage";
@@ -65,6 +66,7 @@ export default function App() {
         {route === "artists" && <ArtistsPage />}
         {route === "folders" && <FoldersPage />}
         {route === "playlists" && <PlaylistsPage />}
+        {route === "history" && <HistoryPage />}
         {route === "settings" && <SettingsPage />}
         {/* 常驻挂载：切页不卸载歌词/队列，避免重载飞入 */}
         {sideOpen && <RightDock />}

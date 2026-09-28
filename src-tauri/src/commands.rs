@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::library::{AlbumCard, ArtistCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
+use crate::listen_history::{
+    DailyListen, EndReason, ListenDb, ListenEvent, ListenSummary, ListenTracker, TopListenItem,
+};
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
 use crate::playlists::{
     FavoriteToggleResult, PlaylistAddItem, PlaylistDetail, PlaylistSummary,
@@ -32,6 +35,10 @@ pub struct AppState {
     pub scanning: Mutex<bool>,
     pub settings: Mutex<AppSettings>,
     pub volume_persist: Mutex<VolumePersist>,
+    /// 听歌历史库（`data_root/listen_history.db`，与库目录隔离）
+    pub listen: Mutex<ListenDb>,
+    /// 听歌计时（切歌/退出时落库）
+    pub listen_tracker: Mutex<ListenTracker>,
 }
 
 /// 记忆播放列表（队列/当前曲/进度），供退出与变更时落盘。
@@ -41,11 +48,65 @@ pub fn persist_play_session(state: &AppState) {
     }
 }
 
-/// 广播播放器快照并记忆播放列表。
+/// 退出时把未达切歌点的当前听歌落库。
+pub fn flush_listen_on_exit(state: &AppState) {
+    let Ok(mut tracker) = state.listen_tracker.lock() else {
+        return;
+    };
+    let listen_guard = state.listen.lock().ok();
+    let listen_ref = listen_guard.as_deref();
+    tracker.finish_current(EndReason::Exit, listen_ref);
+}
+
+/// 观察播放器快照：累计听歌时长，切歌时写事件。
+/// 元数据在持 listen 锁之外解析（read_track 可能做慢 I/O）。
+fn observe_listen(state: &AppState, snap: &PlayerSnapshot) {
+    let track = snap.track.as_ref();
+    // 是否换曲（只锁 tracker 看一眼路径）
+    let need_meta = {
+        let Ok(tracker) = state.listen_tracker.lock() else {
+            return;
+        };
+        match (tracker.pending_path(), track.map(|t| t.path.as_str())) {
+            (Some(cur), Some(next)) => cur != next,
+            (None, Some(_)) => true,
+            _ => false,
+        }
+    };
+    let meta = if need_meta {
+        let lib_guard = state.db.lock().ok();
+        let lib_ref = lib_guard.as_ref().and_then(|g| g.as_ref());
+        track.map(|t| crate::listen_history::resolve_meta(&t.path, &t.title, lib_ref))
+    } else {
+        None
+    };
+
+    let Ok(mut tracker) = state.listen_tracker.lock() else {
+        return;
+    };
+    let listen_guard = state.listen.lock().ok();
+    let listen_ref = listen_guard.as_deref();
+    tracker.observe(snap, listen_ref, meta);
+}
+
+/// 手动切歌前收口当前曲（同 path 重播、repeat-one 也走这里）。
+fn finish_listen(state: &AppState, reason: EndReason) {
+    let Ok(mut tracker) = state.listen_tracker.lock() else {
+        return;
+    };
+    let listen_guard = state.listen.lock().ok();
+    let listen_ref = listen_guard.as_deref();
+    tracker.finish_current(reason, listen_ref);
+}
+
+/// 广播播放器快照、记忆播放列表，并推进听歌计时。
 fn emit_player_state(app: &AppHandle, snap: &PlayerSnapshot) {
     let _ = app.emit("player://state", snap);
     play_session::save_from_snapshot(snap);
     crate::play_ui::sync_play_ui(app, snap.status == crate::player::PlayStatus::Playing);
+    if let Some(state) = app.try_state::<AppState>() {
+        observe_listen(&state, snap);
+    }
 }
 
 /// 托盘 / 任务栏缩略图共用的播放控制入口：与 IPC player_toggle / next / prev 同源。
@@ -996,10 +1057,13 @@ pub fn get_player_state(
     // auto-advance tick
     let advanced = player.tick();
     let snap = player.snapshot();
-    // 自动切歌时更新记忆（进度不在此写，避免轮询狂写盘）
+    drop(player);
+    // 自然播完：先按 natural 收口（repeat-one 同 path 也要拆成两次听歌）
     if advanced.is_some() {
+        finish_listen(&state, EndReason::Natural);
         play_session::save_from_snapshot(&snap);
     }
+    observe_listen(&state, &snap);
     // 播完停住等场景托盘/任务栏文案跟上（内部状态没变时是无操作）
     crate::play_ui::sync_play_ui(&app, snap.status == crate::player::PlayStatus::Playing);
     Ok(snap)
@@ -1020,6 +1084,7 @@ pub fn play_file(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<PlayerSnapshot, String> {
+    finish_listen(&state, EndReason::Skip);
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     let info = player
         .play_path(Path::new(&path))
@@ -1028,6 +1093,7 @@ pub fn play_file(
     // 以本次点击为准（worker 打开解码前 snapshot 可能仍指向上一首）
     snap.track = Some(info);
     snap.status = crate::player::PlayStatus::Playing;
+    drop(player);
     emit_player_state(&app, &snap);
     Ok(snap)
 }
@@ -1039,6 +1105,7 @@ pub fn play_queue(
     items: Vec<QueueItem>,
     start: usize,
 ) -> Result<PlayerSnapshot, String> {
+    finish_listen(&state, EndReason::Skip);
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     let info = player
         .play_queue(items, start)
@@ -1047,6 +1114,7 @@ pub fn play_queue(
     // 以本次点击为准，避免界面显示新歌、出声还是上一首
     snap.track = Some(info);
     snap.status = crate::player::PlayStatus::Playing;
+    drop(player);
     emit_player_state(&app, &snap);
     Ok(snap)
 }
@@ -1109,18 +1177,22 @@ pub fn player_toggle(app: AppHandle, state: State<'_, AppState>) -> Result<Playe
 
 #[tauri::command]
 pub fn player_next(app: AppHandle, state: State<'_, AppState>) -> Result<PlayerSnapshot, String> {
+    finish_listen(&state, EndReason::Skip);
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     let _ = player.next().map_err(|e| e.to_string())?;
     let snap = player.snapshot();
+    drop(player);
     emit_player_state(&app, &snap);
     Ok(snap)
 }
 
 #[tauri::command]
 pub fn player_prev(app: AppHandle, state: State<'_, AppState>) -> Result<PlayerSnapshot, String> {
+    finish_listen(&state, EndReason::Skip);
     let mut player = state.player.lock().map_err(|e| e.to_string())?;
     let _ = player.prev().map_err(|e| e.to_string())?;
     let snap = player.snapshot();
+    drop(player);
     emit_player_state(&app, &snap);
     Ok(snap)
 }
@@ -2069,8 +2141,15 @@ pub fn library_import_run(
         // 重 IO + 大量写库：独立连接，不长期持有 state.db 锁
         let db_path = crate::paths::library_db_path(Path::new(&current));
         let db = LibraryDb::open(&db_path).map_err(|e| format!("{e:#}"))?;
-        crate::import::run(Path::new(&path), Path::new(&current), &db, &selection)
-            .map_err(|e| format!("{e:#}"))
+        let listen_db = ListenDb::open_default().map_err(|e| format!("{e:#}"))?;
+        crate::import::run(
+            Path::new(&path),
+            Path::new(&current),
+            &db,
+            &listen_db,
+            &selection,
+        )
+        .map_err(|e| format!("{e:#}"))
     })();
     {
         let mut flag = state.scanning.lock().map_err(|e| e.to_string())?;
@@ -2998,6 +3077,63 @@ pub fn favorite_toggle(
 ) -> Result<FavoriteToggleResult, String> {
     let root = require_library_root(&state)?;
     playlists::favorite_toggle(Path::new(&root), &item)
+}
+
+// ── 听歌历史 ────────────────────────────────────────────────────────
+
+/// 听歌总览（`since` Unix 毫秒下界，缺省 = 全部）。
+#[tauri::command]
+pub fn listen_summary(
+    state: State<'_, AppState>,
+    since: Option<i64>,
+) -> Result<ListenSummary, String> {
+    let db = state.listen.lock().map_err(|e| e.to_string())?;
+    db.summary(since).map_err(|e| e.to_string())
+}
+
+/// 常听榜：kind = track | album | artist
+#[tauri::command]
+pub fn listen_top(
+    state: State<'_, AppState>,
+    kind: String,
+    limit: Option<i64>,
+    since: Option<i64>,
+) -> Result<Vec<TopListenItem>, String> {
+    let db = state.listen.lock().map_err(|e| e.to_string())?;
+    db.top(&kind, limit.unwrap_or(20).clamp(1, 200), since)
+        .map_err(|e| e.to_string())
+}
+
+/// 最近播放。
+#[tauri::command]
+pub fn listen_recent(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+    since: Option<i64>,
+) -> Result<Vec<ListenEvent>, String> {
+    let db = state.listen.lock().map_err(|e| e.to_string())?;
+    db.recent(limit.unwrap_or(50).clamp(1, 500), since)
+        .map_err(|e| e.to_string())
+}
+
+/// 按日听歌量（本地日切）。
+#[tauri::command]
+pub fn listen_daily(
+    state: State<'_, AppState>,
+    since: Option<i64>,
+) -> Result<Vec<DailyListen>, String> {
+    let db = state.listen.lock().map_err(|e| e.to_string())?;
+    db.daily(since).map_err(|e| e.to_string())
+}
+
+/// 时段分布（0–23，本地小时；与筛选同一时间范围）。
+#[tauri::command]
+pub fn listen_hour_hist(
+    state: State<'_, AppState>,
+    since: Option<i64>,
+) -> Result<Vec<i64>, String> {
+    let db = state.listen.lock().map_err(|e| e.to_string())?;
+    db.hour_hist(since).map_err(|e| e.to_string())
 }
 
 /// 新建歌单并一次写入条目（items 可空 = 空歌单）。

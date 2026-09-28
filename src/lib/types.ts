@@ -375,8 +375,58 @@ export type RouteId =
   | "artists"
   | "folders"
   | "playlists"
+  | "history"
   | "manage"
   | "settings";
+
+/** 一次有效听歌事件（data_root/listen_history.db） */
+export interface ListenEvent {
+  id: number;
+  /** Unix 毫秒 */
+  started_at: number;
+  ended_at: number;
+  play_ms: number;
+  track_duration_ms: number;
+  path: string;
+  title: string;
+  artist: string;
+  album: string;
+  album_artist: string;
+  year: string;
+  track_no: number | null;
+  mb_recording_mbid: string;
+  catalog_id: number | null;
+  /** 通常 "player"；导入记录保留源侧取值 */
+  source: string;
+  /** natural | skip | exit | interrupted（进行中/被杀占位） */
+  end_reason: string;
+}
+
+export interface ListenSummary {
+  total_plays: number;
+  total_ms: number;
+  unique_tracks: number;
+  unique_artists: number;
+  unique_albums: number;
+}
+
+export interface TopListenItem {
+  /** 聚合键（mbid 或 title|artist / artist / album_artist|album 的小写归一），非稳定 id */
+  key: string;
+  /** 组内 MAX 代表值，仅展示；kind=album 时 title/artist 不可靠 */
+  title: string;
+  artist: string;
+  album: string;
+  plays: number;
+  total_ms: number;
+}
+
+export interface DailyListen {
+  /** YYYY-MM-DD */
+  date: string;
+  plays: number;
+  total_ms: number;
+}
 
 export interface ScrapeCandidate {
   id: string;
@@ -663,6 +713,10 @@ export interface ImportPreview {
   covers: ImportItemStats;
   /** 歌单（playlists/*.m3u8） */
   playlists: ImportItemStats;
+  /** 听歌记录（源侧 listen_history.db） */
+  listen: ImportItemStats;
+  /** 源侧听歌库路径；未找到为 null */
+  listen_path: string | null;
 }
 
 /** 用户勾选的导入范围（默认全不选） */
@@ -672,6 +726,7 @@ export interface ImportSelection {
   lyrics: boolean;
   covers: boolean;
   playlists: boolean;
+  listen: boolean;
 }
 
 /** 导入执行结果 */
@@ -687,6 +742,8 @@ export interface ImportResult {
   covers_skipped: number;
   playlists_added: number;
   playlists_skipped: number;
+  listen_added: number;
+  listen_skipped: number;
   /** 导入后 auto_match 关联上的曲目数 */
   tracks_linked: number;
   errors: string[];

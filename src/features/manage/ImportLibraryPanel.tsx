@@ -5,6 +5,7 @@ import {
   Database,
   Disc3,
   FileText,
+  History,
   Image,
   ListMusic,
   Loader2,
@@ -68,6 +69,13 @@ const CONTENT_METAS: ContentMeta[] = [
     icon: ListMusic,
     unit: "个",
   },
+  {
+    key: "listen",
+    title: "听歌记录",
+    hint: "合并源侧 listen_history.db（在库目录附近探测）。按时间+文件去重，不覆盖现有记录。",
+    icon: History,
+    unit: "条",
+  },
 ];
 
 function fmt(n: number): string {
@@ -118,6 +126,7 @@ export function ImportLibraryPanel({
     lyrics: false,
     covers: false,
     playlists: false,
+    listen: false,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -295,6 +304,7 @@ export function ImportResultBanner({
     { label: "歌词", added: result.lyrics_added, skipped: result.lyrics_skipped },
     { label: "封面", added: result.covers_added, skipped: result.covers_skipped },
     { label: "歌单", added: result.playlists_added, skipped: result.playlists_skipped },
+    { label: "听歌", added: result.listen_added, skipped: result.listen_skipped },
   ];
   const parts = rows
     .filter((r) => r.added || r.skipped || r.failed)

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Disc3,
   FolderOpen,
+  History,
   ListMusic,
   ListVideo,
   Music2,
@@ -21,6 +22,7 @@ const PLAY_ITEMS: { id: RouteId; label: string; icon: typeof Disc3 }[] = [
   { id: "artists", label: "歌手", icon: UserRound },
   { id: "folders", label: "目录", icon: FolderOpen },
   { id: "playlists", label: "歌单", icon: ListMusic },
+  { id: "history", label: "统计", icon: History },
 ];
 
 export function Sidebar() {

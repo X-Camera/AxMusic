@@ -4,6 +4,7 @@ mod commands;
 mod folder_meta;
 mod import;
 mod library;
+mod listen_history;
 mod lyrics;
 mod paths;
 mod archive;
@@ -112,6 +113,14 @@ pub fn run() {
                 }
             }
 
+            let listen_db = match listen_history::ListenDb::open_default() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("[AxMusic] 听歌历史库打开失败（不影响播放）: {e}");
+                    // 听歌统计失败不拦启动；用内存空库占位
+                    listen_history::ListenDb::open_in_memory()?
+                }
+            };
             let state = commands::AppState {
                 db: Mutex::new(db),
                 player: Mutex::new(player),
@@ -122,6 +131,8 @@ pub fn run() {
                     timer_running: false,
                 }),
                 settings: Mutex::new(app_settings),
+                listen: Mutex::new(listen_db),
+                listen_tracker: Mutex::new(listen_history::ListenTracker::new()),
             };
             app.manage(state);
             tray::init(app)?;
@@ -245,6 +256,11 @@ pub fn run() {
             commands::playlist_clean_missing,
             commands::favorite_paths,
             commands::favorite_toggle,
+            commands::listen_summary,
+            commands::listen_top,
+            commands::listen_recent,
+            commands::listen_daily,
+            commands::listen_hour_hist,
             commands::shell_menu_status,
             commands::shell_menu_register,
             commands::shell_menu_unregister,
@@ -255,6 +271,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app.try_state::<commands::AppState>() {
                     commands::persist_play_session(&state);
+                    commands::flush_listen_on_exit(&state);
                 }
             }
         });

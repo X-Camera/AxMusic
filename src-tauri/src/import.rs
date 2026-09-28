@@ -1,9 +1,10 @@
-//! 导入其他 AxMusic 库：识别源库 → 对比 → 选择性合并 catalog / 歌曲 / 歌词 / 封面 / 歌单。
+//! 导入其他 AxMusic 库：识别源库 → 对比 → 选择性合并 catalog / 歌曲 / 歌词 / 封面 / 歌单 / 听歌史。
 //!
 //! 铁律对齐主库：
 //! - 刮削结果只进 catalog（不改音频文件）
 //! - 封面落 `<库>/covers/`，歌词落 `<库>/lrc/`，歌单落 `<库>/playlists/`
 //! - 歌曲复制保持源库相对路径，保证歌单相对路径可继续解析
+//! - 听歌史在 `data_root/listen_history.db`（不在库根），导入时在源路径附近探测
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -13,12 +14,13 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::library::{CatalogRow, LibraryDb, TrackRow};
+use crate::listen_history::{ListenDb, ListenEvent};
 use crate::paths;
 
 // ── IPC 类型 ────────────────────────────────────────────────────────
 
 /// 一类可导入内容的对比数字。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportItemStats {
     /// 源库条目总数
     pub source_total: i64,
@@ -56,6 +58,12 @@ pub struct ImportPreview {
     pub covers: ImportItemStats,
     /// 歌单（playlists/*.m3u8）
     pub playlists: ImportItemStats,
+    /// 听歌记录（源侧 listen_history.db；找不到则 source_total=0）
+    #[serde(default)]
+    pub listen: ImportItemStats,
+    /// 源侧听歌库路径（展示用；None = 未找到）
+    #[serde(default)]
+    pub listen_path: Option<String>,
 }
 
 /// 用户勾选的导入范围（默认全不选）。
@@ -71,6 +79,8 @@ pub struct ImportSelection {
     pub covers: bool,
     #[serde(default)]
     pub playlists: bool,
+    #[serde(default)]
+    pub listen: bool,
 }
 
 /// 导入执行结果（计数 + 非致命错误）。
@@ -87,6 +97,8 @@ pub struct ImportResult {
     pub covers_skipped: i64,
     pub playlists_added: i64,
     pub playlists_skipped: i64,
+    pub listen_added: i64,
+    pub listen_skipped: i64,
     /// 导入后 auto_match_unlinked 关联上的曲目数
     pub tracks_linked: i64,
     pub errors: Vec<String>,
@@ -119,6 +131,26 @@ fn table_exists(conn: &Connection, table: &str) -> bool {
     .optional()
     .map(|r| r.is_some())
     .unwrap_or(false)
+}
+
+/// 听歌史不在库根，在 `data_root/`。源侧按常见布局探测：
+/// 库根旁 `data/`、库根自身、父目录 `data/`（绿色版 exe 与库目录同级时）。
+fn find_source_listen_db(source_root: &Path) -> Option<PathBuf> {
+    let mut candidates = vec![
+        source_root.join("listen_history.db"),
+        source_root.join("data").join("listen_history.db"),
+    ];
+    if let Some(parent) = source_root.parent() {
+        candidates.push(parent.join("data").join("listen_history.db"));
+        candidates.push(parent.join("listen_history.db"));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+fn load_source_listen_events(path: &Path) -> Result<Vec<ListenEvent>> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("打开听歌库失败: {}", path.display()))?;
+    ListenDb::load_all_from(&conn)
 }
 
 /// 去掉 Windows `\\?\` 前缀、统一分隔符、去尾部 `\`（不改大小写）。
@@ -684,6 +716,23 @@ pub fn preview(source_root: &Path, current_root: &Path, db: &LibraryDb) -> Resul
         }
     }
 
+    // 听歌史（data_root 独立库；在源路径附近探测）
+    let mut listen = ImportItemStats::empty();
+    let mut listen_path = None;
+    if let Some(lp) = find_source_listen_db(source_root) {
+        let events = load_source_listen_events(&lp)?;
+        listen.source_total = events.len() as i64;
+        let cur = ListenDb::open_default()?;
+        for e in &events {
+            if cur.has_event(e.started_at, &e.path, e.play_ms).unwrap_or(false) {
+                listen.duplicate += 1;
+            } else {
+                listen.new += 1;
+            }
+        }
+        listen_path = Some(lp.to_string_lossy().to_string());
+    }
+
     Ok(ImportPreview {
         source_root: source_str,
         current_root: current_str,
@@ -692,6 +741,8 @@ pub fn preview(source_root: &Path, current_root: &Path, db: &LibraryDb) -> Resul
         lyrics,
         covers,
         playlists,
+        listen,
+        listen_path,
     })
 }
 
@@ -790,6 +841,7 @@ pub fn run(
     source_root: &Path,
     current_root: &Path,
     db: &LibraryDb,
+    listen_db: &ListenDb,
     selection: &ImportSelection,
 ) -> Result<ImportResult> {
     let mut result = ImportResult::default();
@@ -797,7 +849,8 @@ pub fn run(
         || selection.songs
         || selection.lyrics
         || selection.covers
-        || selection.playlists)
+        || selection.playlists
+        || selection.listen)
     {
         return Ok(result);
     }
@@ -806,6 +859,32 @@ pub fn run(
     let current_str = current_root.to_string_lossy().to_string();
     if same_path(&source_str, &current_str) {
         bail!("不能导入当前库自身");
+    }
+
+    // 0) 听歌史（不依赖源库 axmusic.db；找不到就记 0）
+    if selection.listen {
+        if let Some(lp) = find_source_listen_db(source_root) {
+            match load_source_listen_events(&lp) {
+                Ok(events) => match listen_db.merge_events(&events) {
+                    Ok((added, skipped)) => {
+                        result.listen_added = added;
+                        result.listen_skipped = skipped;
+                    }
+                    Err(e) => result.errors.push(format!("听歌记录合并失败: {e}")),
+                },
+                Err(e) => result.errors.push(format!("读取听歌库失败: {e}")),
+            }
+        }
+    }
+
+    // 其余项都要源库 axmusic.db
+    if !(selection.catalog
+        || selection.songs
+        || selection.lyrics
+        || selection.covers
+        || selection.playlists)
+    {
+        return Ok(result);
     }
 
     let src_conn = open_source_db(source_root)?;

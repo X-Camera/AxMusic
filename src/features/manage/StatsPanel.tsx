@@ -176,7 +176,7 @@ export function StatsPanel({
             <div className="stats-block-title">库迁移</div>
             {importError && <div className="error-line">{importError}</div>}
             <div className="tertiary stats-note">
-              从另一个 AxMusic 库导入刮削数据库、歌曲、歌词、封面、歌单
+              从另一个 AxMusic 库导入刮削数据库、歌曲、歌词、封面、歌单、听歌记录
             </div>
             <button
               className="btn"

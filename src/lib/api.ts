@@ -280,6 +280,25 @@ export const api = {
   favoritePaths: () => invoke<string[]>("favorite_paths"),
   favoriteToggle: (item: PlaylistAddItem) =>
     invoke<import("./types").FavoriteToggleResult>("favorite_toggle", { item }),
+  // ── 听歌历史（since = Unix 毫秒下界，缺省全部；limit 缺省由后端裁决）──
+  listenSummary: (since?: number) =>
+    invoke<import("./types").ListenSummary>("listen_summary", { since: since ?? null }),
+  listenTop: (kind: "track" | "album" | "artist", limit?: number, since?: number) =>
+    invoke<import("./types").TopListenItem[]>("listen_top", {
+      kind,
+      limit: limit ?? null,
+      since: since ?? null,
+    }),
+  listenRecent: (limit?: number, since?: number) =>
+    invoke<import("./types").ListenEvent[]>("listen_recent", {
+      limit: limit ?? null,
+      since: since ?? null,
+    }),
+  /** 按日听歌量（年度报告趋势预留，UI 未接线） */
+  listenDaily: (since?: number) =>
+    invoke<import("./types").DailyListen[]>("listen_daily", { since: since ?? null }),
+  listenHourHist: (since?: number) =>
+    invoke<number[]>("listen_hour_hist", { since: since ?? null }),
 };
 
 export function formatTime(ms: number): string {
