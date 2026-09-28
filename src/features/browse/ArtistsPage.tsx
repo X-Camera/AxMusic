@@ -14,6 +14,8 @@ import "./Artists.css";
 
 export function ArtistsPage() {
   const playQueue = useApp((s) => s.playQueue);
+  const pendingArtist = useApp((s) => s.pendingArtist);
+  const clearPendingArtist = useApp((s) => s.clearPendingArtist);
   const [artists, setArtists] = useState<ArtistCard[]>([]);
   const [query, setQuery] = useState("");
   /** 当前打开的歌手；null = 墙 */
@@ -47,6 +49,21 @@ export function ArtistsPage() {
     void reload();
   }, [reload]);
 
+  /** 歌手列表晚于详情到达时，用列表里的封面/曲目数回填 */
+  useEffect(() => {
+    if (!selected) return;
+    const found = artists.find((a) => a.name === selected.name);
+    if (!found) return;
+    if (
+      found.has_cover !== selected.has_cover ||
+      found.cover_track_path !== selected.cover_track_path ||
+      found.track_count !== selected.track_count ||
+      found.album_count !== selected.album_count
+    ) {
+      setSelected((cur) => (cur && cur.name === found.name ? found : cur));
+    }
+  }, [artists, selected]);
+
   const filtered = artists.filter((a) => {
     const q = query.trim().toLowerCase();
     if (!q) return true;
@@ -75,6 +92,24 @@ export function ArtistsPage() {
       if (seq === loadSeq.current) setDetailLoading(false);
     }
   }
+
+  /** 统计页点头像 → 定位歌手详情（列表未到先用名字占位，封面等列表到达后回填） */
+  useEffect(() => {
+    if (!pendingArtist) return;
+    const name = pendingArtist;
+    clearPendingArtist();
+    const found =
+      artists.find((a) => a.name === name) ??
+      ({
+        name,
+        track_count: 0,
+        album_count: 0,
+        has_cover: false,
+        cover_track_path: null,
+        cover_track_mtime: 0,
+      } satisfies ArtistCard);
+    void openArtist(found);
+  }, [pendingArtist, artists, clearPendingArtist]);
 
   function closeArtist() {
     loadSeq.current += 1;

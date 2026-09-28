@@ -6,6 +6,11 @@ import type { PlayerSnapshot, QueueItem, RepeatMode, RouteId, TrackInfo } from "
 interface AppState {
   route: RouteId;
   setRoute: (r: RouteId) => void;
+  /** 待打开的歌手名（统计页头像点击 → 歌手页定位） */
+  pendingArtist: string | null;
+  /** 跳到歌手页并打开指定歌手 */
+  requestOpenArtist: (name: string) => void;
+  clearPendingArtist: () => void;
   /** 满窗播放模式（封面点开 / 缩回关闭） */
   fullPlayer: boolean;
   setFullPlayer: (v: boolean) => void;
@@ -90,6 +95,9 @@ function queueItemToTrack(item: QueueItem): TrackInfo {
 export const useApp = create<AppState>((set, get) => ({
   route: "albums",
   setRoute: (route) => set({ route }),
+  pendingArtist: null,
+  requestOpenArtist: (name) => set({ pendingArtist: name, route: "artists" }),
+  clearPendingArtist: () => set({ pendingArtist: null }),
   fullPlayer: false,
   setFullPlayer: (fullPlayer) => set({ fullPlayer }),
   queuePanelOpen: false,

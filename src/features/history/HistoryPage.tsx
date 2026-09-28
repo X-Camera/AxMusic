@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Clock3, Headphones, ListMusic, Music2, RefreshCw, UserRound } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Clock3, Headphones, ListMusic, Music2, Play, RefreshCw, UserRound } from "lucide-react";
 
 import { TopBar } from "../../components/TopBar";
-import { api, formatTime } from "../../lib/api";
-import type { ListenEvent, ListenSummary, TopListenItem } from "../../lib/types";
+import { api } from "../../lib/api";
+import type { ListenEvent, ListenSummary, QueueItem, TopListenItem } from "../../lib/types";
+import { useApp } from "../../state/useApp";
+import { AlbumCover } from "../browse/AlbumCover";
 import "./History.css";
 
 type RangeKey = "7d" | "30d" | "all";
@@ -18,6 +20,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** 与 History.css 中 .history-hours-bars height / .history-hour-bar min-height 对应 */
 const HOUR_BAR_MAX_PX = 72;
 const HOUR_BAR_MIN_PX = 4;
+/** 常听歌曲 / 常听歌手条数 */
+const TOP_TRACKS = 10;
+const TOP_ARTISTS = 8;
+/** 最近播放去重后条数 */
+const RECENT_LIMIT = 12;
+/** 最近播放多取一些再按歌去重 */
+const RECENT_FETCH = 80;
 
 function rangeSince(key: RangeKey): number | undefined {
   const days = RANGE_OPTIONS.find((r) => r.key === key)?.days;
@@ -34,15 +43,66 @@ function formatListenMs(ms: number): string {
   return `${m} 分`;
 }
 
-function formatWhen(ts: number): string {
-  const d = new Date(ts);
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  const now = new Date();
-  const sameYear = d.getFullYear() === now.getFullYear();
-  const date = sameYear
-    ? `${d.getMonth() + 1}月${d.getDate()}日`
-    : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-  return `${date} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** 最近播放相对时间：刚刚 / x 小时前 / 昨天 / 前天 / N 天前 / N 周前 / N 个月前 / N 年前 */
+function formatRelativeWhen(ts: number): string {
+  const now = Date.now();
+  const diff = Math.max(0, now - ts);
+  const min = Math.floor(diff / 60000);
+  if (min < 30) return "刚刚";
+
+  const nowD = new Date(now);
+  const then = new Date(ts);
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOf(nowD) - startOf(then)) / DAY_MS);
+
+  if (dayDiff <= 0) {
+    const h = Math.floor(min / 60);
+    return h <= 1 ? "1 小时前" : `${h} 小时前`;
+  }
+  if (dayDiff === 1) return "昨天";
+  if (dayDiff === 2) return "前天";
+  if (dayDiff < 7) return `${dayDiff} 天前`;
+
+  const weeks = Math.floor(dayDiff / 7);
+  if (dayDiff < 30) return `${weeks} 周前`;
+
+  const months = Math.floor(dayDiff / 30);
+  if (dayDiff < 365) return `${months} 个月前`;
+
+  return `${Math.floor(dayDiff / 365)} 年前`;
+}
+
+function trackInitial(title: string, fallback: string): string {
+  return (title || fallback || "?").slice(0, 1).toUpperCase();
+}
+
+function topToQueueItem(t: TopListenItem): QueueItem {
+  return {
+    path: t.path,
+    title: t.title || t.path.split(/[\\/]/).pop() || t.path,
+    duration_ms: t.track_duration_ms,
+  };
+}
+
+function listenToQueueItem(e: ListenEvent): QueueItem {
+  return {
+    path: e.path,
+    title: e.title || e.path.split(/[\\/]/).pop() || e.path,
+    duration_ms: e.track_duration_ms,
+  };
+}
+
+/** 同一首歌只留最近一次（path 优先，空 path 退 title|artist） */
+function dedupeRecent(list: ListenEvent[]): ListenEvent[] {
+  const seen = new Set<string>();
+  const out: ListenEvent[] = [];
+  for (const e of list) {
+    const key = e.path || `${e.title}|${e.artist}`.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
 }
 
 const EMPTY_SUMMARY: ListenSummary = {
@@ -55,6 +115,8 @@ const EMPTY_SUMMARY: ListenSummary = {
 
 /** 统计页：近 7 天 / 近 30 天 / 全部 三档；数据源 data_root/listen_history.db */
 export function HistoryPage() {
+  const playQueue = useApp((s) => s.playQueue);
+  const requestOpenArtist = useApp((s) => s.requestOpenArtist);
   const [range, setRange] = useState<RangeKey>("7d");
   const [summary, setSummary] = useState<ListenSummary>(EMPTY_SUMMARY);
   const [topTracks, setTopTracks] = useState<TopListenItem[]>([]);
@@ -82,17 +144,17 @@ export function HistoryPage() {
     try {
       const [sum, tracks, artists, hist, list] = await Promise.all([
         api.listenSummary(since),
-        api.listenTop("track", 10, since),
-        api.listenTop("artist", 8, since),
+        api.listenTop("track", TOP_TRACKS, since),
+        api.listenTop("artist", TOP_ARTISTS, since),
         api.listenHourHist(since),
-        api.listenRecent(40, since),
+        api.listenRecent(RECENT_FETCH, since),
       ]);
       if (!aliveRef.current || seq !== reloadSeqRef.current) return;
       setSummary(sum);
       setTopTracks(tracks);
       setTopArtists(artists);
       setHourHist(hist);
-      setRecent(list);
+      setRecent(dedupeRecent(list).slice(0, RECENT_LIMIT));
     } catch (e) {
       if (!aliveRef.current || seq !== reloadSeqRef.current) return;
       setError(String(e));
@@ -107,6 +169,21 @@ export function HistoryPage() {
 
   const maxHour = Math.max(1, ...hourHist);
   const empty = !error && !loading && summary.total_plays === 0;
+
+  const topQueue = useMemo(() => topTracks.map(topToQueueItem), [topTracks]);
+  const recentQueue = useMemo(() => recent.map(listenToQueueItem), [recent]);
+
+  /** 点卡片：整列表入队并从这首起播 */
+  function playFrom(items: QueueItem[], index: number) {
+    if (items.length === 0) return;
+    const start = Math.max(0, Math.min(index, items.length - 1));
+    void playQueue(items, start);
+  }
+
+  function playAll(items: QueueItem[]) {
+    if (items.length === 0) return;
+    void playQueue(items, 0);
+  }
 
   return (
     <>
@@ -219,74 +296,138 @@ export function HistoryPage() {
 
             <div className="history-grid">
               <section className="history-panel">
-                <h2>常听歌曲</h2>
+                <div className="history-panel-head">
+                  <h2>常听歌曲</h2>
+                  {topTracks.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-primary history-play-all"
+                      title="播放全部"
+                      onClick={() => playAll(topQueue)}
+                    >
+                      <Play size={14} /> 播放全部
+                    </button>
+                  )}
+                </div>
                 {topTracks.length === 0 ? (
                   <p className="history-muted">暂无数据</p>
                 ) : (
-                  <ol className="history-list">
+                  <div className="history-card-grid history-card-grid-compact">
                     {topTracks.map((t, i) => (
-                      <li key={t.key}>
-                        <span className="history-rank">{i + 1}</span>
-                        <div className="history-item-main">
-                          <div className="history-item-title">{t.title || t.key}</div>
-                          <div className="history-item-sub">{t.artist || "未知歌手"}</div>
+                      <button
+                        key={t.key}
+                        type="button"
+                        className="history-song-card"
+                        title="播放"
+                        onClick={() => playFrom(topQueue, i)}
+                      >
+                        <div className="history-song-cover">
+                          <AlbumCover
+                            path={t.path || null}
+                            mtime={0}
+                            hasCover={!!t.path}
+                            initial={trackInitial(t.title, t.key)}
+                          />
+                          <span className="history-rank-badge">{i + 1}</span>
+                          <span className="history-card-play" aria-hidden>
+                            <Play size={22} fill="currentColor" strokeWidth={0} />
+                          </span>
                         </div>
-                        <div className="history-item-meta">
-                          <div>{t.plays} 次</div>
-                          <div className="tertiary">{formatListenMs(t.total_ms)}</div>
+                        <div className="history-song-title">{t.title || t.key}</div>
+                        <div className="history-song-meta">
+                          <span>{formatListenMs(t.total_ms)}</span>
+                          <span className="tertiary">{t.plays} 次</span>
                         </div>
-                      </li>
+                      </button>
                     ))}
-                  </ol>
+                  </div>
                 )}
               </section>
 
               <section className="history-panel">
-                <h2>常听歌手</h2>
+                <div className="history-panel-head">
+                  <h2>常听歌手</h2>
+                </div>
                 {topArtists.length === 0 ? (
                   <p className="history-muted">暂无数据</p>
                 ) : (
-                  <ol className="history-list">
+                  <div className="history-artist-grid history-artist-grid-compact">
                     {topArtists.map((t, i) => (
-                      <li key={t.key}>
-                        <span className="history-rank">{i + 1}</span>
-                        <div className="history-item-main">
-                          {/* 后端 album 是组内 MAX 代表值，不作副标题，避免误读为「代表专辑」 */}
-                          <div className="history-item-title">{t.artist || t.key}</div>
+                      <button
+                        key={t.key}
+                        type="button"
+                        className="history-artist-card"
+                        title="查看歌手"
+                        onClick={() => {
+                          const name = t.artist || t.key;
+                          if (name) requestOpenArtist(name);
+                        }}
+                      >
+                        <div className="history-artist-avatar">
+                          <AlbumCover
+                            path={t.path || null}
+                            mtime={0}
+                            hasCover={!!t.path}
+                            initial={trackInitial(t.artist, t.key)}
+                          />
+                          <span className="history-rank-badge">{i + 1}</span>
                         </div>
-                        <div className="history-item-meta">
-                          <div>{t.plays} 次</div>
-                          <div className="tertiary">{formatListenMs(t.total_ms)}</div>
+                        <div className="history-artist-name">{t.artist || t.key}</div>
+                        <div className="history-artist-meta">
+                          <span>{formatListenMs(t.total_ms)}</span>
+                          <span className="tertiary"> · {t.plays} 次</span>
                         </div>
-                      </li>
+                      </button>
                     ))}
-                  </ol>
+                  </div>
                 )}
               </section>
             </div>
 
             <section className="history-panel">
-              <h2>最近播放</h2>
+              <div className="history-panel-head">
+                <h2>最近播放</h2>
+                {recent.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-primary history-play-all"
+                    title="播放全部"
+                    onClick={() => playAll(recentQueue)}
+                  >
+                    <Play size={14} /> 播放全部
+                  </button>
+                )}
+              </div>
               {recent.length === 0 ? (
                 <p className="history-muted">暂无数据</p>
               ) : (
-                <ol className="history-list">
-                  {recent.map((e) => (
-                    <li key={e.id}>
-                      <div className="history-item-main">
-                        <div className="history-item-title">{e.title || e.path}</div>
-                        <div className="history-item-sub">
-                          {e.artist || "未知歌手"}
-                          {e.album ? ` · ${e.album}` : ""}
-                        </div>
+                <div className="history-card-grid history-card-grid-compact">
+                  {recent.map((e, i) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      className="history-song-card"
+                      title="播放"
+                      onClick={() => playFrom(recentQueue, i)}
+                    >
+                      <div className="history-song-cover">
+                        <AlbumCover
+                          path={e.path || null}
+                          mtime={0}
+                          hasCover={!!e.path}
+                          initial={trackInitial(e.title, e.path)}
+                        />
+                        <span className="history-card-play" aria-hidden>
+                          <Play size={22} fill="currentColor" strokeWidth={0} />
+                        </span>
                       </div>
-                      <div className="history-item-meta">
-                        <div>{formatWhen(e.started_at)}</div>
-                        <div className="tertiary">听 {formatTime(e.play_ms)}</div>
+                      <div className="history-song-title">{e.title || e.path}</div>
+                      <div className="history-song-meta">
+                        <span className="tertiary">{formatRelativeWhen(e.started_at)}</span>
                       </div>
-                    </li>
+                    </button>
                   ))}
-                </ol>
+                </div>
               )}
             </section>
           </>

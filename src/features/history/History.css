@@ -88,10 +88,22 @@
 }
 
 .history-panel h2 {
-  margin: 0 0 var(--space-3);
+  margin: 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+}
+
+.history-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.history-play-all {
+  flex-shrink: 0;
 }
 
 .history-grid {
@@ -153,68 +165,220 @@
   font-size: 12px;
 }
 
-.history-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.history-list li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.history-list li:last-child {
-  border-bottom: none;
-}
-
-.history-rank {
-  width: 22px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.history-item-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.history-item-title {
-  font-size: 13px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.history-item-sub {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.history-item-meta {
-  text-align: right;
-  font-size: 12px;
-  color: var(--text);
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-
 .history-muted {
   margin: 0;
   color: var(--text-tertiary);
   font-size: 13px;
+}
+
+/* ── 歌曲 / 最近播放卡片 ── */
+.history-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* 双列面板内的紧凑卡片（常听歌曲 / 常听歌手 / 最近播放），与头像同档 */
+.history-card-grid-compact {
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: var(--space-3);
+}
+
+.history-card-grid-compact .history-song-title {
+  font-size: 12px;
+}
+
+.history-card-grid-compact .history-song-meta {
+  font-size: 10px;
+}
+
+.history-card-grid-compact .history-card-play {
+  width: 32px;
+  height: 32px;
+}
+
+.history-card-grid-compact .history-rank-badge {
+  left: 4px;
+  top: 4px;
+  min-width: 18px;
+  height: 18px;
+  font-size: 10px;
+  padding: 0 4px;
+}
+
+.history-song-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.history-song-card:hover {
+  transform: translateY(-2px);
+}
+
+.history-song-cover {
+  position: relative;
+  width: 100%;
+}
+
+.history-card-grid-compact .history-song-cover {
+  max-width: 88px;
+}
+
+.history-song-cover .album-cover {
+  width: 100%;
+}
+
+.history-rank-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.history-card-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--cover-icon);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.5));
+  pointer-events: none;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+.history-song-card:hover .history-card-play {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.history-song-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-song-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-song-meta .tertiary {
+  flex-shrink: 0;
+}
+
+/* ── 常听歌手头像 ── */
+.history-artist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.history-artist-grid-compact {
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: var(--space-3);
+}
+
+.history-artist-grid-compact .history-artist-avatar {
+  max-width: 88px;
+}
+
+.history-artist-grid-compact .history-artist-name {
+  font-size: 12px;
+}
+
+.history-artist-grid-compact .history-artist-meta {
+  font-size: 10px;
+}
+
+.history-artist-grid-compact .history-rank-badge {
+  left: 4px;
+  top: 4px;
+  min-width: 18px;
+  height: 18px;
+  font-size: 10px;
+  padding: 0 4px;
+}
+
+.history-artist-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.history-artist-card:hover {
+  transform: translateY(-2px);
+}
+
+.history-artist-avatar {
+  position: relative;
+  width: 100%;
+  max-width: 120px;
+}
+
+.history-artist-avatar .album-cover {
+  width: 100%;
+  border-radius: 50%;
+}
+
+.history-artist-name {
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-artist-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: -4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .history-empty {

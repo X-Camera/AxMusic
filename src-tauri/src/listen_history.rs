@@ -108,6 +108,10 @@ pub struct TopListenItem {
     pub album: String,
     pub plays: i64,
     pub total_ms: i64,
+    /// 组内代表文件路径（可播 / 取封面；MAX 取值，文件可能已挪动）
+    pub path: String,
+    /// 组内曲目时长代表值（入队用）
+    pub track_duration_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,17 +289,20 @@ impl ListenDb {
             "track" => id,
             other => anyhow::bail!("未知 kind: {other}（应为 track | album | artist）"),
         };
+        // 常听榜按听歌时长排序（用户口径），次数作次序
         let sql = format!(
             "SELECT {key_expr} AS k,
                     MAX(title) AS title,
                     MAX(artist) AS artist,
                     MAX(album) AS album,
                     COUNT(*) AS plays,
-                    COALESCE(SUM(play_ms),0) AS total_ms
+                    COALESCE(SUM(play_ms),0) AS total_ms,
+                    COALESCE(MAX(path), '') AS path,
+                    COALESCE(MAX(track_duration_ms), 0) AS track_duration_ms
              FROM play_events
              WHERE 1=1 {yf}
              GROUP BY k
-             ORDER BY plays DESC, total_ms DESC
+             ORDER BY total_ms DESC, plays DESC
              LIMIT ?1",
             key_expr = key_expr,
             yf = yf,
@@ -310,6 +317,8 @@ impl ListenDb {
                     album: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
                     plays: r.get(4)?,
                     total_ms: r.get(5)?,
+                    path: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    track_duration_ms: r.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

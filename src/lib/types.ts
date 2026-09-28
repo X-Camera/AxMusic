@@ -419,6 +419,10 @@ export interface TopListenItem {
   album: string;
   plays: number;
   total_ms: number;
+  /** 组内代表文件路径（播放 / 封面） */
+  path: string;
+  /** 组内曲目时长代表值（入队用） */
+  track_duration_ms: number;
 }
 
 export interface DailyListen {
