@@ -74,6 +74,9 @@ struct Shared {
     /// UI 展示用的本曲增益状态
     rg_info: Mutex<ReplayGainInfo>,
     track_ended: AtomicBool,
+    /// gapless 过渡：新曲已装载、旧曲队尾仍在播。进度按新曲 0 报、回调不累加，
+    /// 直到新曲首块锚点落地（否则快照会把上一曲末尾进度安到新曲上）
+    gapless_tail: AtomicBool,
     /// 音频世代号：每次「应丢弃已缓冲音频」（seek/切歌/显式 flush）+1。
     /// 块带世代戳、回调只播当前世代——单布尔标志会把 flush 后新到的有效块一并冲掉
     audio_gen: Arc<AtomicU64>,
@@ -106,6 +109,7 @@ impl Shared {
             rg_mode: AtomicU8::new(1), // 默认按曲目
             rg_info: Mutex::new(ReplayGainInfo::default()),
             track_ended: AtomicBool::new(false),
+            gapless_tail: AtomicBool::new(false),
             audio_gen: Arc::new(AtomicU64::new(0)),
             switch_seq: AtomicU64::new(0),
             play_mode: AtomicU8::new(0),
@@ -199,6 +203,9 @@ impl Shared {
 
     fn request_flush(&self) {
         self.audio_gen.fetch_add(1, Ordering::SeqCst);
+        // 显式 flush（seek/手动切歌）：退出 gapless 尾，并吞掉未消费的 track_ended
+        self.gapless_tail.store(false, Ordering::SeqCst);
+        self.track_ended.store(false, Ordering::SeqCst);
     }
 
     fn current_track_path(&self) -> Option<String> {
@@ -831,6 +838,8 @@ impl AudioOut {
                     self.pos = 0;
                     if let Some(frames) = anchor {
                         self.shared.position_frames.store(frames, Ordering::SeqCst);
+                        // 新曲首块真正开播：结束 gapless 尾，进度从 0 起累加
+                        self.shared.gapless_tail.store(false, Ordering::SeqCst);
                     }
                     return;
                 }
@@ -873,6 +882,15 @@ impl AudioOut {
                 continue;
             }
             if self.pos >= self.cur.len() {
+                // 换块前先结算已播帧：锚点会整段覆盖 position，不能把上一段尾巴算进新段
+                if frames_written > 0 {
+                    if !self.shared.gapless_tail.load(Ordering::SeqCst) {
+                        self.shared
+                            .position_frames
+                            .fetch_add(frames_written, Ordering::SeqCst);
+                    }
+                    frames_written = 0;
+                }
                 self.pull_next();
             }
             if self.pos + 1 < self.cur.len() {
@@ -914,7 +932,9 @@ impl AudioOut {
         if tap_n > 0 {
             let _ = self.viz_prod.push_slice(&tap[..tap_n]);
         }
-        if frames_written > 0 {
+        // 注：load(gapless_tail) 与 fetch_add 两步间，解码线程可能已置尾并归零 position，
+        // 旧曲尾帧会短暂加到新曲进度上——有界良性毛刺（≤一个回调缓冲），新曲首块锚点 store(0) 必然校准
+        if frames_written > 0 && !self.shared.gapless_tail.load(Ordering::SeqCst) {
             self.shared
                 .position_frames
                 .fetch_add(frames_written, Ordering::SeqCst);
@@ -927,6 +947,99 @@ struct DecoderState2 {
     /// pending samples at device rate (stereo interleaved)
     pending: Vec<f32>,
     resample_pos: f64,
+}
+
+/// 预取的下一曲解码器：本曲播放中提前打开，EOF 切换时免开文件，队列衔接不空档
+struct Prefetched {
+    index: usize,
+    path: PathBuf,
+    dec: DecoderState,
+}
+
+/// 自动连播目标（与 EOF 路径同一套规则）：单曲循环重播；随机续抽；顺序看列表循环/播完停
+fn auto_target(
+    shared: &Shared,
+    queue: &[QueueItem],
+    queue_index: Option<usize>,
+) -> Option<usize> {
+    if queue.is_empty() {
+        return None;
+    }
+    if shared.repeat() == RepeatMode::One {
+        return queue_index.or(Some(0));
+    }
+    if shared.shuffle() {
+        return shuffle_pick(queue.len(), queue_index);
+    }
+    queue_index.and_then(|i| {
+        if i + 1 < queue.len() {
+            Some(i + 1)
+        } else if shared.repeat() == RepeatMode::All {
+            Some(0)
+        } else {
+            None
+        }
+    })
+}
+
+/// 取本次连播应切到的下标：优先用开播时锁定的 planned（保证与预取一致），失效再重算。
+/// 缓存若指向「当前曲」则视为过期（切歌后未及时作废会自己接自己）；单曲循环除外。
+fn resolve_planned(
+    shared: &Shared,
+    queue: &[QueueItem],
+    queue_index: Option<usize>,
+    planned: &mut Option<(usize, u8)>,
+) -> Option<usize> {
+    let mode = shared.play_mode_raw();
+    if let Some((i, m)) = *planned {
+        let stale_self =
+            Some(i) == queue_index && shared.repeat() != RepeatMode::One;
+        if m == mode && queue.get(i).is_some() && !stale_self {
+            return Some(i);
+        }
+    }
+    let t = auto_target(shared, queue, queue_index);
+    *planned = t.map(|i| (i, mode));
+    t
+}
+
+/// 通道满（播放侧有存货）时预取下一曲解码器；失败不致命，EOF 时 open_track_full 兜底。
+/// 仅在有余量时调用，避免开文件的 I/O 卡住解码线程。
+fn try_prefetch(
+    shared: &Shared,
+    queue: &[QueueItem],
+    queue_index: Option<usize>,
+    planned: &mut Option<(usize, u8)>,
+    prefetched: &mut Option<Prefetched>,
+    prefetch_tried: &mut Option<usize>,
+) {
+    if prefetched.is_some() {
+        return;
+    }
+    let Some(target) = resolve_planned(shared, queue, queue_index, planned) else {
+        return;
+    };
+    // 同一目标只 open 一次（失败也不在 Full 循环里反复试），目标变了才再试
+    if *prefetch_tried == Some(target) {
+        return;
+    }
+    *prefetch_tried = Some(target);
+    let Some(item) = queue.get(target) else {
+        return;
+    };
+    let path = PathBuf::from(&item.path);
+    match open_decoder(&path) {
+        Ok(st) => {
+            *prefetched = Some(Prefetched {
+                index: target,
+                path,
+                dec: st,
+            });
+        }
+        Err(_) => {
+            // 预取失败不写 error（当前曲还在播）；EOF 走 open_track_full 时才报错
+        }
+    }
 }
 
 fn open_decoder(path: &Path) -> Result<DecoderState> {
@@ -973,6 +1086,64 @@ fn open_decoder(path: &Path) -> Result<DecoderState> {
     })
 }
 
+/// 将已打开的解码器装入播放：写 shared 元数据、按需 flush。
+/// `flush`=true 显式切歌/seek（丢弃已缓冲音频、进度归零）；
+/// `flush`=false EOF 自动连播（保留队尾，进度展示按 0，首块锚点落地后开始累加）。
+fn activate_decoder(
+    shared: &Arc<Shared>,
+    path: &Path,
+    index: Option<usize>,
+    queue_item: Option<&QueueItem>,
+    st: DecoderState,
+    flush: bool,
+) -> DecoderState2 {
+    if flush {
+        shared.request_flush();
+        shared.position_frames.store(0, Ordering::SeqCst);
+        shared.track_ended.store(false, Ordering::SeqCst);
+    } else {
+        // gapless：已入通道的队尾继续播（不 flush）；进度按新曲 0 展示，
+        // 由新曲首块锚点在队尾播完那一刻开始累加（见 AudioOut::fill）
+        shared.gapless_tail.store(true, Ordering::SeqCst);
+        shared.position_frames.store(0, Ordering::SeqCst);
+    }
+
+    let title = queue_item
+        .map(|q| q.title.clone())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| {
+            path.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
+    let info = TrackInfo {
+        path: path.to_string_lossy().to_string(),
+        title,
+        duration_ms: st
+            .duration_ms
+            .max(queue_item.map(|q| q.duration_ms).unwrap_or(0)),
+        sample_rate: st.src_sample_rate,
+        channels: st.src_channels,
+    };
+    shared
+        .duration_ms
+        .store(info.duration_ms.max(1), Ordering::SeqCst);
+    if let Ok(mut t) = shared.track.lock() {
+        *t = Some(info);
+    }
+    if let Ok(mut qi) = shared.queue_index.lock() {
+        *qi = index;
+    }
+    // 读标签/缓存算响度增益；无标签时后台估算（含峰值限幅），UI 标识随 snapshot 带出
+    apply_replaygain_for_path(shared, path);
+    set_error(shared, None);
+    DecoderState2 {
+        inner: st,
+        pending: Vec::new(),
+        resample_pos: 0.0,
+    }
+}
+
 /// `flush`：是否丢弃已缓冲音频。显式切歌/seek 要；EOF 自动连播不要（保留队尾，无缝衔接）。
 fn open_track_full(
     shared: &Arc<Shared>,
@@ -981,51 +1152,8 @@ fn open_track_full(
     queue_item: Option<&QueueItem>,
     flush: bool,
 ) -> Option<DecoderState2> {
-    if flush {
-        shared.request_flush();
-        shared.position_frames.store(0, Ordering::SeqCst);
-    }
-    // EOF 连播（flush=false）：缓冲队尾继续播、进度不归零，
-    // 由新曲首块的锚点在队尾播完那一刻校准（gapless）
-    shared.track_ended.store(false, Ordering::SeqCst);
-
     match open_decoder(path) {
-        Ok(st) => {
-            let title = queue_item
-                .map(|q| q.title.clone())
-                .filter(|t| !t.is_empty())
-                .unwrap_or_else(|| {
-                    path.file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default()
-                });
-            let info = TrackInfo {
-                path: path.to_string_lossy().to_string(),
-                title,
-                duration_ms: st
-                    .duration_ms
-                    .max(queue_item.map(|q| q.duration_ms).unwrap_or(0)),
-                sample_rate: st.src_sample_rate,
-                channels: st.src_channels,
-            };
-            shared
-                .duration_ms
-                .store(info.duration_ms.max(1), Ordering::SeqCst);
-            if let Ok(mut t) = shared.track.lock() {
-                *t = Some(info);
-            }
-            if let Ok(mut qi) = shared.queue_index.lock() {
-                *qi = index;
-            }
-            // 读标签/缓存算响度增益；无标签时后台估算（含峰值限幅），UI 标识随 snapshot 带出
-            apply_replaygain_for_path(shared, path);
-            set_error(shared, None);
-            Some(DecoderState2 {
-                inner: st,
-                pending: Vec::new(),
-                resample_pos: 0.0,
-            })
-        }
+        Ok(st) => Some(activate_decoder(shared, path, index, queue_item, st, flush)),
         Err(err) => {
             set_error(shared, Some(format!("{err:#}")));
             if let Ok(mut t) = shared.track.lock() {
@@ -1230,6 +1358,25 @@ fn decode_loop(
     let mut history: Vec<usize> = Vec::new();
     // 段起点锚（设备帧）：新曲 = 0，seek = 目标位置；由段内首块带上，回调播到它时校准进度
     let mut seg_anchor: Option<u64> = None;
+    // 开播时锁定的连播下标 (index, play_mode)：EOF 与预取共用，避免随机抽两次对不上
+    let mut planned: Option<(usize, u8)> = None;
+    // 预取的下一曲解码器（本曲播放中提前 open，EOF 时直接换上，衔接不空档）
+    let mut prefetched: Option<Prefetched> = None;
+    // 已对哪个下标试过预取（含失败）：避免开文件失败后在 Full 循环里反复重试
+    let mut prefetch_tried: Option<usize> = None;
+    // 上次看到的 play_mode：中途改随机/循环要作废预取（目标可能变）
+    let mut last_mode = shared.play_mode_raw();
+
+    /// 队列/模式变化后作废旧预取，避免切到错曲
+    fn drop_prefetch(
+        prefetched: &mut Option<Prefetched>,
+        planned: &mut Option<(usize, u8)>,
+        prefetch_tried: &mut Option<usize>,
+    ) {
+        *prefetched = None;
+        *planned = None;
+        *prefetch_tried = None;
+    }
 
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -1238,6 +1385,7 @@ fn decode_loop(
                     queue = items;
                     queue_index = Some(start);
                     history.clear();
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                     if let Ok(mut q) = shared.queue.lock() {
                         *q = queue.clone();
                     }
@@ -1252,6 +1400,8 @@ fn decode_loop(
                         seg_anchor = if playing { Some(0) } else { None };
                         if playing {
                             shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                            // 锁定下一曲（随机也只抽这一次），供预取与 EOF 共用
+                            let _ = resolve_planned(&shared, &queue, queue_index, &mut planned);
                         }
                     } else {
                         dec = None;
@@ -1262,9 +1412,13 @@ fn decode_loop(
                 }
                 Cmd::Open { path, index } => {
                     pending_block = None;
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                     let item = index.and_then(|i| queue.get(i).cloned());
                     dec = open_track_full(&shared, &path, index, item.as_ref(), true);
                     seg_anchor = if dec.is_some() { Some(0) } else { None };
+                    if dec.is_some() {
+                        let _ = resolve_planned(&shared, &queue, queue_index, &mut planned);
+                    }
                 }
                 Cmd::Play => {
                     // 业界惯例：播完停住后再点播放 = 从头再听，而不是假播放（无解码器）
@@ -1306,6 +1460,7 @@ fn decode_loop(
                         if let Some(item) = item {
                             let path = PathBuf::from(&item.path);
                             pending_block = None;
+                            drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                             if finished_list {
                                 queue_index = Some(0);
                                 if let Ok(mut qi) = shared.queue_index.lock() {
@@ -1319,6 +1474,10 @@ fn decode_loop(
                                 if playing { STATUS_PLAYING } else { STATUS_STOPPED },
                                 Ordering::SeqCst,
                             );
+                            if playing {
+                                let _ =
+                                    resolve_planned(&shared, &queue, queue_index, &mut planned);
+                            }
                         } else {
                             playing = false;
                             seg_anchor = None;
@@ -1337,6 +1496,7 @@ fn decode_loop(
                             d.resample_pos = 0.0;
                             shared.request_flush();
                             pending_block = None;
+                            // seek 不换曲：预取仍有效，但 planned 要按新位置重估不必要——同曲下一首不变
                             let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
                             let frames = ms.saturating_mul(rate) / 1000;
                             shared.position_frames.store(frames, Ordering::SeqCst);
@@ -1351,6 +1511,7 @@ fn decode_loop(
                     queue = items;
                     queue_index = Some(start);
                     history.clear();
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                     if let Ok(mut qi) = shared.queue_index.lock() {
                         *qi = Some(start);
                     }
@@ -1383,11 +1544,15 @@ fn decode_loop(
                             true
                         }
                     });
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                     if let Ok(mut q) = shared.queue.lock() {
                         *q = queue.clone();
                     }
                     if let Ok(mut qi) = shared.queue_index.lock() {
                         *qi = queue_index;
+                    }
+                    if dec.is_some() {
+                        let _ = resolve_planned(&shared, &queue, queue_index, &mut planned);
                     }
                 }
                 Cmd::ExtendQueue { items } => {
@@ -1395,6 +1560,12 @@ fn decode_loop(
                         if !queue.iter().any(|x| x.path == item.path) {
                             queue.push(item);
                         }
+                    }
+                    // 追加可能改变「下一曲」：顺序回绕目标、随机抽取池、播完停→有下一首。
+                    // 仅按越界判失效不够（回绕目标 0 永不越界）；追加低频，统一作废重估
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
+                    if dec.is_some() {
+                        let _ = resolve_planned(&shared, &queue, queue_index, &mut planned);
                     }
                     // shared 已由 enqueue 写过完整队列；这里不回写，避免用旧本地覆盖
                 }
@@ -1406,6 +1577,7 @@ fn decode_loop(
                     queue = items;
                     queue_index = if queue.is_empty() { None } else { Some(start) };
                     history.clear();
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                     if let Ok(mut q) = shared.queue.lock() {
                         *q = queue.clone();
                     }
@@ -1428,6 +1600,9 @@ fn decode_loop(
                         }
                         playing = false;
                         shared.status.store(STATUS_PAUSED, Ordering::SeqCst);
+                        if dec.is_some() {
+                            let _ = resolve_planned(&shared, &queue, queue_index, &mut planned);
+                        }
                     } else {
                         dec = None;
                         playing = false;
@@ -1459,6 +1634,7 @@ fn decode_loop(
                             }
                             let path = PathBuf::from(&item.path);
                             pending_block = None;
+                            drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                             queue_index = Some(target);
                             if let Ok(mut qi) = shared.queue_index.lock() {
                                 *qi = Some(target);
@@ -1468,6 +1644,8 @@ fn decode_loop(
                                 playing = true;
                                 seg_anchor = Some(0);
                                 shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                                let _ =
+                                    resolve_planned(&shared, &queue, queue_index, &mut planned);
                             }
                         }
                     }
@@ -1482,11 +1660,14 @@ fn decode_loop(
                             if let Some(item) = queue.get(idx).cloned() {
                                 let path = PathBuf::from(&item.path);
                                 pending_block = None;
+                                drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                                 dec = open_track_full(&shared, &path, Some(idx), Some(&item), true);
                                 if dec.is_some() {
                                     playing = true;
                                     seg_anchor = Some(0);
                                     shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                                    let _ =
+                                        resolve_planned(&shared, &queue, queue_index, &mut planned);
                                 }
                             }
                         }
@@ -1503,6 +1684,7 @@ fn decode_loop(
                             if let Some(item) = queue.get(target).cloned() {
                                 let path = PathBuf::from(&item.path);
                                 pending_block = None;
+                                drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                                 queue_index = Some(target);
                                 if let Ok(mut qi) = shared.queue_index.lock() {
                                     *qi = Some(target);
@@ -1512,6 +1694,8 @@ fn decode_loop(
                                     playing = true;
                                     seg_anchor = Some(0);
                                     shared.status.store(STATUS_PLAYING, Ordering::SeqCst);
+                                    let _ =
+                                        resolve_planned(&shared, &queue, queue_index, &mut planned);
                                 }
                             }
                         }
@@ -1523,6 +1707,7 @@ fn decode_loop(
                     playing = false;
                     pending_block = None;
                     seg_anchor = None;
+                    drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                     shared.request_flush();
                     shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                     if let Ok(mut t) = shared.track.lock() {
@@ -1533,6 +1718,15 @@ fn decode_loop(
         }
 
         if playing {
+            // 中途改随机/循环：旧预取目标可能变，作废后按新模式重估
+            let mode = shared.play_mode_raw();
+            if mode != last_mode {
+                last_mode = mode;
+                drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
+                if dec.is_some() {
+                    let _ = resolve_planned(&shared, &queue, queue_index, &mut planned);
+                }
+            }
             if let Some(d) = dec.as_mut() {
                 if pending_block.is_none() {
                     // 世代戳在解码前打：解码期间发生的 flush 会让本块过期被丢弃
@@ -1546,6 +1740,15 @@ fn decode_loop(
                             Ok(()) => {}
                             Err(crossbeam_channel::TrySendError::Full(b)) => {
                                 pending_block = Some(b);
+                                // 通道满 = 播放侧存货充足，正是预取的好时机（I/O 不卡出声）
+                                try_prefetch(
+                                    &shared,
+                                    &queue,
+                                    queue_index,
+                                    &mut planned,
+                                    &mut prefetched,
+                                    &mut prefetch_tried,
+                                );
                                 std::thread::sleep(Duration::from_millis(2));
                             }
                             Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
@@ -1559,22 +1762,10 @@ fn decode_loop(
                         shared.track_ended.store(true, Ordering::SeqCst);
                         let mut advanced = false;
                         if !queue.is_empty() {
-                            // 自动切歌：单曲循环重播；随机续抽；顺序看列表循环/播完停
-                            let target = if shared.repeat() == RepeatMode::One {
-                                queue_index.or(Some(0))
-                            } else if shared.shuffle() {
-                                shuffle_pick(queue.len(), queue_index)
-                            } else {
-                                queue_index.and_then(|i| {
-                                    if i + 1 < queue.len() {
-                                        Some(i + 1)
-                                    } else if shared.repeat() == RepeatMode::All {
-                                        Some(0)
-                                    } else {
-                                        None
-                                    }
-                                })
-                            };
+                            // 自动切歌：单曲循环重播；随机续抽；顺序看列表循环/播完停。
+                            // 用 resolve_planned（开播时锁定）保证与预取同一首，不重复抽随机
+                            let target =
+                                resolve_planned(&shared, &queue, queue_index, &mut planned);
                             if let Some(target) = target {
                                 if let Some(item) = queue.get(target).cloned() {
                                     let path = PathBuf::from(&item.path);
@@ -1583,10 +1774,38 @@ fn decode_loop(
                                     if let Ok(mut qi) = shared.queue_index.lock() {
                                         *qi = Some(target);
                                     }
-                                    dec = open_track_full(&shared, &path, queue_index, Some(&item), false);
+                                    // 优先吃预取：免 open_decoder，衔接零空档
+                                    let pre = prefetched.take().filter(|p| {
+                                        p.index == target && p.path == path
+                                    });
+                                    dec = match pre {
+                                        Some(p) => {
+                                            Some(activate_decoder(
+                                                &shared,
+                                                &path,
+                                                queue_index,
+                                                Some(&item),
+                                                p.dec,
+                                                false,
+                                            ))
+                                        }
+                                        None => open_track_full(
+                                            &shared, &path, queue_index, Some(&item), false,
+                                        ),
+                                    };
                                     advanced = dec.is_some();
                                     if advanced {
                                         seg_anchor = Some(0);
+                                        // 旧 planned 指向刚切到的这首，先作废再锁再下一曲
+                                        //（否则 resolve_planned 命中自己，下一首又播同一首）
+                                        planned = None;
+                                        prefetch_tried = None;
+                                        let _ = resolve_planned(
+                                            &shared,
+                                            &queue,
+                                            queue_index,
+                                            &mut planned,
+                                        );
                                     }
                                 }
                             }
@@ -1595,6 +1814,7 @@ fn decode_loop(
                             dec = None;
                             playing = false;
                             seg_anchor = None;
+                            drop_prefetch(&mut prefetched, &mut planned, &mut prefetch_tried);
                             shared.status.store(STATUS_STOPPED, Ordering::SeqCst);
                         }
                     }
