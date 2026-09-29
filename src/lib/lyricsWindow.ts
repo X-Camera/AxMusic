@@ -1,4 +1,5 @@
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import type { LyricsTarget } from "./types";
@@ -6,37 +7,13 @@ import type { LyricsTarget } from "./types";
 export const LYRICS_WINDOW_LABEL = "lyrics-search";
 export const LYRICS_EVT_TARGET = "lyrics://target";
 export const LYRICS_EVT_SAVED = "lyrics://saved";
-
-/** 把目标曲目编进 URL，子窗口冷启动时解析（避开跨窗口时序） */
-export function lyricsTargetToUrl(target: LyricsTarget): string {
-  const qs = new URLSearchParams({
-    win: "lyrics",
-    id: String(target.id),
-    path: target.path,
-    title: target.title,
-    artist: target.artist,
-    filename: target.filename,
-  });
-  return `index.html?${qs.toString()}`;
-}
-
-export function parseLyricsTargetFromLocation(): LyricsTarget | null {
-  const q = new URLSearchParams(window.location.search);
-  if (q.get("win") !== "lyrics") return null;
-  const path = q.get("path") ?? "";
-  if (!path) return null;
-  return {
-    id: Number(q.get("id") ?? 0) || 0,
-    path,
-    title: q.get("title") ?? "",
-    artist: q.get("artist") ?? "",
-    filename: q.get("filename") ?? "",
-  };
-}
+/** 子窗口入口 query（只标窗口类型，不带曲目信息） */
+export const LYRICS_WIN_QUERY = "win=lyrics";
 
 /**
  * 打开独立「搜索歌词」子窗口。已存在则聚焦并换目标曲目。
  * 真系统窗口，可拖出主应用、放到其他显示器。
+ * 曲目参数经 IPC/事件传递，不进子窗口 URL（避免路径进历史/崩溃转储）。
  */
 export async function openLyricsWindow(target: LyricsTarget): Promise<void> {
   const existing = await WebviewWindow.getByLabel(LYRICS_WINDOW_LABEL);
@@ -46,8 +23,10 @@ export async function openLyricsWindow(target: LyricsTarget): Promise<void> {
     return;
   }
 
+  // 先落 pending，子窗口挂载后 take，再无竞态丢参
+  await invoke("set_pending_lyrics_target", { target });
   const win = new WebviewWindow(LYRICS_WINDOW_LABEL, {
-    url: lyricsTargetToUrl(target),
+    url: `index.html?${LYRICS_WIN_QUERY}`,
     title: "搜索歌词",
     width: 920,
     height: 700,
@@ -116,4 +95,13 @@ export function onLyricsTarget(cb: (t: LyricsTarget) => void): () => void {
     cancelled = true;
     un?.();
   };
+}
+
+/** 子窗口冷启动：取走主窗口预置的目标曲目（只取一次）。 */
+export async function takePendingLyricsTarget(): Promise<LyricsTarget | null> {
+  try {
+    return await invoke<LyricsTarget | null>("take_pending_lyrics_target");
+  } catch {
+    return null;
+  }
 }

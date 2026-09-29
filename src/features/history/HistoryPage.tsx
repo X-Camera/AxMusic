@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { Clock3, Headphones, ListMusic, Music2, Play, RefreshCw, UserRound } from "lucide-react";
 
 import { TopBar } from "../../components/TopBar";
@@ -30,7 +32,7 @@ const RECENT_FETCH = 80;
 
 function rangeSince(key: RangeKey): number | undefined {
   const days = RANGE_OPTIONS.find((r) => r.key === key)?.days;
-  if (days == null) return undefined;
+  if (isNil(days)) return undefined;
   return Date.now() - days * DAY_MS;
 }
 
@@ -157,7 +159,7 @@ export function HistoryPage() {
       setRecent(dedupeRecent(list).slice(0, RECENT_LIMIT));
     } catch (e) {
       if (!aliveRef.current || seq !== reloadSeqRef.current) return;
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       if (aliveRef.current && seq === reloadSeqRef.current) setLoading(false);
     }

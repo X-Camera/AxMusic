@@ -84,17 +84,18 @@ fn row_meta(path: &str, title: String, artist: String, duration_ms: i64) -> Fold
 pub fn lookup(paths: &[String]) -> anyhow::Result<Vec<FolderMeta>> {
     let conn = open()?;
     let mut out = Vec::with_capacity(paths.len());
+    let mut stmt = conn.prepare(
+        "SELECT title, artist, duration_ms, mtime, file_size FROM folder_tags WHERE path = ?1",
+    )?;
     for path in paths {
         let (mtime, size) = file_sig(Path::new(path));
         if mtime == 0 && size == 0 {
             continue;
         }
-        let hit: Option<(String, String, i64, i64, i64)> = conn
-            .query_row(
-                "SELECT title, artist, duration_ms, mtime, file_size FROM folder_tags WHERE path = ?1",
-                params![path],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
+        let hit: Option<(String, String, i64, i64, i64)> = stmt
+            .query_row(params![path], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
             .optional()?;
         if let Some((title, artist, duration_ms, c_mtime, c_size)) = hit {
             if c_mtime == mtime && c_size == size {
@@ -107,60 +108,76 @@ pub fn lookup(paths: &[String]) -> anyhow::Result<Vec<FolderMeta>> {
 
 /// 读标签并写缓存（已有效则直接返回缓存）。失败的路径跳过。
 pub fn read_and_cache(paths: &[String]) -> anyhow::Result<Vec<FolderMeta>> {
-    let conn = open()?;
+    let mut conn = open()?;
     let mut out = Vec::with_capacity(paths.len());
-    for path in paths {
-        let p = Path::new(path);
-        let (mtime, size) = file_sig(p);
-        if !p.is_file() {
-            continue;
-        }
+    let tx = conn.transaction()?;
+    {
+        let mut sel = tx.prepare(
+            "SELECT title, artist, duration_ms, mtime, file_size FROM folder_tags WHERE path = ?1",
+        )?;
+        let mut upsert = tx.prepare(
+            "INSERT INTO folder_tags (path, mtime, file_size, title, artist, duration_ms, cached_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(path) DO UPDATE SET
+               mtime = excluded.mtime,
+               file_size = excluded.file_size,
+               title = excluded.title,
+               artist = excluded.artist,
+               duration_ms = excluded.duration_ms,
+               cached_at = excluded.cached_at",
+        )?;
+        for path in paths {
+            let p = Path::new(path);
+            let (mtime, size) = file_sig(p);
+            if !p.is_file() {
+                continue;
+            }
 
-        // 缓存有效则复用
-        if mtime != 0 || size != 0 {
-            let hit: Option<(String, String, i64, i64, i64)> = conn
-                .query_row(
-                    "SELECT title, artist, duration_ms, mtime, file_size FROM folder_tags WHERE path = ?1",
-                    params![path],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-                )
-                .optional()?;
-            if let Some((title, artist, duration_ms, c_mtime, c_size)) = hit {
-                if c_mtime == mtime && c_size == size {
-                    out.push(row_meta(path, title, artist, duration_ms));
-                    continue;
+            // 缓存有效则复用
+            if mtime != 0 || size != 0 {
+                let hit: Option<(String, String, i64, i64, i64)> = sel
+                    .query_row(params![path], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                    })
+                    .optional()?;
+                if let Some((title, artist, duration_ms, c_mtime, c_size)) = hit {
+                    if c_mtime == mtime && c_size == size {
+                        out.push(row_meta(path, title, artist, duration_ms));
+                        continue;
+                    }
+                }
+            }
+
+            match read_brief_tags(p) {
+                Some((title, artist, duration_ms)) => {
+                    // 单条缓存写失败只跳过该条缓存，不丢已收集结果
+                    if let Err(e) = upsert.execute(params![
+                        path,
+                        mtime,
+                        size,
+                        title,
+                        artist,
+                        duration_ms as i64,
+                        now_secs()
+                    ]) {
+                        eprintln!("[AxMusic] 标签缓存写入跳过 {path}: {e}");
+                    }
+                    out.push(row_meta(path, title, artist, duration_ms as i64));
+                }
+                None => {
+                    // 探测失败（文件占用/损坏）：文件名兜底展示但不写缓存，下次打开重试
+                    let stem = p
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    out.push(row_meta(path, stem, String::new(), 0));
                 }
             }
         }
-
-        match read_brief_tags(p) {
-            Some((title, artist, duration_ms)) => {
-                // 单条缓存写失败（BUSY/磁盘满）只跳过该条缓存，不丢已收集结果
-                if let Err(e) = conn.execute(
-                    "INSERT INTO folder_tags (path, mtime, file_size, title, artist, duration_ms, cached_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                     ON CONFLICT(path) DO UPDATE SET
-                       mtime = excluded.mtime,
-                       file_size = excluded.file_size,
-                       title = excluded.title,
-                       artist = excluded.artist,
-                       duration_ms = excluded.duration_ms,
-                       cached_at = excluded.cached_at",
-                    params![path, mtime, size, title, artist, duration_ms as i64, now_secs()],
-                ) {
-                    eprintln!("[AxMusic] 标签缓存写入跳过 {path}: {e}");
-                }
-                out.push(row_meta(path, title, artist, duration_ms as i64));
-            }
-            None => {
-                // 探测失败（文件占用/损坏）：文件名兜底展示但不写缓存，下次打开重试
-                let stem = p
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                out.push(row_meta(path, stem, String::new(), 0));
-            }
-        }
+    }
+    // 批量缓存写一次提交，失败不拖垮已收集的展示结果
+    if let Err(e) = tx.commit() {
+        eprintln!("[AxMusic] 标签缓存提交跳过: {e}");
     }
     Ok(out)
 }

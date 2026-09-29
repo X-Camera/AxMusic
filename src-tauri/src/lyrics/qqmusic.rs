@@ -8,8 +8,6 @@ use serde::Deserialize;
 use super::{encode, LyricsCandidate, LyricsContent, SOURCE_QQ};
 use crate::scraper::rate_limit_wait;
 
-const UA_BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-
 #[derive(Debug, Deserialize)]
 struct SearchResp {
     data: Option<SearchData>,
@@ -47,11 +45,8 @@ struct LyricResp {
     trans: Option<String>,
 }
 
-fn qq_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+fn qq_client() -> &'static reqwest::blocking::Client {
+    crate::scraper::browser_client()
 }
 
 pub fn search(title: &str, artist: &str, _album: &str) -> Result<Vec<LyricsCandidate>> {
@@ -65,7 +60,7 @@ pub fn search(title: &str, artist: &str, _album: &str) -> Result<Vec<LyricsCandi
         "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=15&p=1&t=0&w={}",
         encode(&query)
     );
-    let resp = qq_client()?
+    let resp = qq_client()
         .get(&url)
         .header("Referer", "https://y.qq.com")
         .header("Accept", "application/json")
@@ -106,11 +101,14 @@ pub fn search(title: &str, artist: &str, _album: &str) -> Result<Vec<LyricsCandi
 }
 
 pub fn fetch(mid: &str) -> Result<LyricsContent> {
+    if !crate::net_util::is_token_id(mid) {
+        return Err(anyhow!("候选 id 不合法"));
+    }
     rate_limit_wait();
     let url = format!(
         "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={mid}&format=json&nobase64=1&g_tk=5381"
     );
-    let resp = qq_client()?
+    let resp = qq_client()
         .get(&url)
         .header("Referer", "https://y.qq.com/n/ryqq/player")
         .header("Origin", "https://y.qq.com")

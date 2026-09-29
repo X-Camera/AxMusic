@@ -9,18 +9,13 @@ use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackDetail, SRC_QQ};
 use crate::lyrics::encode;
 use crate::scraper::rate_limit_wait;
 
-const UA_BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-
-fn client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+fn client() -> &'static reqwest::blocking::Client {
+    crate::scraper::browser_client()
 }
 
 fn get_json(url: &str) -> Result<serde_json::Value> {
     rate_limit_wait();
-    let resp = client()?
+    let resp = client()
         .get(url)
         .header("Referer", "https://y.qq.com")
         .header("Accept", "application/json")
@@ -176,6 +171,9 @@ struct AlbumSong {
 }
 
 pub fn fetch_release(album_mid: &str) -> Result<ReleaseDetail> {
+    if !crate::net_util::is_token_id(album_mid) {
+        return Err(anyhow!("专辑 mid 不合法"));
+    }
     let url = format!(
         "https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg?albummid={album_mid}&format=json"
     );
@@ -219,6 +217,9 @@ pub fn fetch_release(album_mid: &str) -> Result<ReleaseDetail> {
 }
 
 pub fn fetch_track(song_mid: &str) -> Result<TrackDetail> {
+    if !crate::net_util::is_token_id(song_mid) {
+        return Err(anyhow!("单曲 mid 不合法"));
+    }
     // musicu.fcg：data 参数为 JSON（get_song_detail_yqq）
     let data = format!(
         r#"{{"comm":{{"ct":24,"cv":0}},"songinfo":{{"module":"music.pf_song_detail_svr","method":"get_song_detail_yqq","param":{{"song_mid":"{song_mid}"}}}}}}"#

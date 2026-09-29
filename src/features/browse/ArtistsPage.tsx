@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { friendlyErr } from "../../lib/errors";
 import { ListPlus, Play, UserRound } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
@@ -39,7 +40,7 @@ export function ArtistsPage() {
       setArtists(list);
     } catch (e) {
       // 失败保留旧数据，错误态与空态分开
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setLoading(false);
     }

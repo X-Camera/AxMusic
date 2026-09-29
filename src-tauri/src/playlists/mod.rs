@@ -107,6 +107,8 @@ pub fn validate_name(name: &str) -> Result<String, String> {
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
         "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
+    // 保留名按首个点前主干判定（CON.txt 仍是保留名；歌单再挂 .m3u8 同理）
+    let stem = n.split('.').next().unwrap_or(n);
     let bad = n.is_empty()
         || n.len() > 100
         || n == "."
@@ -115,7 +117,7 @@ pub fn validate_name(name: &str) -> Result<String, String> {
         || n.ends_with('.')
         || n.chars()
             .any(|c| "\\/:*?\"<>|".contains(c) || c.is_control())
-        || RESERVED.iter().any(|r| n.eq_ignore_ascii_case(r))
+        || RESERVED.iter().any(|r| stem.eq_ignore_ascii_case(r))
         || is_favorites_id(n);
     if bad {
         return Err(if is_favorites_id(n) {

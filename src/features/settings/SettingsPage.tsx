@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { friendlyErr } from "../../lib/errors";
 import { FolderOpen, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -378,7 +379,7 @@ export function SettingsPage() {
         setAppInfo(a);
       })
       .catch((e) => {
-        if (!cancelled && gen === settingsGenRef.current) setError(String(e));
+        if (!cancelled && gen === settingsGenRef.current) setError(friendlyErr(e));
       });
     void api
       .shellMenuStatus()
@@ -418,7 +419,7 @@ export function SettingsPage() {
       setSettings(next);
       setError(null);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }, []);
 
@@ -707,7 +708,7 @@ export function SettingsPage() {
                           setShellMenu(s);
                           setError(null);
                         })
-                        .catch((e) => setError(String(e)))
+                        .catch((e) => setError(friendlyErr(e)))
                         .finally(() => setShellBusy(false));
                     }}
                   >
@@ -724,7 +725,7 @@ export function SettingsPage() {
                           setShellMenu(s);
                           setError(null);
                         })
-                        .catch((e) => setError(String(e)))
+                        .catch((e) => setError(friendlyErr(e)))
                         .finally(() => setShellBusy(false));
                     }}
                   >

@@ -1,4 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
+import { isNil, notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search } from "lucide-react";
@@ -6,6 +8,7 @@ import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import type { ArchiveStatus, LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
+import { promptText } from "../../lib/dialog";
 import { useApp } from "../../state/useApp";
 import { TopBar } from "../../components/TopBar";
 import { TrackTable } from "./TrackTable";
@@ -70,7 +73,7 @@ export function ManagePage() {
       setStats(st);
       setError(null);
       // 归档状态：仅已关联 catalog 的曲目有归档要求
-      const linkedIds = list.filter((t) => t.catalog_id != null).map((t) => t.id);
+      const linkedIds = list.filter((t) => notNil(t.catalog_id)).map((t) => t.id);
       if (linkedIds.length > 0) {
         const map = await api.archiveCheckBatch(linkedIds).catch(() => null);
         if (seq === tracksSeqRef.current) setArchiveMap(map);
@@ -80,7 +83,7 @@ export function ManagePage() {
     } catch (e) {
       if (seq !== tracksSeqRef.current) return;
       // 失败保留旧列表（避免瞬时故障把表格清空），错误条单独提示
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }, [missingOnly, unlinkedOnly]);
 
@@ -136,7 +139,7 @@ export function ManagePage() {
   /** 边栏底部操作对象：优先多选，否则当前激活行 */
   const actionTracks = useMemo(() => {
     if (selected.size > 0) return filtered.filter((t) => selected.has(t.id));
-    if (compareId != null) {
+    if (notNil(compareId)) {
       const row = filtered.find((t) => t.id === compareId);
       return row ? [row] : [];
     }
@@ -145,7 +148,7 @@ export function ManagePage() {
 
   /** 当前激活的单曲（边栏刮削按钮） */
   const activeTrack = useMemo(
-    () => (compareId != null ? (filtered.find((t) => t.id === compareId) ?? null) : null),
+    () => (notNil(compareId) ? (filtered.find((t) => t.id === compareId) ?? null) : null),
     [filtered, compareId],
   );
 
@@ -155,7 +158,7 @@ export function ManagePage() {
       if (mode === "new") {
         const parent = await open({ directory: true, multiple: false, title: "选择父目录" });
         if (!parent || Array.isArray(parent)) return;
-        const name = window.prompt("新建库文件夹名称", "AxMusic Library");
+        const name = await promptText("新建库文件夹名称", "AxMusic Library");
         if (!name) return;
         await api.initLibrary({ mode: "new", parent, name });
       } else {
@@ -165,7 +168,7 @@ export function ManagePage() {
       }
       await reloadRoot();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
@@ -178,7 +181,7 @@ export function ManagePage() {
       await reloadRoot();
       setSelected(new Set());
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
@@ -193,7 +196,7 @@ export function ManagePage() {
       await reloadTracks();
       setSelected(new Set());
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setScanning(false);
     }
@@ -369,7 +372,7 @@ export function ManagePage() {
             ref={tableScrollRef}
             onClick={(e) => {
               // 点空白处取消选中（行内点击的 target 会落在 tr.row 内）
-              if ((e.target as HTMLElement).closest("tr.row") == null) setCompareId(null);
+              if (isNil((e.target as HTMLElement).closest("tr.row"))) setCompareId(null);
             }}
           >
             {filtered.length === 0 ? (
@@ -397,7 +400,7 @@ export function ManagePage() {
           {!sideOpen && (
             <>
               <div className="manage-side-scroll">
-                {compareId != null ? (
+                {notNil(compareId) ? (
                   <ComparePanel
                     key={`${compareId}-${compareVersion}`}
                     trackId={compareId}

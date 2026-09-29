@@ -3,6 +3,8 @@ import { ChevronDown, ChevronUp, Heart, ListMusic, Play, Plus, Trash2 } from "lu
 
 import { api, entryToQueueItem, formatTime } from "../../lib/api";
 import type { PlaylistDetail, PlaylistSummary } from "../../lib/types";
+import { confirmText, promptText } from "../../lib/dialog";
+import { friendlyErr } from "../../lib/errors";
 import { useApp } from "../../state/useApp";
 import { useFavorites } from "../../state/useFavorites";
 import { TopBar } from "../../components/TopBar";
@@ -35,7 +37,7 @@ export function PlaylistsPage() {
       setNoRoot(false);
     } catch (e) {
       if (seq !== listSeqRef.current) return;
-      const msg = String(e);
+      const msg = friendlyErr(e);
       setList([]);
       setNoRoot(msg.includes("尚未初始化"));
       if (!msg.includes("尚未初始化")) setError(msg);
@@ -56,7 +58,7 @@ export function PlaylistsPage() {
     } catch (e) {
       if (seq !== detailSeqRef.current) return;
       setDetail(null);
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }, []);
 
@@ -90,37 +92,37 @@ export function PlaylistsPage() {
   }, [favRev, selected, reload, loadDetail]);
 
   async function onCreate() {
-    const name = window.prompt("新建歌单名称", "");
-    if (!name || !name.trim()) return;
+    const name = await promptText("新建歌单名称", "");
+    if (!name) return;
     try {
       await api.playlistCreate(name.trim(), []);
       await reload();
       setSelected(name.trim());
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
   async function onRename(name: string) {
-    const next = window.prompt("重命名歌单", name);
+    const next = await promptText("重命名歌单", name);
     if (!next || !next.trim() || next.trim() === name) return;
     try {
       await api.playlistRename(name, next.trim());
       await reload();
       if (selected === name) setSelected(next.trim());
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
   async function onDelete(name: string) {
-    if (!window.confirm(`删除歌单「${name}」？`)) return;
+    if (!(await confirmText("删除歌单", `删除歌单「${name}」？`))) return;
     try {
       await api.playlistDelete(name);
       if (selected === name) setSelected(null);
       await reload();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
@@ -144,7 +146,7 @@ export function PlaylistsPage() {
     try {
       setDetail(await api.playlistMoveTrack(detail.name, entry.rel_path, delta));
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
@@ -157,7 +159,7 @@ export function PlaylistsPage() {
       if (detail.is_favorites) void useFavorites.getState().reload();
       else void reload();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 
@@ -172,7 +174,7 @@ export function PlaylistsPage() {
       if (detail.is_favorites) void useFavorites.getState().reload();
       setToast(`已清理 ${missing} 首失效条目`);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     }
   }
 

@@ -33,7 +33,7 @@ pub fn search(title: &str, artist: &str, album: &str) -> Result<Vec<LyricsCandid
     if !album.trim().is_empty() {
         url.push_str(&format!("&album_name={}", encode(album.trim())));
     }
-    let resp = http_client()?
+    let resp = http_client()
         .get(&url)
         .header("Accept", "application/json")
         .send()
@@ -72,9 +72,13 @@ pub fn search(title: &str, artist: &str, album: &str) -> Result<Vec<LyricsCandid
 }
 
 pub fn fetch(id: &str) -> Result<LyricsContent> {
+    // id 来自前端候选，拼进 URL 路径前只放行纯数字
+    if !crate::net_util::is_numeric_id(id) {
+        return Err(anyhow!("候选 id 不合法"));
+    }
     rate_limit_wait();
     let url = format!("{LRCLIB}/get/{id}");
-    let resp = http_client()?
+    let resp = http_client()
         .get(&url)
         .header("Accept", "application/json")
         .send()

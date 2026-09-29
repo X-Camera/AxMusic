@@ -43,13 +43,18 @@
 }
 
 .pl-row-actions {
-  display: none;
+  display: flex;
   gap: 2px;
   flex-shrink: 0;
+  /* 默认隐形但仍在 Tab 序列：键盘可聚焦，聚焦时经 focus-within 显形 */
+  opacity: 0;
+  pointer-events: none;
 }
 
-.pl-row:hover .pl-row-actions {
-  display: flex;
+.pl-row:hover .pl-row-actions,
+.pl-row:focus-within .pl-row-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .pl-head {

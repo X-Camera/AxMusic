@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use super::rate_limit_wait;
 use crate::lyrics::encode;
 
-const UA_BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-
 /// 封面候选（搜索结果项）。`url` 为大图地址，采纳时 [`download_image`] 下载。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverCandidate {
@@ -42,27 +40,38 @@ pub fn search_all(release_mbid: &str, album: &str, artist: &str) -> Vec<CoverCan
     out
 }
 
-/// 下载封面字节（>1KB 才算有效）。网络错误给出可操作的中文提示。
+/// 下载封面字节。SSRF 防护：https + 域名白名单；有效性用魔数而非体积。
+/// 网络错误给出可操作的中文提示。
 pub fn download_image(url: &str) -> Result<Vec<u8>> {
+    if !crate::net_util::is_allowed_image_url(url) {
+        bail!("封面地址不在允许的图床白名单内");
+    }
     let resp = get(url).map_err(|e| friendly_net_err(&e))?;
     if !resp.status().is_success() {
         bail!("封面下载失败：HTTP {}", resp.status());
     }
-    let bytes = resp.bytes().map_err(|e| friendly_net_err(&e))?;
-    if bytes.len() < 1024 {
+    if !crate::net_util::content_type_is_image(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+    ) {
+        bail!("封面下载失败：响应不是图片");
+    }
+    // 上限 20MB，防异常大响应占满内存
+    let bytes = resp
+        .bytes()
+        .map_err(|e| friendly_net_err(&e))?;
+    if bytes.len() > 20 * 1024 * 1024 {
+        bail!("封面下载失败：图片过大");
+    }
+    if crate::net_util::sniff_image_mime(&bytes).is_none() {
         bail!("封面下载失败：图片数据无效");
     }
     Ok(bytes.to_vec())
 }
 
 fn get(url: &str) -> reqwest::Result<reqwest::blocking::Response> {
-    reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(15))
-        .connect_timeout(std::time::Duration::from_secs(6))
-        .build()?
-        .get(url)
-        .send()
+    crate::scraper::browser_client().get(url).send()
 }
 
 /// 网络层错误 → 友好提示（境外源国内常见不可达）。
@@ -100,6 +109,9 @@ struct CaaThumbs {
 fn search_caa(release_mbid: &str) -> Result<Vec<CoverCandidate>> {
     let mbid = release_mbid.trim();
     if mbid.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !crate::net_util::is_mbid(mbid) {
         return Ok(Vec::new());
     }
     rate_limit_wait();
@@ -221,10 +233,7 @@ fn search_netease(album: &str, artist: &str) -> Result<Vec<CoverCandidate>> {
         encode(&q)
     );
     // 网易云要求带 Referer
-    let resp = reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?
+    let resp = crate::scraper::browser_client()
         .get(&url)
         .header("Referer", "https://music.163.com")
         .header("Accept", "application/json")
@@ -292,10 +301,7 @@ fn search_qq(album: &str, artist: &str) -> Result<Vec<CoverCandidate>> {
         "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=4&p=1&t=0&w={}",
         encode(&q)
     );
-    let resp = reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?
+    let resp = crate::scraper::browser_client()
         .get(&url)
         .header("Referer", "https://y.qq.com")
         .header("Accept", "application/json")
@@ -315,6 +321,9 @@ fn search_qq(album: &str, artist: &str) -> Result<Vec<CoverCandidate>> {
         let Some(mid) = s.albummid.filter(|m| !m.is_empty()) else {
             continue;
         };
+        if !crate::net_util::is_token_id(&mid) {
+            continue;
+        }
         let artist = s
             .singer
             .unwrap_or_default()

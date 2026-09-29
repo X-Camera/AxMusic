@@ -1365,9 +1365,21 @@ fn pick_unique_rematch(
 pub fn create_library_dir(parent: &Path, name: &str) -> Result<PathBuf> {
     let name = name.trim();
     anyhow::ensure!(!name.is_empty(), "文件夹名不能为空");
+    anyhow::ensure!(name != "." && name != "..", "文件夹名不合法");
     anyhow::ensure!(
         !name.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*']),
         "文件夹名含非法字符"
+    );
+    // 保留设备名（含扩展名变体）
+    let stem = name.split('.').next().unwrap_or(name);
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let upper_stem = stem.to_ascii_uppercase();
+    anyhow::ensure!(
+        !RESERVED.iter().any(|r| *r == upper_stem.as_str()),
+        "文件夹名是 Windows 保留名"
     );
     let dir = parent.join(name);
     std::fs::create_dir_all(&dir)

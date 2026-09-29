@@ -1,7 +1,7 @@
 //! 元数据刮削：MusicBrainz + iTunes + 网易云 + QQ音乐 四源聚合（搜索 → 候选 → ApplyPlan）。
 //! Never writes audio files here — writing goes through [`crate::tagger`].
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -28,13 +28,44 @@ const USER_AGENT: &str = concat!(
     " ( https://github.com/axmusic/axmusic )"
 );
 
+/// 浏览器 UA：网易云/QQ/封面 CDN 要求。
+const UA_BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
 /// ~1 request / second (MusicBrainz rate limit).
 const MIN_INTERVAL: Duration = Duration::from_millis(1100);
 
 static RATE: Mutex<Option<Instant>> = Mutex::new(None);
+static APP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+static BROWSER_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
+/// MusicBrainz 合规 UA（对外暴露便于排查/测试）。
+#[allow(dead_code)]
 pub fn user_agent() -> &'static str {
     USER_AGENT
+}
+
+/// 进程级共享 Client（App UA）：复用连接池，避免每请求新建。
+pub fn http_client() -> &'static reqwest::blocking::Client {
+    APP_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(6))
+            .build()
+            .expect("reqwest client")
+    })
+}
+
+/// 进程级共享 Client（浏览器 UA）：网易云/QQ/封面图床。
+pub fn browser_client() -> &'static reqwest::blocking::Client {
+    BROWSER_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent(UA_BROWSER)
+            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(6))
+            .build()
+            .expect("reqwest client")
+    })
 }
 
 /// Serialize outbound MusicBrainz/CAA calls to ≤1 req/s.

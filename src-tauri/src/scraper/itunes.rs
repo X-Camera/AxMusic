@@ -10,16 +10,13 @@ use crate::scraper::rate_limit_wait;
 
 const ROOT: &str = "https://itunes.apple.com";
 
-fn client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(crate::scraper::user_agent())
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+fn client() -> &'static reqwest::blocking::Client {
+    crate::scraper::http_client()
 }
 
 fn get_json(url: &str) -> Result<serde_json::Value> {
     rate_limit_wait();
-    let resp = client()?.get(url).send().context("iTunes 请求失败")?;
+    let resp = client().get(url).send().context("iTunes 请求失败")?;
     if !resp.status().is_success() {
         return Err(anyhow!("iTunes HTTP {}", resp.status()));
     }
@@ -150,6 +147,9 @@ pub fn search_tracks(title: &str, artist: &str) -> Result<Vec<ScrapeCandidate>> 
 
 /// lookup 同样吃 storefront：先试 TW 再回落默认店
 fn lookup_tw_then_default(id: &str, entity: Option<&str>) -> Result<Vec<serde_json::Value>> {
+    if !crate::net_util::is_numeric_id(id) {
+        return Err(anyhow!("iTunes id 不合法"));
+    }
     for country in ["&country=TW", ""] {
         let entity_qs = entity.map(|e| format!("&entity={e}")).unwrap_or_default();
         let url = format!("{ROOT}/lookup?id={id}{entity_qs}&limit=200{country}");

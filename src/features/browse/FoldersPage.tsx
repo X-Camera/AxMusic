@@ -1,4 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import {
@@ -203,7 +205,7 @@ export function FoldersPage() {
       } catch (e) {
         if (gen === enrichGen.current) {
           setFiles([]);
-          setError(String(e));
+          setError(friendlyErr(e));
         }
       } finally {
         if (gen === enrichGen.current) setLoading(false);
@@ -247,7 +249,7 @@ export function FoldersPage() {
         setTree([]);
         setCurrentPath(null);
         setFiles([]);
-        setError(String(e));
+        setError(friendlyErr(e));
       }
     },
     [loadFiles, recursive],
@@ -338,7 +340,7 @@ export function FoldersPage() {
         );
       } catch (e) {
         setTree((t) => mapNode(t, node.path, (n) => ({ ...n, loading: false })));
-        setError(String(e));
+        setError(friendlyErr(e));
       }
       return;
     }
@@ -391,7 +393,7 @@ export function FoldersPage() {
     setSelected((prev) => {
       const next = new Set(prev);
       const path = files[idx].path;
-      if (shift && lastClickIdx.current != null) {
+      if (shift && notNil(lastClickIdx.current)) {
         const a = Math.min(lastClickIdx.current, idx);
         const b = Math.max(lastClickIdx.current, idx);
         for (let i = a; i <= b; i++) next.add(files[i].path);

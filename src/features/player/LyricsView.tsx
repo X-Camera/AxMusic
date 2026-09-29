@@ -101,7 +101,9 @@ export const LyricsView = forwardRef<LyricsViewHandle, LyricsViewProps>(
           <Fragment key={rebuildKey}>
             {lines.map((l: LrcLine, i) => {
               const on = i === activeIdx;
-              const state = on ? "on" : i < activeIdx ? "past" : "next";
+              let state = "next";
+              if (on) state = "on";
+              else if (i < activeIdx) state = "past";
               return (
                 <div
                   key={`${l.timeMs}-${i}`}

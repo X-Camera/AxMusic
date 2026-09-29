@@ -6,6 +6,7 @@ mod import;
 mod library;
 mod listen_history;
 mod lyrics;
+mod net_util;
 mod paths;
 mod archive;
 mod play_session;
@@ -235,6 +236,8 @@ pub fn run() {
             commands::replaygain_write,
             commands::lyrics_search,
             commands::lyrics_fetch,
+            commands::set_pending_lyrics_target,
+            commands::take_pending_lyrics_target,
             commands::lyrics_save,
             commands::lyrics_export_sidecar,
             commands::lyrics_embed_sidecar,

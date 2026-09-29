@@ -1,4 +1,5 @@
 import { Music } from "lucide-react";
+import { isNil, notNil } from "../../lib/nil";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import type { ArchiveStatus, TrackRow } from "../../lib/types";
@@ -30,7 +31,7 @@ function matchYear(file: string, catalog: string | null): boolean {
 }
 
 function matchNo(file: number | null, catalog: number | null): boolean {
-  return file != null && catalog != null && file === catalog;
+  return notNil(file) && notNil(catalog) && file === catalog;
 }
 
 /** 无损容器扩展名（格式列标签用 success 描边区分） */
@@ -241,7 +242,7 @@ export function TrackTable({
                 {t.year || "—"}
               </td>
               <td
-                className={`mono${mNo ? " cell-match" : ""}${t.track_no != null ? "" : " cell-empty"}`}
+                className={`mono${mNo ? " cell-match" : ""}${notNil(t.track_no) ? "" : " cell-empty"}`}
               >
                 {t.track_no ?? "—"}
               </td>
@@ -268,11 +269,11 @@ export function TrackTable({
                 </span>
               </td>
               <td>
-                {t.catalog_id == null ? (
+                {isNil(t.catalog_id) ? (
                   <span className="cell-empty" title="先要刮削，关联后才检查归档">
                     —
                   </span>
-                ) : archiveMap && archiveMap[t.id] != null ? (
+                ) : archiveMap && notNil(archiveMap[t.id]) ? (
                   archiveMap[t.id].ok ? (
                     <span className="cell-ok" title="归档规范">✓</span>
                   ) : (

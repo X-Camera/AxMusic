@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 
 import type { QueueItem } from "../lib/types";
 import { api, formatTime } from "../lib/api";
+import { alertError, promptText } from "../lib/dialog";
 import { QUEUE_DROP_ZONE } from "../lib/dropOpen";
 import { useApp } from "../state/useApp";
 import { FavoriteHeart } from "./FavoriteHeart";
@@ -23,8 +24,8 @@ export function QueuePanel() {
 
   async function saveQueueAs() {
     if (queueLen === 0) return;
-    const name = window.prompt("存为歌单名称", "");
-    if (!name || !name.trim()) return;
+    const name = await promptText("存为歌单名称", "");
+    if (!name) return;
     try {
       await api.playlistCreate(
         name.trim(),
@@ -36,7 +37,7 @@ export function QueuePanel() {
         })),
       );
     } catch (e) {
-      window.alert(String(e));
+      await alertError(e);
     }
   }
 

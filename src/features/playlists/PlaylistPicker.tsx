@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { friendlyErr } from "../../lib/errors";
 import { Heart, ListPlus, X } from "lucide-react";
 
 import { api } from "../../lib/api";
@@ -36,7 +37,7 @@ export function PlaylistPicker({
       if (isFavorites) void useFavorites.getState().reload();
       onAdded(name);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setBusy(false);
     }
@@ -51,7 +52,7 @@ export function PlaylistPicker({
       await api.playlistCreate(n, items);
       onAdded(n);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setBusy(false);
     }

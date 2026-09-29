@@ -966,14 +966,8 @@ pub fn is_in_library(state: State<'_, AppState>, path: String) -> Result<bool, S
     let Some(root) = root else {
         return Ok(false);
     };
-    let src = PathBuf::from(&path);
-    let (Ok(src_can), Ok(root_can)) = (src.canonicalize(), PathBuf::from(&root).canonicalize())
-    else {
-        // Fallback: prefix check on normalized strings
-        let norm = |s: &str| s.replace('/', "\\").to_lowercase();
-        return Ok(norm(&path).starts_with(&norm(&root)));
-    };
-    Ok(src_can.starts_with(&root_can))
+    // 组件级比较：字符串前缀会把 `D:\Music` 误判进 `D:\Music2`
+    Ok(crate::paths::path_under_root(&path, &root))
 }
 
 /// 纳入库管理：copy file into library (lossless-archive template) + register.
@@ -1013,18 +1007,14 @@ pub fn include_in_library(
     }
 
     // Same-file shortcut：已在库内 → 仅重新登记
-    if let Ok(src_can) = src.canonicalize() {
-        if let Ok(root_can) = root.canonicalize() {
-            if src_can.starts_with(&root_can) {
-                let mut row = scanner::read_track(&src).map_err(|e| e.to_string())?;
-                row.path = src.to_string_lossy().to_string();
-                register(&state, &row, &src)?;
-                return Ok(IncludeResult {
-                    copied_to: row.path.clone(),
-                    track: row,
-                });
-            }
-        }
+    if crate::paths::path_under_root(&src.to_string_lossy(), &root.to_string_lossy()) {
+        let mut row = scanner::read_track(&src).map_err(|e| e.to_string())?;
+        row.path = src.to_string_lossy().to_string();
+        register(&state, &row, &src)?;
+        return Ok(IncludeResult {
+            copied_to: row.path.clone(),
+            track: row,
+        });
     }
 
     let mut row = scanner::read_track(&src).map_err(|e| e.to_string())?;
@@ -1637,8 +1627,25 @@ pub async fn list_dir_audio_recursive(path: String) -> Result<Vec<FolderFile>, S
 
 use crate::lyrics::{self, LyricsCandidate, LyricsContent};
 
+/// 歌词子窗口冷启动目标：路径/曲名不进 URL（历史/崩溃转储可见），
+/// 主窗口创建前写入，子窗口挂载后取走。
+static PENDING_LYRICS_TARGET: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+#[tauri::command]
+pub fn set_pending_lyrics_target(target: serde_json::Value) {
+    if let Ok(mut g) = PENDING_LYRICS_TARGET.lock() {
+        *g = Some(target);
+    }
+}
+
+#[tauri::command]
+pub fn take_pending_lyrics_target() -> Option<serde_json::Value> {
+    PENDING_LYRICS_TARGET.lock().ok().and_then(|mut g| g.take())
+}
+
 /// 歌词操作目标：库内 `track_id`（再查 path）或直接 `path`（满窗播放的库外文件）。
 /// 库外返回 `(None, path)`，不碰 DB。
+/// 只接受音频扩展名的真实文件路径，拒绝 `..` 穿越与非音频目标。
 fn resolve_lyrics_target(
     state: &State<'_, AppState>,
     track_id: Option<i64>,
@@ -1651,13 +1658,33 @@ fn resolve_lyrics_target(
             .get_track_by_id(id)
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?;
-        return Ok((Some(id), PathBuf::from(row.path)));
+        let p = PathBuf::from(&row.path);
+        if !is_audio_path(&p) {
+            return Err("曲目路径不是音频文件".into());
+        }
+        return Ok((Some(id), p));
     }
     let p = path
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .ok_or("缺少曲目路径")?;
-    Ok((None, PathBuf::from(p)))
+    let p = PathBuf::from(&p);
+    // 拒绝 `..`/`.` 段，避免 IPC 传入穿越路径把 .lrc 写到任意目录
+    if p.components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        return Err("曲目路径不合法".into());
+    }
+    if !is_audio_path(&p) {
+        return Err("曲目路径不是音频文件".into());
+    }
+    if !p.is_file() {
+        return Err("文件不存在".into());
+    }
+    Ok((None, p))
 }
 
 /// 解析歌词目标的 artist/title（用于规范化命名查找）。
@@ -2764,12 +2791,26 @@ pub async fn cover_apply(
         )
     };
 
-    // MB 沿用 `{mbid}.jpg`（兼容存量封面文件）；其它源 id 可能跨源撞名，加源前缀
+    // MB 沿用 `{mbid}.jpg`（兼容存量封面文件）；其它源 id 可能跨源撞名，加源前缀。
+    // 文件名只留安全字符，防止 id 携带路径分隔符写出 covers/ 外。
+    let safe = |s: &str| -> String {
+        let cleaned: String = s
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        cleaned.chars().take(80).collect()
+    };
     let filename = if !release_mbid.is_empty() {
         if source.is_empty() || source == crate::scraper::SRC_MB {
-            format!("{release_mbid}.jpg")
+            format!("{}.jpg", safe(&release_mbid))
         } else {
-            format!("{source}-{release_mbid}.jpg")
+            format!("{}-{}.jpg", safe(&source), safe(&release_mbid))
         }
     } else if let Some(id) = catalog_id {
         format!("cat-{id}.jpg")

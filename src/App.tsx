@@ -19,6 +19,7 @@ import { SettingsPage } from "./features/settings/SettingsPage";
 import { VizSettingsWindow } from "./features/visualizer/VizSettingsWindow";
 import { useApp } from "./state/useApp";
 import { useFavorites } from "./state/useFavorites";
+import { DialogHost } from "./lib/dialog";
 
 function windowKind(): string | null {
   return new URLSearchParams(window.location.search).get("win");
@@ -74,6 +75,7 @@ export default function App() {
       <MiniPlayer />
       {fullPlayer && <NowPlayingPage />}
       <CloseDialog />
+      <DialogHost />
       <DropOpenLayer />
     </div>
   );

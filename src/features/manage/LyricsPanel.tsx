@@ -1,4 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
+import { isNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { Download, FileInput, FileOutput, Loader2, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -148,7 +150,7 @@ export function LyricsPanel({
       await api.lyricsSearch(sid, trackId, artist, title, path);
     } catch (e) {
       if (sid !== searchIdRef.current) return;
-      setError(String(e));
+      setError(friendlyErr(e));
       setSourceDone({});
     }
   }
@@ -165,7 +167,7 @@ export function LyricsPanel({
       if (!aliveRef.current || seq !== pickSeqRef.current) return;
       setPreview(content);
     } catch (e) {
-      if (aliveRef.current && seq === pickSeqRef.current) setError(String(e));
+      if (aliveRef.current && seq === pickSeqRef.current) setError(friendlyErr(e));
     } finally {
       if (aliveRef.current && seq === pickSeqRef.current) setPreviewLoading(false);
     }
@@ -179,7 +181,7 @@ export function LyricsPanel({
   }
 
   async function save(mode: "sidecar" | "embed") {
-    if (candId == null) return;
+    if (isNil(candId)) return;
     setSaving(true);
     setError(null);
     try {
@@ -187,7 +189,7 @@ export function LyricsPanel({
       const msg = await api.lyricsSave(trackId, candId, mode, path);
       afterWrite(msg);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setSaving(false);
     }
@@ -204,7 +206,7 @@ export function LyricsPanel({
           : await api.lyricsEmbedSidecar(trackId, path);
       afterWrite(msg);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setSaving(false);
     }
@@ -357,7 +359,7 @@ export function LyricsPanel({
             <span className="tertiary">保存为：</span>
             <button
               className={defaultSave === "sidecar" ? "btn btn-primary" : "btn"}
-              disabled={candId == null || saving || !previewText}
+              disabled={isNil(candId) || saving || !previewText}
               title={
                 hasSidecar
                   ? "替换外挂 .lrc（推荐，兼容性好，不动音频文件）"
@@ -370,7 +372,7 @@ export function LyricsPanel({
             </button>
             <button
               className={defaultSave === "embed" ? "btn btn-primary" : "btn"}
-              disabled={candId == null || saving || !previewText}
+              disabled={isNil(candId) || saving || !previewText}
               title={
                 hasEmbedded
                   ? "替换文件标签内嵌歌词（LYRICS/USLT）"

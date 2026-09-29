@@ -1,4 +1,5 @@
 import { ArrowLeft, Search } from "lucide-react";
+import { notNil } from "../lib/nil";
 import type { ReactNode } from "react";
 
 import { ThemeToggle } from "./ThemeToggle";
@@ -27,7 +28,7 @@ export function TopBar({
           <ArrowLeft size={15} /> 返回
         </button>
       )}
-      {title != null && title !== "" && <h1 className="topbar-title">{title}</h1>}
+      {notNil(title) && title !== "" && <h1 className="topbar-title">{title}</h1>}
       {onSearch && (
         <div className="topbar-search">
           <Search size={14} className="tertiary" />

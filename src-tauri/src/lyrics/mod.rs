@@ -44,12 +44,9 @@ pub struct LyricsContent {
     pub translation: Option<String>,
 }
 
-/// Shared blocking client builder (UA carries app identity per source policy).
-pub(crate) fn http_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(crate::scraper::user_agent())
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+/// Shared blocking client（App UA，进程级复用连接池）。
+pub(crate) fn http_client() -> &'static reqwest::blocking::Client {
+    crate::scraper::http_client()
 }
 
 /// Minimal percent-encoding for query params.

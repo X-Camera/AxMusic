@@ -1,12 +1,10 @@
 //! MusicBrainz WS/2 JSON client (search + release tracklist).
 
-use std::time::Duration;
-
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{rate_limit_wait, user_agent, ScrapeCandidate, SRC_MB};
+use super::{rate_limit_wait, ScrapeCandidate, SRC_MB};
 
 /// 通用结构在 scraper/mod.rs 定义，此处 re-export 保持旧路径可用
 pub use super::{ReleaseDetail, ReleaseTrack};
@@ -62,11 +60,8 @@ struct MbRecording {
     artist_credit: Option<Vec<MbNameCredit>>,
 }
 
-fn http_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(user_agent())
-        .timeout(Duration::from_secs(20))
-        .build()?)
+fn http_client() -> &'static reqwest::blocking::Client {
+    crate::scraper::http_client()
 }
 
 fn credit_name(credit: &Option<Vec<MbNameCredit>>) -> String {
@@ -101,7 +96,7 @@ fn year_of_any(a: &Option<String>, b: &Option<String>) -> String {
 
 fn get_json(url: &str) -> Result<Value> {
     rate_limit_wait();
-    let client = http_client()?;
+    let client = http_client();
     let resp = client
         .get(url)
         .header("Accept", "application/json")
@@ -121,13 +116,12 @@ fn mb_get(path_and_query: &str) -> Result<Value> {
 
 /// Search releases (album scrape). Returns display candidates.
 pub fn search_releases(album: &str, artist: &str) -> Result<Vec<ScrapeCandidate>> {
-    let mut q = format!("release:\"{}\"", album.trim().replace('"', ""));
+    let album_esc = crate::net_util::escape_lucene(album.trim());
+    let mut q = format!("release:\"{album_esc}\"");
     let artist = artist.trim();
     if !artist.is_empty() {
-        q.push_str(&format!(
-            " AND artist:\"{}\"",
-            artist.replace('"', "").replace(':', " ")
-        ));
+        let artist_esc = crate::net_util::escape_lucene(artist);
+        q.push_str(&format!(" AND artist:\"{artist_esc}\""));
     }
     let url = format!(
         "release/?query={}&fmt=json&limit=15",
@@ -175,13 +169,12 @@ pub fn search_releases(album: &str, artist: &str) -> Result<Vec<ScrapeCandidate>
 
 /// Search recordings (single-track scrape).
 pub fn search_recordings(title: &str, artist: &str) -> Result<Vec<ScrapeCandidate>> {
-    let mut q = format!("recording:\"{}\"", title.trim().replace('"', ""));
+    let title_esc = crate::net_util::escape_lucene(title.trim());
+    let mut q = format!("recording:\"{title_esc}\"");
     let artist = artist.trim();
     if !artist.is_empty() {
-        q.push_str(&format!(
-            " AND artist:\"{}\"",
-            artist.replace('"', "").replace(':', " ")
-        ));
+        let artist_esc = crate::net_util::escape_lucene(artist);
+        q.push_str(&format!(" AND artist:\"{artist_esc}\""));
     }
     let url = format!(
         "recording/?query={}&fmt=json&limit=15",
@@ -222,6 +215,9 @@ pub struct RecordingDetail {
 
 /// GET /recording/{id}?inc=artist-credits
 pub fn fetch_recording(recording_id: &str) -> Result<RecordingDetail> {
+    if !crate::net_util::is_mbid(recording_id) {
+        return Err(anyhow!("recording id 不合法"));
+    }
     let v = mb_get(&format!("recording/{recording_id}?inc=artist-credits&fmt=json"))?;
     let rec: MbRecording = serde_json::from_value(v).context("recording 结构解析失败")?;
     Ok(RecordingDetail {
@@ -233,6 +229,9 @@ pub fn fetch_recording(recording_id: &str) -> Result<RecordingDetail> {
 
 /// Fetch release + recordings + artist-credit.
 pub fn fetch_release(release_id: &str) -> Result<ReleaseDetail> {
+    if !crate::net_util::is_mbid(release_id) {
+        return Err(anyhow!("release id 不合法"));
+    }
     let url = format!(
         "release/{release_id}?inc=recordings+artist-credits&fmt=json"
     );

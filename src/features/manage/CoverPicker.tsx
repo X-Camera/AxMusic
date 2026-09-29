@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { isNil, notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { Loader2, X } from "lucide-react";
 
 import { api } from "../../lib/api";
@@ -37,7 +39,7 @@ export function CoverPicker({
       })
       .catch((e) => {
         if (!cancelled) {
-          setError(String(e));
+          setError(friendlyErr(e));
           setItems([]);
         }
       });
@@ -54,7 +56,7 @@ export function CoverPicker({
       const dataUrl = await api.coverApply(trackId, c.url);
       onApplied(dataUrl);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
       setPicking(null);
     }
   }
@@ -73,7 +75,7 @@ export function CoverPicker({
         </p>
         {error && <div className="cpk-error">{error}</div>}
         <div className="cpk-body">
-          {items == null ? (
+          {isNil(items) ? (
             <div className="empty-state">
               <Loader2 size={16} className="spin" /> 四源搜索中…
             </div>
@@ -92,7 +94,7 @@ export function CoverPicker({
                 return (
                   <div
                     key={c.id}
-                    className={`cpk-card${picking != null ? " busy" : ""}`}
+                    className={`cpk-card${notNil(picking) ? " busy" : ""}`}
                     role="button"
                     tabIndex={0}
                     title={`采纳这张封面（${SOURCE_LABEL[c.source] ?? c.source}）`}

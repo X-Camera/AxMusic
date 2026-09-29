@@ -43,7 +43,11 @@ button:focus {
   outline: none;
 }
 
-button:focus-visible {
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible,
+a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

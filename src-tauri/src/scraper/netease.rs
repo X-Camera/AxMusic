@@ -8,18 +8,13 @@ use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackDetail, SRC_NETEA
 use crate::lyrics::encode;
 use crate::scraper::rate_limit_wait;
 
-const UA_BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-
-fn client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+fn client() -> &'static reqwest::blocking::Client {
+    crate::scraper::browser_client()
 }
 
 fn get_json(url: &str) -> Result<serde_json::Value> {
     rate_limit_wait();
-    let resp = client()?
+    let resp = client()
         .get(url)
         .header("Referer", "https://music.163.com")
         .header("Accept", "application/json")
@@ -178,6 +173,9 @@ struct AlbumSong {
 }
 
 pub fn fetch_release(album_id: &str) -> Result<ReleaseDetail> {
+    if !crate::net_util::is_numeric_id(album_id) {
+        return Err(anyhow!("专辑 id 不合法"));
+    }
     let url = format!("https://music.163.com/api/album/{album_id}");
     let v = get_json(&url)?;
     let album = v.get("album").cloned().ok_or_else(|| anyhow!("网易云未找到该专辑"))?;
@@ -228,6 +226,9 @@ pub fn fetch_release(album_id: &str) -> Result<ReleaseDetail> {
 }
 
 pub fn fetch_track(song_id: &str) -> Result<TrackDetail> {
+    if !crate::net_util::is_numeric_id(song_id) {
+        return Err(anyhow!("单曲 id 不合法"));
+    }
     let url = format!("https://music.163.com/api/song/detail?ids=%5B{song_id}%5D");
     let v = get_json(&url)?;
     let first = v

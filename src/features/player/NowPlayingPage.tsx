@@ -38,7 +38,6 @@ import {
 import { WindowControls } from "../../components/WindowControls";
 import { ContextMenu } from "../../components/ContextMenu";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
-import { ReplayGainBadge } from "../../components/ReplayGainBadge";
 import { useApp } from "../../state/useApp";
 import { LyricsView, type LyricsViewHandle } from "./LyricsView";
 import { LyricsStyleDialog } from "./LyricsStyleDialog";
@@ -385,7 +384,11 @@ export function NowPlayingPage() {
     >
       <div
         className="np-bg"
-        style={cover ? { backgroundImage: `url(${cover})` } : undefined}
+        style={
+          cover && cover.startsWith("data:image/")
+            ? { backgroundImage: `url("${cover.replace(/"/g, "")}")` }
+            : undefined
+        }
         aria-hidden
       />
       <div className="np-bg-veil" aria-hidden />
@@ -416,7 +419,6 @@ export function NowPlayingPage() {
             <div>
               <div className="np-title-row">
                 <h2 className="np-title">{title}</h2>
-                <ReplayGainBadge info={player?.replaygain} size="md" />
                 {track && (
                   <FavoriteHeart
                     item={{

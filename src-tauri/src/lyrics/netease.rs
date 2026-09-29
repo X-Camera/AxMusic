@@ -7,8 +7,6 @@ use serde::Deserialize;
 use super::{encode, LyricsCandidate, LyricsContent, SOURCE_NETEASE};
 use crate::scraper::rate_limit_wait;
 
-const UA_BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-
 #[derive(Debug, Deserialize)]
 struct SearchResp {
     result: Option<SearchResult>,
@@ -50,11 +48,8 @@ struct LyricBlock {
     lyric: Option<String>,
 }
 
-fn netease_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(UA_BROWSER)
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+fn netease_client() -> &'static reqwest::blocking::Client {
+    crate::scraper::browser_client()
 }
 
 pub fn search(title: &str, artist: &str, _album: &str) -> Result<Vec<LyricsCandidate>> {
@@ -68,7 +63,7 @@ pub fn search(title: &str, artist: &str, _album: &str) -> Result<Vec<LyricsCandi
         "https://music.163.com/api/search/get/web?type=1&limit=15&s={}",
         encode(&query)
     );
-    let resp = netease_client()?
+    let resp = netease_client()
         .get(&url)
         .header("Referer", "https://music.163.com")
         .header("Accept", "application/json")
@@ -109,11 +104,14 @@ pub fn search(title: &str, artist: &str, _album: &str) -> Result<Vec<LyricsCandi
 }
 
 pub fn fetch(id: &str) -> Result<LyricsContent> {
+    if !crate::net_util::is_numeric_id(id) {
+        return Err(anyhow!("候选 id 不合法"));
+    }
     rate_limit_wait();
     let url = format!(
         "https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1"
     );
-    let resp = netease_client()?
+    let resp = netease_client()
         .get(&url)
         .header("Referer", "https://music.163.com")
         .header("Accept", "application/json")

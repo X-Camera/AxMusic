@@ -1,10 +1,12 @@
 import { listen } from "@tauri-apps/api/event";
+import { isNil, notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { Loader2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { nextSearchId } from "../../lib/async";
-import type { ApplyPlan, ScrapeBatch, ScrapeCandidate, TrackRow } from "../../lib/types";
+import type { ApplyPlan, FieldChange, ScrapeBatch, ScrapeCandidate, TrackRow } from "../../lib/types";
 import "./ScrapeWizard.css";
 
 /** 刮削源展示名 */
@@ -143,7 +145,7 @@ export function ScrapeWizard({
         await api.scrapeSearchTrack(sid, trackQ, trackA);
       }
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
       setLoading(false);
     }
   }
@@ -162,7 +164,7 @@ export function ScrapeWizard({
     } catch (e) {
       if (seq !== planSeqRef.current) return;
       setPlan(null);
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       if (seq === planSeqRef.current) setLoading(false);
     }
@@ -186,7 +188,7 @@ export function ScrapeWizard({
       setPlan(p);
     } catch (e) {
       if (seq !== planSeqRef.current) return;
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       if (seq === planSeqRef.current) setLoading(false);
     }
@@ -202,7 +204,7 @@ export function ScrapeWizard({
       setSavedCount(ids.length);
       onApplied();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setApplying(false);
     }
@@ -215,11 +217,12 @@ export function ScrapeWizard({
     ) ?? 0;
   const changeCount = plan ? plan.tracks.reduce((n, t) => n + t.changes.length, 0) : 0;
   const localPlan = plan?.tracks[0] ?? null;
-  const rows = localPlan
-    ? onlyChanged
+  let rows: FieldChange[] = [];
+  if (localPlan) {
+    rows = onlyChanged
       ? localPlan.changes.filter((ch) => ch.old.trim() !== ch.new.trim())
-      : localPlan.changes
-    : [];
+      : localPlan.changes;
+  }
 
   /** 专辑模式中间列：整张曲目表（按轨号排序） */
   const albumTracks = useMemo(
@@ -237,8 +240,8 @@ export function ScrapeWizard({
     return { mbid: null as string | null, trackNo: Number.isFinite(n) ? n : null };
   }, [plan]);
   const isMatchedTrack = (mbid: string, trackNo: number | null) =>
-    (matchedRef?.mbid != null && mbid !== "" && mbid === matchedRef.mbid) ||
-    (matchedRef?.mbid == null && matchedRef?.trackNo != null && trackNo === matchedRef.trackNo);
+    (notNil(matchedRef?.mbid) && mbid !== "" && mbid === matchedRef.mbid) ||
+    (isNil(matchedRef?.mbid) && notNil(matchedRef?.trackNo) && trackNo === matchedRef.trackNo);
 
   return (
     <div className="scrape-overlay" role="dialog" aria-label="刮削向导">
@@ -378,10 +381,10 @@ export function ScrapeWizard({
                       className={`scrape-item${matched ? " active" : ""}`}
                       disabled={loading || matched}
                       title="点选 = 本地曲目对应这一首"
-                      onClick={() => ct.track_no != null && void pickRemoteTrack(ct.track_no)}
+                      onClick={() => notNil(ct.track_no) && void pickRemoteTrack(ct.track_no)}
                     >
                       <span className="ellipsis">
-                        {ct.track_no != null ? `${ct.track_no}. ` : ""}
+                        {notNil(ct.track_no) ? `${ct.track_no}. ` : ""}
                         {ct.title}
                       </span>
                       {ct.artist && <span className="tertiary ellipsis">{ct.artist}</span>}
@@ -474,7 +477,7 @@ export function ScrapeWizard({
         </div>
 
         <footer className="scrape-foot">
-          {savedCount != null ? (
+          {notNil(savedCount) ? (
             <span>
               已存入本地 catalog {savedCount} 条
               {plan && plan.catalog_tracks.length > 1
@@ -487,16 +490,16 @@ export function ScrapeWizard({
           )}
           <div className="scrape-foot-actions">
             <button className="btn" onClick={onClose}>
-              {savedCount != null ? "完成" : "取消"}
+              {notNil(savedCount) ? "完成" : "取消"}
             </button>
             <button
               className="btn btn-primary"
-              disabled={!plan || applying || savedCount != null}
+              disabled={!plan || applying || notNil(savedCount)}
               title={plan && plan.tracks.length === 0 ? "整张曲目表存入 catalog，不绑定本地曲目" : ""}
               onClick={() => void apply()}
             >
               {applying ? <Loader2 size={15} className="spin" /> : null}
-              {savedCount != null ? "已存入 catalog" : "存入本地 catalog"}
+              {notNil(savedCount) ? "已存入 catalog" : "存入本地 catalog"}
             </button>
           </div>
         </footer>

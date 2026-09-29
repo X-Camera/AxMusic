@@ -364,13 +364,14 @@ pub fn sanitize_segment(raw: &str) -> String {
     if s.is_empty() {
         return "Unknown".into();
     }
-    // Windows reserved names
+    // Windows reserved names（含扩展名变体：CON.txt 仍是保留名，按首个点前主干判定）
     const RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
         "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
-    let upper = s.to_ascii_uppercase();
-    if RESERVED.iter().any(|r| *r == upper.as_str()) {
+    let stem = s.split('.').next().unwrap_or(&s);
+    let upper_stem = stem.to_ascii_uppercase();
+    if RESERVED.iter().any(|r| *r == upper_stem.as_str()) {
         s = format!("_{s}");
     }
     s

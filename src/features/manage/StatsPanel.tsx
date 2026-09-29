@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { FolderCheck, FolderInput, Loader2, FileAudio, FileText, File, Folder } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../../lib/api";
@@ -51,7 +53,7 @@ export function StatsPanel({
         setScanError(null);
       }
     } catch (e) {
-      if (aliveRef.current) setScanError(String(e));
+      if (aliveRef.current) setScanError(friendlyErr(e));
     }
   }, []);
 
@@ -76,7 +78,7 @@ export function StatsPanel({
         );
       }
     } catch (e) {
-      setScanError(String(e));
+      setScanError(friendlyErr(e));
     } finally {
       setOrganizing(false);
     }
@@ -98,7 +100,7 @@ export function StatsPanel({
       setImportResult(null);
       setImportPreview(preview);
     } catch (e) {
-      if (aliveRef.current) setImportError(String(e));
+      if (aliveRef.current) setImportError(friendlyErr(e));
     } finally {
       if (aliveRef.current) setPicking(false);
     }
@@ -198,7 +200,7 @@ export function StatsPanel({
             {scanError && <div className="error-line">{scanError}</div>}
             {!rootScan && <div className="tertiary">扫描中…</div>}
             {rootScan?.ok && <div className="tertiary stats-note">库根目录整洁</div>}
-            {rootScan != null && !rootScan.ok && (
+            {notNil(rootScan) && !rootScan.ok && (
               <>
                 <div className="stats-big">
                   <span className="mono stats-accent">{rootScan.items.length}</span>

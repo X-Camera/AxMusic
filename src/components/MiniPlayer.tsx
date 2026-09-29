@@ -1,4 +1,5 @@
 import { Captions, FolderInput, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
+import { notNil } from "../lib/nil";
 import { useEffect, useRef, useState } from "react";
 
 import { api, formatTime } from "../lib/api";
@@ -47,10 +48,12 @@ export function MiniPlayer() {
   useEffect(() => {
     void refreshPlayer();
     pollRef.current = window.setInterval(() => {
+      // 后台标签/最小化时暂停轮询，省 CPU
+      if (document.hidden) return;
       void refreshPlayer();
     }, 500);
     return () => {
-      if (pollRef.current != null) window.clearInterval(pollRef.current);
+      if (notNil(pollRef.current)) window.clearInterval(pollRef.current);
     };
   }, [refreshPlayer]);
 

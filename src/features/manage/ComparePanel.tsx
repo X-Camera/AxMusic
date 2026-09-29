@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isNil, notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { FileInput, FolderCheck, ImagePlus, Loader2, Search, Gauge } from "lucide-react";
 import { api } from "../../lib/api";
 import type {
@@ -126,16 +128,16 @@ export function ComparePanel({
             album: d.track.album || "",
             album_artist: d.track.album_artist || "",
             year: d.track.year || "",
-            track_no: d.track.track_no != null ? String(d.track.track_no) : "",
+            track_no: notNil(d.track.track_no) ? String(d.track.track_no) : "",
           });
           if (d.track.has_cover) {
             const thumb = await api.trackCoverThumb(d.track.path).catch(() => null);
             if (!cancelled) setFileCover(thumb);
           }
           // 归档状态：仅已关联 catalog 时有意义（未关联由 UI 提示先刮削）
-          if (d.track.catalog_id != null) {
+          if (notNil(d.track.catalog_id)) {
             const map = await api.archiveCheckBatch([trackId]).catch(() => null);
-            if (!cancelled && map && map[trackId] != null) setArchive(map[trackId]);
+            if (!cancelled && map && notNil(map[trackId])) setArchive(map[trackId]);
           }
           // 已有 REPLAYGAIN 标签：选中即显示，不必先扫描
           const tags = await api.replaygainTags(trackId).catch(() => null);
@@ -144,7 +146,7 @@ export function ComparePanel({
           if (!cancelled && d.linked_now) onWrittenRef.current();
         }
       } catch (e) {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) setError(friendlyErr(e));
       }
     })();
     return () => {
@@ -169,7 +171,7 @@ export function ComparePanel({
       album: track.album,
       album_artist: track.album_artist,
       year: track.year,
-      track_no: track.track_no != null ? String(track.track_no) : "",
+      track_no: notNil(track.track_no) ? String(track.track_no) : "",
       release_type: track.release_type,
       musicbrainz_recording: track.mb_recording_mbid,
       musicbrainz_release: track.mb_release_mbid,
@@ -180,7 +182,7 @@ export function ComparePanel({
       album: cat.album,
       album_artist: cat.album_artist,
       year: cat.year,
-      track_no: cat.track_no != null ? String(cat.track_no) : "",
+      track_no: notNil(cat.track_no) ? String(cat.track_no) : "",
       release_type: cat.release_type,
       musicbrainz_recording: cat.mbid,
       musicbrainz_release: cat.release_mbid,
@@ -208,7 +210,7 @@ export function ComparePanel({
         await api.catalogApplyToTrack(trackId, [field], false);
         onWritten();
       } catch (e) {
-        setError(String(e));
+        setError(friendlyErr(e));
       } finally {
         setWritingField(null);
       }
@@ -223,7 +225,7 @@ export function ComparePanel({
       await api.catalogApplyToTrack(trackId, [], true);
       onWritten();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setWritingCover(false);
     }
@@ -238,7 +240,7 @@ export function ComparePanel({
       album: t.album || "",
       album_artist: t.album_artist || "",
       year: t.year || "",
-      track_no: t.track_no != null ? String(t.track_no) : "",
+      track_no: notNil(t.track_no) ? String(t.track_no) : "",
     };
     return EDIT_FIELDS.map((field) => ({
       field,
@@ -256,7 +258,7 @@ export function ComparePanel({
       await api.trackWriteTags(trackId, dirtyFields);
       onWritten();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setWritingTags(false);
     }
@@ -270,12 +272,12 @@ export function ComparePanel({
         await api.archiveNormalizeIssue(trackId, kind);
         // 重新检查归档状态
         const map = await api.archiveCheckBatch([trackId]);
-        if (map[trackId] != null) setArchive(map[trackId]);
+        if (notNil(map[trackId])) setArchive(map[trackId]);
         // 路径变了：喜爱/歌单条目靠兜底重匹配自愈，这里刷心形对照键
         void useFavorites.getState().reload();
         onWritten();
       } catch (e) {
-        setError(String(e));
+        setError(friendlyErr(e));
       } finally {
         setNormalizing(null);
       }
@@ -290,7 +292,7 @@ export function ComparePanel({
       const r = await api.replaygainAnalyze(trackId);
       setRgScan(r);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setScanningRg(false);
     }
@@ -298,7 +300,7 @@ export function ComparePanel({
 
   const writeReplayGain = useCallback(async () => {
     // 0 是合法增益；只排除 null/undefined，与按钮渲染条件同口径
-    if (rgScan?.track_gain_db == null) return;
+    if (isNil(rgScan?.track_gain_db)) return;
     setWritingRg(true);
     setError(null);
     try {
@@ -306,14 +308,17 @@ export function ComparePanel({
       // 面板会因 onWritten 换 key 重挂载并重新读标签；这里只通知刷新列表
       onWritten();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setWritingRg(false);
     }
   }, [trackId, rgScan, onWritten]);
 
-  const formatDb = (db: number | null | undefined) =>
-    db === null || db === undefined ? "—" : `${db >= 0 ? "+" : ""}${db.toFixed(2)} dB`;
+  const formatDb = (db: number | null | undefined) => {
+    if (db === null || db === undefined) return "—";
+    const sign = db >= 0 ? "+" : "";
+    return `${sign}${db.toFixed(2)} dB`;
+  };
 
   return (
     <aside className="cmp-panel" role="complementary" aria-label="catalog 字段">
@@ -346,7 +351,11 @@ export function ComparePanel({
               <div className="cmp-cover-empty tertiary">无封面，可刮取</div>
             )}
             <figcaption className="muted">
-              {catalogCover ? "库封面" : fileCover ? "文件封面" : "封面"}
+              {(() => {
+                if (catalogCover) return "库封面";
+                if (fileCover) return "文件封面";
+                return "封面";
+              })()}
             </figcaption>
           </figure>
           <div className="cmp-cover-actions">
@@ -452,13 +461,13 @@ export function ComparePanel({
         </div>
       )}
       {/* 归档状态：仅已关联 catalog；未关联提示先刮削 */}
-      {data && data.track.catalog_id == null && (
+      {data && isNil(data.track.catalog_id) && (
         <div className="cmp-archive">
           <div className="cmp-fields-title">归档状态</div>
           <div className="tertiary cmp-hint">先要刮削，关联 catalog 后再整理归档</div>
         </div>
       )}
-      {data && data.track.catalog_id != null && archive && (
+      {data && notNil(data.track.catalog_id) && archive && (
         <div className="cmp-archive">
           <div className="cmp-fields-title">
             归档状态
@@ -526,7 +535,7 @@ export function ComparePanel({
               <div className="cmp-field-compact">
                 <span className="cmp-field-label">曲目峰值</span>
                 <span className="cmp-field-value mono">
-                  {rgTags?.track_peak != null ? rgTags.track_peak.toFixed(4) : "—"}
+                  {notNil(rgTags?.track_peak) ? rgTags.track_peak.toFixed(4) : "—"}
                 </span>
               </div>
             </div>
@@ -540,7 +549,7 @@ export function ComparePanel({
               <div className="cmp-field-compact">
                 <span className="cmp-field-label">专辑峰值</span>
                 <span className="cmp-field-value mono">
-                  {rgTags?.album_peak != null ? rgTags.album_peak.toFixed(4) : "—"}
+                  {notNil(rgTags?.album_peak) ? rgTags.album_peak.toFixed(4) : "—"}
                 </span>
               </div>
             </div>
@@ -555,7 +564,7 @@ export function ComparePanel({
               {scanningRg ? <Loader2 size={12} className="spin" /> : <Gauge size={12} />}
               {rgScan ? "重新扫描" : "扫描增益"}
             </button>
-            {rgScan && rgScan.track_gain_db != null && (
+            {rgScan && notNil(rgScan.track_gain_db) && (
               <button
                 className="btn btn-sm btn-primary"
                 disabled={writing || scanningRg}
@@ -573,7 +582,7 @@ export function ComparePanel({
                 <div className="cmp-field-compact">
                   <span className="cmp-field-label">测量响度</span>
                   <span className="cmp-field-value mono">
-                    {rgScan.measured_lufs != null
+                    {notNil(rgScan.measured_lufs)
                       ? `${rgScan.measured_lufs.toFixed(1)} LUFS`
                       : "—"}
                   </span>
@@ -587,7 +596,7 @@ export function ComparePanel({
                 <div className="cmp-field-compact">
                   <span className="cmp-field-label">测量峰值</span>
                   <span className="cmp-field-value mono">
-                    {rgScan.track_peak != null ? rgScan.track_peak.toFixed(4) : "—"}
+                    {notNil(rgScan.track_peak) ? rgScan.track_peak.toFixed(4) : "—"}
                   </span>
                 </div>
                 <div className="cmp-field-compact">

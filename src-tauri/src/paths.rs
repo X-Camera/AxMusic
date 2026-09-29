@@ -43,10 +43,24 @@ fn portable_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?.to_path_buf();
 
-    // Walk up a few levels: covers target/debug, target/release, and installed folder.
+    // Walk up a few levels: covers target/debug, target/release, and installed folder。
+    // 只认明确的便携标记 AxMusic-portable.ini；祖先里恰好有 `data/` 目录太容易误判
+    //（开发机、其它软件的 data 都可能撞名），不再据此判定便携。
     for _ in 0..5 {
-        if dir.join(PORTABLE_INI).is_file() || dir.join(DATA_DIR).is_dir() {
+        if dir.join(PORTABLE_INI).is_file() {
             return Some(dir);
+        }
+        // 安装目录旁的 data/ 仍认（exe 同级或上一级，且有 AxMusic.exe 或 ini 邻居）
+        if dir.join(DATA_DIR).is_dir() {
+            let looks_like_app = dir.join("AxMusic.exe").is_file()
+                || dir.join("AxMusic-portable.ini").is_file()
+                || dir
+                    .file_name()
+                    .map(|n| n.eq_ignore_ascii_case("AxMusic"))
+                    .unwrap_or(false);
+            if looks_like_app {
+                return Some(dir);
+            }
         }
         dir = dir.parent()?.to_path_buf();
     }
@@ -57,10 +71,14 @@ fn appdata_root() -> PathBuf {
     if let Ok(appdata) = std::env::var("APPDATA") {
         return Path::new(&appdata).join("AxMusic");
     }
-    // Fallback: platform data dir
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("AxMusic")
+    // 不回落 temp_dir：临时目录重启即丢、权限也不适合长期存库指针/设置
+    dirs::data_dir().unwrap_or_else(|| {
+        // 最后兜底：用户主目录下隐藏目录（仍远好于 %TEMP%）
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".axmusic")
+    })
 }
 
 /// Library working DB lives **inside the library root** (next to the audio).
@@ -180,14 +198,52 @@ pub fn read_text_lossy(path: &Path) -> std::io::Result<String> {
     Ok(decode_text(&fs::read(path)?))
 }
 
+/// 路径段级「是否在 root 下」：`Music` 不吞 `Music2`，Windows 大小写不敏感。
+/// canonicalize 成功时用组件比较；失败时回退归一化字符串 + 段边界。
+pub fn path_under_root(path: &str, root: &str) -> bool {
+    let (Ok(p), Ok(r)) = (
+        PathBuf::from(path).canonicalize(),
+        PathBuf::from(root).canonicalize(),
+    ) else {
+        return path_under_root_norm(path, root);
+    };
+    p.starts_with(&r)
+}
+
+fn path_under_root_norm(path: &str, root: &str) -> bool {
+    let norm = |s: &str| {
+        let mut s = s.replace('/', "\\").to_lowercase();
+        while s.len() > 3 && s.ends_with('\\') {
+            s.pop();
+        }
+        s
+    };
+    let p = norm(path);
+    let r = norm(root);
+    if r.is_empty() || p.is_empty() {
+        return false;
+    }
+    if p == r {
+        return true;
+    }
+    p.len() > r.len() && p.starts_with(&r) && p.as_bytes().get(r.len()) == Some(&b'\\')
+}
+
 /// True when running in portable mode (data next to exe / marked by ini).
 pub fn is_portable() -> bool {
     portable_root().is_some()
 }
 
 /// Force-create portable marker next to the executable (used by package script tests).
+/// 目标必须是已存在目录，且写入固定文件名——拒绝任意覆盖。
 #[allow(dead_code)] // 预留：便携标记写入（打包脚本/测试用）
 pub fn write_portable_ini(exe_dir: &Path) -> std::io::Result<()> {
+    if !exe_dir.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "便携标记只能写在已存在的程序目录",
+        ));
+    }
     fs::write(
         exe_dir.join(PORTABLE_INI),
         "# AxMusic portable mode — keep data/ next to AxMusic.exe\nportable=1\n",
@@ -202,5 +258,28 @@ mod tests {
     fn library_db_under_root() {
         let p = library_db_path(Path::new(r"D:\Lib"));
         assert!(p.ends_with("axmusic.db"));
+    }
+
+    #[test]
+    fn path_under_root_segment_boundary() {
+        // 字符串前缀会把 Music2 误判进 Music；组件边界必须拦住
+        assert!(path_under_root_norm(
+            r"D:\Music\a.flac",
+            r"D:\Music"
+        ));
+        assert!(path_under_root_norm(
+            r"D:\music\a.flac",
+            r"D:\Music"
+        ));
+        assert!(!path_under_root_norm(
+            r"D:\Music2\a.flac",
+            r"D:\Music"
+        ));
+        assert!(!path_under_root_norm(
+            r"D:\Music-old\a.flac",
+            r"D:\Music"
+        ));
+        assert!(path_under_root_norm(r"D:\Music", r"D:\Music"));
+        assert!(!path_under_root_norm(r"D:\Music\a.flac", r""));
     }
 }

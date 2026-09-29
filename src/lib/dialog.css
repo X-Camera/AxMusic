@@ -1,0 +1,63 @@
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 90;
+  padding: 24px;
+}
+
+.dialog-card {
+  width: min(400px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-message {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dialog-input {
+  width: 100%;
+}
+
+.dialog-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.dialog-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, #fff);
+}

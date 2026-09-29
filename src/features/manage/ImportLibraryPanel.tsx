@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { friendlyErr } from "../../lib/errors";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -158,7 +159,7 @@ export function ImportLibraryPanel({
       const r = await api.libraryImportRun(preview.source_root, sel);
       onImported(r);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       setBusy(false);
     }

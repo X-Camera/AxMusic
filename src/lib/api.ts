@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { notNil } from "./nil";
 import type {
   AlbumCard,
   AppSettings,
@@ -142,7 +143,7 @@ export const api = {
       releaseMbid,
       trackIds,
       mode,
-      ...(forceTrackNo != null ? { forceTrackNo } : {}),
+      ...(notNil(forceTrackNo) ? { forceTrackNo } : {}),
     }),
   /** 采纳刮削结果 → 本地 catalog（只存文字，封面另走 catalogFetchCover） */
   catalogSave: (plan: ApplyPlan) => invoke<number[]>("catalog_save", { plan }),

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { notNil } from "../../lib/nil";
+import { friendlyErr } from "../../lib/errors";
 import { LayoutGrid, List, ListEnd, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
@@ -68,7 +70,7 @@ export function SongsPage() {
     } catch (e) {
       if (seq !== reloadSeqRef.current) return;
       // 保留旧列表，错误单独提示；空态与故障态分开
-      setError(String(e));
+      setError(friendlyErr(e));
     } finally {
       if (seq === reloadSeqRef.current) setLoading(false);
     }
@@ -79,7 +81,7 @@ export function SongsPage() {
   }, [reload]);
 
   /** 列表被 limit 截断（库比一页大）：提示并引导用搜索过滤 */
-  const truncated = totalCount != null && totalCount > tracks.length;
+  const truncated = notNil(totalCount) && totalCount > tracks.length;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
