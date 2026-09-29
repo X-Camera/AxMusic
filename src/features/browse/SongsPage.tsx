@@ -4,6 +4,7 @@ import { friendlyErr } from "../../lib/errors";
 import { LayoutGrid, List, ListEnd, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
+import { fieldHit } from "../../lib/textNorm";
 import type { PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
@@ -84,14 +85,14 @@ export function SongsPage() {
   const truncated = notNil(totalCount) && totalCount > tracks.length;
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return tracks;
     return tracks.filter(
       (t) =>
-        (t.title || t.filename).toLowerCase().includes(q) ||
-        t.artist.toLowerCase().includes(q) ||
-        t.album.toLowerCase().includes(q) ||
-        t.album_artist.toLowerCase().includes(q),
+        fieldHit(t.title || t.filename, q) ||
+        fieldHit(t.artist, q) ||
+        fieldHit(t.album, q) ||
+        fieldHit(t.album_artist, q),
     );
   }, [tracks, query]);
 

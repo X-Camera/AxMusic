@@ -411,9 +411,9 @@ fn opt_i64_key(v: Option<i64>) -> i64 {
 
 fn soft_key(title: &str, artist: &str, album: &str, track_no: Option<i64>) -> (String, String, String, i64) {
     (
-        title.to_lowercase(),
-        artist.to_lowercase(),
-        album.to_lowercase(),
+        crate::text_norm::match_key(title),
+        crate::text_norm::match_key(artist),
+        crate::text_norm::match_key(album),
         opt_i64_key(track_no),
     )
 }

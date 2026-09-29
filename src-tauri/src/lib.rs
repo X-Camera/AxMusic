@@ -19,6 +19,7 @@ mod settings;
 mod shell_menu;
 mod tagger;
 mod taskbar;
+mod text_norm;
 mod tray;
 
 use std::path::{Path, PathBuf};

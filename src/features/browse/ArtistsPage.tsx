@@ -3,6 +3,7 @@ import { friendlyErr } from "../../lib/errors";
 import { ListPlus, Play, UserRound } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
+import { fieldHit } from "../../lib/textNorm";
 import type { AlbumCard, ArtistCard, PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
@@ -66,9 +67,9 @@ export function ArtistsPage() {
   }, [artists, selected]);
 
   const filtered = artists.filter((a) => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return true;
-    return a.name.toLowerCase().includes(q);
+    return fieldHit(a.name, q);
   });
 
   async function openArtist(a: ArtistCard) {

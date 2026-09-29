@@ -3,6 +3,7 @@ import { friendlyErr } from "../../lib/errors";
 import { Disc3, ListPlus, Play } from "lucide-react";
 
 import { api, formatTime, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
+import { fieldHit } from "../../lib/textNorm";
 import type { AlbumCard, PlaylistAddItem, TrackRow } from "../../lib/types";
 import { useToast } from "../../lib/useToast";
 import { useApp } from "../../state/useApp";
@@ -48,13 +49,9 @@ export function AlbumWallPage() {
   }, [reload]);
 
   const filtered = albums.filter((a) => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return true;
-    return (
-      a.album.toLowerCase().includes(q) ||
-      a.album_artist.toLowerCase().includes(q) ||
-      a.year.includes(q)
-    );
+    return fieldHit(a.album, q) || fieldHit(a.album_artist, q) || a.year.includes(q);
   });
 
   async function openAlbum(a: AlbumCard) {

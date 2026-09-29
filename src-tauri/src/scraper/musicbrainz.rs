@@ -333,9 +333,10 @@ fn urlencoding_lite(s: &str) -> String {
 }
 
 /// Title similarity (0..1) for track matching.
+/// 简繁/全角/大小写/标点差异视为相同（[`crate::text_norm::match_key`]）。
 pub fn title_similarity(a: &str, b: &str) -> f64 {
-    let na = normalize_title(a);
-    let nb = normalize_title(b);
+    let na = crate::text_norm::match_key(a);
+    let nb = crate::text_norm::match_key(b);
     if na.is_empty() || nb.is_empty() {
         return 0.0;
     }
@@ -353,14 +354,4 @@ pub fn title_similarity(a: &str, b: &str) -> f64 {
     }
     let inter = sa.intersection(&sb).count();
     (inter as f64) / (sa.len().max(sb.len()) as f64)
-}
-
-fn normalize_title(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }

@@ -42,7 +42,7 @@ build-release.bat        # 绿色版发布构建 → out/AxMusic-v*.exe
 4. **歌词多源聚合**：LRCLIB / 网易云 / QQ音乐 并发搜索，结果经 `lyrics://batch` 事件流式推前端（先回先显示），候选 id 带来源前缀 `lrclib:xx`/`netease:xx`/`qq:xx`；新增源实现 `lyrics/<source>.rs` 的 `search`/`fetch` 并在 `lyrics::fetch` 和 `lyrics_search` 命令注册
 3. 播放**不依赖** SQLite；DB 只是管理工作区。应用数据在 `exe_dir/data/`，代码统一走 `paths::data_root()`，禁止写死路径。听歌史双路径：有库写 `<库>/data/listen_history.db`，无库写 `data_root/listen_history.db`；展示汇总两边去重（`ListenHub`）
 
-匹配顺序（`find_catalog_fuzzy`）：MBID（录音→发行+轨号）→ title+artist+album → title+artist，命中即持久化 `catalog_id`。`catalog_save` 后对全库未关联曲目跑 `auto_match_unlinked()`。
+匹配顺序（`find_catalog_fuzzy`）：MBID（录音→发行+轨号）→ title+artist+album → title+artist，命中即持久化 `catalog_id`。字段比较走 `text_norm::match_key`（繁→简 + 小写/标点折叠，简繁体视为相同）。`catalog_save` 后对全库未关联曲目跑 `auto_match_unlinked()`。
 
 ## 代码结构
 

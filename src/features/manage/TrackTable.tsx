@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 
 import type { ArchiveStatus, TrackRow } from "../../lib/types";
 import { trackRowToAddItem } from "../../lib/api";
+import { matchKey } from "../../lib/textNorm";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
 import { TABLE_ROW_HEIGHT, useTableVirtualizer } from "../../components/VirtualList";
 import { loadCover, observeCover, peekCover, unobserveCover } from "./coverCache";
@@ -12,17 +13,15 @@ import "./TrackTable.css";
 /** 与 thead 的 th 数量一致；spacer 行 colSpan 用 */
 const COL_COUNT = 11;
 
-/* ── 与 catalog 的匹配判定：trim + 忽略大小写；年取前 4 位数字特化；轨号按数值 ── */
-const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
-
+/* ── 与 catalog 的匹配判定：简繁/大小写/标点等价（matchKey）；年取前 4 位；轨号按数值 ── */
 function matchStr(file: string, catalog: string | null): boolean {
-  const c = norm(catalog);
-  return c !== "" && norm(file) === c;
+  const c = matchKey(catalog ?? "");
+  return c !== "" && matchKey(file) === c;
 }
 
 function matchYear(file: string, catalog: string | null): boolean {
-  const f = norm(file);
-  const c = norm(catalog);
+  const f = matchKey(file);
+  const c = matchKey(catalog ?? "");
   if (f === "" || c === "") return false;
   const fy = f.match(/\d{4}/);
   const cy = c.match(/\d{4}/);

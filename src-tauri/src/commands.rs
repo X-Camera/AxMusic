@@ -2503,8 +2503,8 @@ fn build_plan_inner(
 
 /// 专辑模式曲目配对（纯函数，便于测试）。优先级：
 /// 0. 用户手动指定轨号（自动匹配失败的兜底，跳过相似度判定）；
-/// 1. 已有录音 MBID 直配（文档：MBID 匹配优先；不受简繁/译名差异影响）；
-/// 2. 曲名相似度 + 轨号一致加权 0.5，阈值 0.35。
+/// 1. 已有录音 MBID 直配（文档：MBID 匹配优先；不受译名差异影响）；
+/// 2. 曲名相似度（简繁/全角/大小写等价）+ 轨号一致加权 0.5，阈值 0.35。
 /// 返回 (配对(本地序号, 远端序号), 未匹配曲名)。
 fn match_album_tracks(
     locals: &[TrackRow],
@@ -3396,13 +3396,13 @@ mod tests {
     }
 
     #[test]
-    fn script_mismatch_without_track_no_fails() {
-        // 简体本地 vs 繁体远端、无轨号：相似度 0 → 未匹配（交给前端手动挑）
+    fn traditional_simplified_title_matches_without_track_no() {
+        // 简体本地 vs 繁体远端、无轨号：match_key 简繁等价 → 直接命中
         let locals = [local("东风破", None, "")];
         let remote = vec![rt(1, "以父之名", "r1"), rt(2, "東風破", "r2")];
         let (pairs, unmatched) = match_album_tracks(&locals, &remote, None);
-        assert!(pairs.is_empty());
-        assert_eq!(unmatched, vec!["东风破".to_string()]);
+        assert_eq!(pairs, vec![(0, 1)]);
+        assert!(unmatched.is_empty());
     }
 
     #[test]

@@ -55,6 +55,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 rustfft = "6"
 # EBU R128 响度分析（扫描估算 ReplayGain）
 ebur128 = "0.1"
+# 匹配键：繁体→简体（刮削/库内简繁混用时视为相同）
+zhconv = "0.4"
 
 # 任务栏缩略图工具栏（ITaskbarList3 播放控制按钮）
 [target.'cfg(windows)'.dependencies]

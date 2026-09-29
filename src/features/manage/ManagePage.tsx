@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search } from "lucide-react";
 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
+import { fieldHit } from "../../lib/textNorm";
 import type { ArchiveStatus, LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import { promptText } from "../../lib/dialog";
@@ -124,15 +125,15 @@ export function ManagePage() {
   }, [reloadTracks]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return tracks;
     return tracks.filter(
       (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.artist.toLowerCase().includes(q) ||
-        t.album.toLowerCase().includes(q) ||
-        t.filename.toLowerCase().includes(q) ||
-        t.path.toLowerCase().includes(q),
+        fieldHit(t.title, q) ||
+        fieldHit(t.artist, q) ||
+        fieldHit(t.album, q) ||
+        fieldHit(t.filename, q) ||
+        fieldHit(t.path, q),
     );
   }, [tracks, query]);
 

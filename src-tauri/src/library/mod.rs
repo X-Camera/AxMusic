@@ -567,17 +567,22 @@ impl LibraryDb {
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
-        // A. artist + title（归档改名后 EXTINF 仍带这两项）
+        // A. artist + title（归档改名后 EXTINF 仍带这两项）— 简繁等价
         if !artist.is_empty() && !title.is_empty() {
+            let want_t = crate::text_norm::match_key(title);
+            let want_a = crate::text_norm::match_key(artist);
             let mut stmt = self.conn.prepare(&format!(
-                "SELECT {TRACK_COLS} FROM tracks
-                 WHERE is_deleted = 0
-                   AND lower(trim(title)) = lower(trim(?1))
-                   AND lower(trim(artist)) = lower(trim(?2))"
+                "SELECT {TRACK_COLS} FROM tracks WHERE is_deleted = 0"
             ))?;
-            let cands = stmt
-                .query_map(params![title, artist], map_track)?
-                .collect::<Result<Vec<_>, _>>()?;
+            let cands: Vec<TrackRow> = stmt
+                .query_map([], map_track)?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|r| {
+                    crate::text_norm::match_key(&r.title) == want_t
+                        && crate::text_norm::match_key(&r.artist) == want_a
+                })
+                .collect();
             if let Some(r) = pick_unique_rematch(cands, duration_ms, &old_ext) {
                 return Ok(Some(r));
             }
@@ -619,18 +624,21 @@ impl LibraryDb {
             }
         }
 
-        // C. 仅 title + 时长（无歌手时的最后手段）
+        // C. 仅 title + 时长（无歌手时的最后手段）— 简繁等价
         if !title.is_empty() && duration_ms > 0 {
+            let want_t = crate::text_norm::match_key(title);
             let mut stmt = self.conn.prepare(&format!(
                 "SELECT {TRACK_COLS} FROM tracks
                  WHERE is_deleted = 0
-                   AND lower(trim(title)) = lower(trim(?1))
                    AND duration_ms > 0
-                   AND abs(duration_ms - ?2) <= 3000"
+                   AND abs(duration_ms - ?1) <= 3000"
             ))?;
-            let cands = stmt
-                .query_map(params![title, duration_ms as i64], map_track)?
-                .collect::<Result<Vec<_>, _>>()?;
+            let cands: Vec<TrackRow> = stmt
+                .query_map(params![duration_ms as i64], map_track)?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|r| crate::text_norm::match_key(&r.title) == want_t)
+                .collect();
             if let Some(r) = pick_unique_rematch(cands, duration_ms, &old_ext) {
                 return Ok(Some(r));
             }
@@ -1110,9 +1118,19 @@ impl LibraryDb {
 
     /// Match local track → catalog by fields: MBID → title+artist+album → title+artist.
     pub fn find_catalog_fuzzy(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
+        // 1. MBID (recording, else release) — strongest key.
+        if let Some(row) = self.find_catalog_by_mbid(t)? {
+            return Ok(Some(row));
+        }
+        // 2/3. title + artist（+ album）— 简繁/大小写/标点等价（match_key）。
+        //      SQL 精确串比较会把「週杰倫 / 周杰伦」当成两首，在内存里按键匹配。
+        self.find_catalog_by_fields(t)
+    }
+
+    /// MBID 直配：录音 MBID → 发行 MBID + 轨号（碟号一致优先）。
+    fn find_catalog_by_mbid(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
         const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
                         album_artist, year, track_no, release_type, cover_path, created_at, disc_no";
-        // 1. MBID (recording, else release) — strongest key.
         if !t.mb_recording_mbid.is_empty() {
             let row = self
                 .conn
@@ -1144,44 +1162,46 @@ impl LibraryDb {
                     map_catalog,
                 )
                 .optional()?;
-            if row.is_some() {
-                return Ok(row);
-            }
-        }
-        // 2. title + artist + album (exact).
-        if !t.title.is_empty() && !t.artist.is_empty() {
-            let row = self
-                .conn
-                .query_row(
-                    &format!(
-                        "SELECT {COLS} FROM catalog
-                         WHERE title = ?1 AND artist = ?2
-                           AND ((?3 != '' AND album = ?3) OR album = '')
-                         ORDER BY (album = ?3) DESC, id DESC LIMIT 1"
-                    ),
-                    params![t.title, t.artist, t.album],
-                    map_catalog,
-                )
-                .optional()?;
-            if row.is_some() {
-                return Ok(row);
-            }
-            // 3. looser: title + artist
-            let row = self
-                .conn
-                .query_row(
-                    &format!(
-                        "SELECT {COLS} FROM catalog
-                         WHERE title = ?1 AND artist = ?2
-                         ORDER BY id DESC LIMIT 1"
-                    ),
-                    params![t.title, t.artist],
-                    map_catalog,
-                )
-                .optional()?;
             return Ok(row);
         }
         Ok(None)
+    }
+
+    /// 字段匹配 catalog：title+artist+album 优先，否则 title+artist。
+    /// 两边都过 [`crate::text_norm::match_key`]，简繁体视为相同。
+    fn find_catalog_by_fields(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
+        const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
+                        album_artist, year, track_no, release_type, cover_path, created_at, disc_no";
+        let t_title = crate::text_norm::match_key(&t.title);
+        let t_artist = crate::text_norm::match_key(&t.artist);
+        if t_title.is_empty() || t_artist.is_empty() {
+            return Ok(None);
+        }
+        let t_album = crate::text_norm::match_key(&t.album);
+
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT {COLS} FROM catalog ORDER BY id DESC"))?;
+        let rows = stmt.query_map([], map_catalog)?;
+
+        let mut with_album: Option<CatalogRow> = None;
+        let mut title_artist: Option<CatalogRow> = None;
+        for row in rows {
+            let c = row?;
+            if crate::text_norm::match_key(&c.title) != t_title
+                || crate::text_norm::match_key(&c.artist) != t_artist
+            {
+                continue;
+            }
+            if !t_album.is_empty() && crate::text_norm::match_key(&c.album) == t_album {
+                with_album = Some(c);
+                break;
+            }
+            if title_artist.is_none() {
+                title_artist = Some(c);
+            }
+        }
+        Ok(with_album.or(title_artist))
     }
 
     /// Find catalog entry for a local track: linked id → match fields → link on hit.
@@ -1203,6 +1223,7 @@ impl LibraryDb {
     }
 
     /// Batch field-match for all unlinked tracks (after scan / after catalog save).
+    /// catalog 侧只扫一遍建 match_key 索引，避免每条 track 全表重扫。
     pub fn auto_match_unlinked(&self) -> Result<usize> {
         let rows = self
             .conn
@@ -1212,9 +1233,62 @@ impl LibraryDb {
             ))?
             .query_map([], map_track)?
             .collect::<Result<Vec<_>, _>>()?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        crate::text_norm::warm();
+
+        const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
+                        album_artist, year, track_no, release_type, cover_path, created_at, disc_no";
+        // (title_key, artist_key) → (album_key, row) 列表
+        let mut index: std::collections::HashMap<(String, String), Vec<(String, CatalogRow)>> =
+            std::collections::HashMap::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare(&format!("SELECT {COLS} FROM catalog ORDER BY id DESC"))?;
+            let cat_rows = stmt.query_map([], map_catalog)?;
+            for row in cat_rows {
+                let c = row?;
+                let key = (
+                    crate::text_norm::match_key(&c.title),
+                    crate::text_norm::match_key(&c.artist),
+                );
+                if key.0.is_empty() || key.1.is_empty() {
+                    continue;
+                }
+                let album_key = crate::text_norm::match_key(&c.album);
+                index.entry(key).or_default().push((album_key, c));
+            }
+        }
+
         let mut n = 0;
         for t in rows {
-            if let Some(c) = self.find_catalog_fuzzy(&t)? {
+            // MBID 优先（与 find_catalog_fuzzy 一致）：译名/简繁不一致时仍可挂上
+            if let Some(c) = self.find_catalog_by_mbid(&t)? {
+                self.link_track_catalog(t.id, c.id)?;
+                n += 1;
+                continue;
+            }
+            let t_title = crate::text_norm::match_key(&t.title);
+            let t_artist = crate::text_norm::match_key(&t.artist);
+            if t_title.is_empty() || t_artist.is_empty() {
+                continue;
+            }
+            let t_album = crate::text_norm::match_key(&t.album);
+            let Some(cands) = index.get(&(t_title, t_artist)) else {
+                continue;
+            };
+            let hit = if t_album.is_empty() {
+                cands.first().map(|(_, c)| c.clone())
+            } else {
+                cands
+                    .iter()
+                    .find(|(ak, _)| *ak == t_album)
+                    .or_else(|| cands.first())
+                    .map(|(_, c)| c.clone())
+            };
+            if let Some(c) = hit {
                 self.link_track_catalog(t.id, c.id)?;
                 n += 1;
             }
@@ -1342,8 +1416,8 @@ fn pick_unique_rematch(
     }
     let ident = |r: &TrackRow| {
         (
-            r.title.trim().to_lowercase(),
-            r.artist.trim().to_lowercase(),
+            crate::text_norm::match_key(&r.title),
+            crate::text_norm::match_key(&r.artist),
         )
     };
     let k0 = ident(&cands[0]);
