@@ -646,6 +646,7 @@ mod tests {
     fn root_whitelist() {
         assert!(is_whitelisted_name("archived"));
         assert!(is_whitelisted_name("Unarchived"));
+        assert!(is_whitelisted_name("data"));
         assert!(is_whitelisted_name("axmusic.db-wal"));
         assert!(is_whitelisted_name("axmusic.db-shm"));
         assert!(is_whitelisted_name("axmusic.db-journal"));

@@ -1,7 +1,12 @@
-//! 听歌历史：独立于库目录的播放事件日志。
+//! 听歌历史：播放事件日志（独立 SQLite，不写进洗库 `axmusic.db`）。
 //!
-//! 落盘 `data_root/listen_history.db`，与洗库的 `axmusic.db` 隔离——
-//! 播放不依赖库，库外文件同样统计；库重建/迁移不影响听歌史。
+//! 双路径落盘，展示汇总去重：
+//! - 指定了库 → 写 `<库根>/data/listen_history.db`（跟库走）
+//! - 未指定库 → 写 `data_root/listen_history.db`（纯听歌）
+//! - 查询汇总两边，按 `started_at+path+play_ms` 去重
+//!
+//! 与工作库分文件即可隔离，库外文件同样统计；导入其他库时读源库
+//! `data/listen_history.db` 合并进写入目标。
 //! 身份分层：有 `mb_recording_mbid` 用它，否则 `title|artist`（小写去空白）。
 
 use std::path::Path;
@@ -145,9 +150,9 @@ impl ListenDb {
         Ok(db)
     }
 
-    pub fn open_default() -> Result<Self> {
-        let root = crate::paths::ensure_data_root();
-        Self::open(&root.join("listen_history.db"))
+    /// 全部事件（展示汇总 / 导入探测共用）。
+    pub fn load_all(&self) -> Result<Vec<ListenEvent>> {
+        Self::load_all_from(&self.conn)
     }
 
     /// 启动失败兜底：纯内存库（本次会话仍可记，退出即丢）。
@@ -475,6 +480,125 @@ impl ListenDb {
     }
 }
 
+/// 双库听歌史：写入单目标，查询汇总两边去重。
+///
+/// - `app`：`data_root/listen_history.db`（无库纯听歌写入这里）
+/// - `library`：`<库>/data/listen_history.db`（指定库时写入这里）
+/// - 查询（summary/top/recent/daily/hour_hist）合并两边，键 `started_at+path+play_ms` 去重
+pub struct ListenHub {
+    app: ListenDb,
+    library: Option<ListenDb>,
+}
+
+impl ListenHub {
+    pub fn open(library_root: Option<&Path>) -> Result<Self> {
+        let app_path = crate::paths::ensure_data_root().join(crate::paths::LISTEN_DB_FILE_NAME);
+        let app = ListenDb::open(&app_path)?;
+        let library = Self::open_library(library_root)?;
+        Ok(Self { app, library })
+    }
+
+    /// 启动失败兜底：两边都是内存空库（本次会话仍可记，退出即丢）。
+    pub fn open_in_memory() -> Result<Self> {
+        Ok(Self {
+            app: ListenDb::open_in_memory()?,
+            library: None,
+        })
+    }
+
+    fn open_library(library_root: Option<&Path>) -> Result<Option<ListenDb>> {
+        match library_root {
+            Some(root) => {
+                let path = crate::paths::library_listen_db_path(root);
+                Ok(Some(ListenDb::open(&path)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// 有库写库内，无库写 data_root。
+    pub fn writer(&self) -> &ListenDb {
+        self.library.as_ref().unwrap_or(&self.app)
+    }
+
+    /// 初始化/切换库；不迁移已有数据（展示侧汇总两边）。
+    pub fn set_library(&mut self, library_root: Option<&Path>) -> Result<()> {
+        self.library = Self::open_library(library_root)?;
+        Ok(())
+    }
+
+    fn stores(&self) -> impl Iterator<Item = &ListenDb> {
+        self.library.iter().chain(std::iter::once(&self.app)).map(|d| d)
+    }
+
+    /// 内存合并视图（started_at+path+play_ms 去重），复用单库查询 SQL。
+    fn merged_view(&self) -> Result<ListenDb> {
+        let mem = ListenDb::open_in_memory()?;
+        for db in self.stores() {
+            let events = db.load_all()?;
+            mem.merge_events(&events)?;
+        }
+        Ok(mem)
+    }
+
+    pub fn summary(&self, since_ms: Option<i64>) -> Result<ListenSummary> {
+        self.merged_view()?.summary(since_ms)
+    }
+
+    pub fn top(
+        &self,
+        kind: &str,
+        limit: i64,
+        since_ms: Option<i64>,
+    ) -> Result<Vec<TopListenItem>> {
+        self.merged_view()?.top(kind, limit, since_ms)
+    }
+
+    pub fn recent(&self, limit: i64, since_ms: Option<i64>) -> Result<Vec<ListenEvent>> {
+        self.merged_view()?.recent(limit, since_ms)
+    }
+
+    pub fn daily(&self, since_ms: Option<i64>) -> Result<Vec<DailyListen>> {
+        self.merged_view()?.daily(since_ms)
+    }
+
+    pub fn hour_hist(&self, since_ms: Option<i64>) -> Result<Vec<i64>> {
+        self.merged_view()?.hour_hist(since_ms)
+    }
+
+    /// 任一库已有该事件即视为重复（导入去重）。
+    pub fn has_event(&self, started_at: i64, path: &str, play_ms: i64) -> Result<bool> {
+        for db in self.stores() {
+            if db.has_event(started_at, path, play_ms)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// 合并导入事件 → 写入目标库；与预览同口径：任一库已有即跳过。
+    /// 返回 (新增, 跳过重复)。
+    pub fn merge_events(&self, events: &[ListenEvent]) -> Result<(i64, i64)> {
+        let mut skipped = 0i64;
+        let mut fresh = Vec::with_capacity(events.len());
+        for e in events {
+            if self.has_event(e.started_at, &e.path, e.play_ms)? {
+                skipped += 1;
+            } else {
+                fresh.push(e.clone());
+            }
+        }
+        let (added, skipped_writer) = self.writer().merge_events(&fresh)?;
+        Ok((added, skipped + skipped_writer))
+    }
+
+    /// 测试专用：直接指定两个库（避免 `open` 写真实 data_root）。
+    #[cfg(test)]
+    fn from_parts(app: ListenDb, library: Option<ListenDb>) -> Self {
+        Self { app, library }
+    }
+}
+
 fn map_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<ListenEvent> {
     Ok(ListenEvent {
         id: r.get(0)?,
@@ -784,5 +908,100 @@ mod tests {
             db.hour_hist(since).unwrap();
             db.daily(since).unwrap();
         }
+    }
+
+    /// 双库汇总：两边同键事件只计一次；写入只进 writer
+    #[test]
+    fn hub_merges_and_dedups_across_stores() {
+        let app = ListenDb::open_in_memory().unwrap();
+        let lib_db = ListenDb::open_in_memory().unwrap();
+
+        let mut p1 = pending(100_000, 180_000);
+        p1.path = r"D:\a.flac".into();
+        p1.meta.title = "a".into();
+        p1.meta.artist = "x".into();
+        app.insert_event(&p1, EndReason::Natural).unwrap();
+        // 同键重复
+        lib_db.insert_event(&p1, EndReason::Natural).unwrap();
+        // 另一条只在库内
+        let mut p2 = pending(200_000, 180_000);
+        p2.path = r"D:\b.flac".into();
+        p2.meta.title = "b".into();
+        p2.meta.artist = "y".into();
+        lib_db.insert_event(&p2, EndReason::Natural).unwrap();
+
+        let hub = ListenHub::from_parts(app, Some(lib_db));
+        let s = hub.summary(None).unwrap();
+        assert_eq!(s.total_plays, 2, "同键去重后应为 2 条");
+        assert_eq!(s.unique_tracks, 2);
+    }
+
+    fn listen_event(path: &str, started_at: i64, title: &str) -> ListenEvent {
+        ListenEvent {
+            id: 0,
+            started_at,
+            ended_at: started_at + 100_000,
+            play_ms: 100_000,
+            track_duration_ms: 180_000,
+            path: path.into(),
+            title: title.into(),
+            artist: "art".into(),
+            album: String::new(),
+            album_artist: String::new(),
+            year: String::new(),
+            track_no: None,
+            mb_recording_mbid: String::new(),
+            catalog_id: None,
+            source: "import".into(),
+            end_reason: "natural".into(),
+        }
+    }
+
+    /// 导入合并与预览同口径：任一库已有即跳过；只把新事件写进 writer
+    #[test]
+    fn hub_merge_skips_events_in_either_store() {
+        let app = ListenDb::open_in_memory().unwrap();
+        let lib = ListenDb::open_in_memory().unwrap();
+
+        // A：只在 app（data_root）
+        let a = listen_event(r"D:\a.flac", 1_000, "a");
+        app.merge_events(&[a.clone()]).unwrap();
+
+        // B：只在 library
+        let b = listen_event(r"D:\b.flac", 2_000, "b");
+        lib.merge_events(&[b.clone()]).unwrap();
+
+        // D：两边都有
+        let d = listen_event(r"D:\d.flac", 4_000, "d");
+        app.merge_events(&[d.clone()]).unwrap();
+        lib.merge_events(&[d.clone()]).unwrap();
+
+        let hub = ListenHub::from_parts(app, Some(lib));
+
+        // C：新事件。导入源把 A/B/C/D 都带来
+        let c = listen_event(r"D:\c.flac", 3_000, "c");
+        let (added, skipped) = hub
+            .merge_events(&[a.clone(), b.clone(), c.clone(), d.clone()])
+            .unwrap();
+        assert_eq!(added, 1, "只有 C 是新的");
+        assert_eq!(skipped, 3, "A/B/D 任一库已有即跳过");
+
+        // 关键回归：A 在 app 里，不能被拷进 writer
+        assert!(
+            !hub.writer().has_event(a.started_at, &a.path, a.play_ms).unwrap(),
+            "只在 data_root 的事件不应写入库内 writer"
+        );
+        assert!(
+            hub.has_event(a.started_at, &a.path, a.play_ms).unwrap(),
+            "汇总侧仍能看到 A"
+        );
+        assert!(hub.writer().has_event(c.started_at, &c.path, c.play_ms).unwrap());
+        assert_eq!(hub.summary(None).unwrap().total_plays, 4);
+        // 再导一遍应全跳过
+        let (added2, skipped2) = hub
+            .merge_events(&[a.clone(), b.clone(), c.clone(), d.clone()])
+            .unwrap();
+        assert_eq!(added2, 0);
+        assert_eq!(skipped2, 4);
     }
 }

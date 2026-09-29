@@ -73,7 +73,7 @@ const CONTENT_METAS: ContentMeta[] = [
   {
     key: "listen",
     title: "听歌记录",
-    hint: "合并源侧 listen_history.db（在库目录附近探测）。按时间+文件去重，不覆盖现有记录。",
+    hint: "合并源库 data/listen_history.db（跟库走）。按时间+文件去重，不覆盖现有记录。",
     icon: History,
     unit: "条",
   },

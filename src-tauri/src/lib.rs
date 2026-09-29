@@ -114,12 +114,18 @@ pub fn run() {
                 }
             }
 
-            let listen_db = match listen_history::ListenDb::open_default() {
-                Ok(d) => d,
+            let listen_hub = match listen_history::ListenHub::open(
+                app_settings
+                    .library_root
+                    .as_deref()
+                    .map(Path::new)
+                    .filter(|r| r.is_dir()),
+            ) {
+                Ok(h) => h,
                 Err(e) => {
                     eprintln!("[AxMusic] 听歌历史库打开失败（不影响播放）: {e}");
                     // 听歌统计失败不拦启动；用内存空库占位
-                    listen_history::ListenDb::open_in_memory()?
+                    listen_history::ListenHub::open_in_memory()?
                 }
             };
             let state = commands::AppState {
@@ -132,7 +138,7 @@ pub fn run() {
                     timer_running: false,
                 }),
                 settings: Mutex::new(app_settings),
-                listen: Mutex::new(listen_db),
+                listen: Mutex::new(listen_hub),
                 listen_tracker: Mutex::new(listen_history::ListenTracker::new()),
             };
             app.manage(state);

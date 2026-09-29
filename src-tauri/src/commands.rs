@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::library::{AlbumCard, ArtistCard, LibraryDb, LibraryRoot, LibraryStats, TrackFilter, TrackRow};
 use crate::listen_history::{
-    DailyListen, EndReason, ListenDb, ListenEvent, ListenSummary, ListenTracker, TopListenItem,
+    DailyListen, EndReason, ListenEvent, ListenHub, ListenSummary, ListenTracker, TopListenItem,
 };
 use crate::player::{Player, PlayerSnapshot, QueueItem, TrackInfo};
 use crate::playlists::{
@@ -35,8 +35,8 @@ pub struct AppState {
     pub scanning: Mutex<bool>,
     pub settings: Mutex<AppSettings>,
     pub volume_persist: Mutex<VolumePersist>,
-    /// 听歌历史库（`data_root/listen_history.db`，与库目录隔离）
-    pub listen: Mutex<ListenDb>,
+    /// 听歌历史（双库：有库写库内、无库写 data_root；查询汇总去重）
+    pub listen: Mutex<ListenHub>,
     /// 听歌计时（切歌/退出时落库）
     pub listen_tracker: Mutex<ListenTracker>,
 }
@@ -54,7 +54,7 @@ pub fn flush_listen_on_exit(state: &AppState) {
         return;
     };
     let listen_guard = state.listen.lock().ok();
-    let listen_ref = listen_guard.as_deref();
+    let listen_ref = listen_guard.as_ref().map(|hub| hub.writer());
     tracker.finish_current(EndReason::Exit, listen_ref);
 }
 
@@ -85,7 +85,7 @@ fn observe_listen(state: &AppState, snap: &PlayerSnapshot) {
         return;
     };
     let listen_guard = state.listen.lock().ok();
-    let listen_ref = listen_guard.as_deref();
+    let listen_ref = listen_guard.as_ref().map(|hub| hub.writer());
     tracker.observe(snap, listen_ref, meta);
 }
 
@@ -95,7 +95,7 @@ fn finish_listen(state: &AppState, reason: EndReason) {
         return;
     };
     let listen_guard = state.listen.lock().ok();
-    let listen_ref = listen_guard.as_deref();
+    let listen_ref = listen_guard.as_ref().map(|hub| hub.writer());
     tracker.finish_current(reason, listen_ref);
 }
 
@@ -649,11 +649,20 @@ pub fn init_library(
 
     // Working DB lives in the library root
     let db_path = crate::paths::library_db_path(&dir);
-    // 库目录骨架（archived / Unarchived / lrc / covers / playlists）
+    // 库目录骨架（archived / Unarchived / lrc / covers / playlists / data）
     crate::paths::ensure_library_dirs(&dir).map_err(|e| e.to_string())?;
     let db = LibraryDb::open(&db_path).map_err(|e| e.to_string())?;
     let root_row = db.set_library_root(&dir).map_err(|e| e.to_string())?;
     *state.db.lock().map_err(|e| e.to_string())? = Some(db);
+
+    // 听歌史：当前曲先收口进旧写入目标，再切库（之后写 <新库>/data/，查询仍汇总两边）
+    flush_listen_on_exit(&state);
+    {
+        let mut hub = state.listen.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = hub.set_library(Some(&dir)) {
+            eprintln!("[AxMusic] 听歌历史库切换失败（不影响播放）: {e}");
+        }
+    }
 
     Ok(root_row)
 }
@@ -2164,7 +2173,9 @@ pub fn library_import_preview(
     let current = require_library_root(&state)?;
     let db_path = crate::paths::library_db_path(Path::new(&current));
     let db = LibraryDb::open(&db_path).map_err(|e| format!("{e:#}"))?;
-    crate::import::preview(Path::new(&path), Path::new(&current), &db)
+    // 短锁查两边去重口径（与导入一致）
+    let listen = state.listen.lock().map_err(|e| e.to_string())?;
+    crate::import::preview(Path::new(&path), Path::new(&current), &db, &*listen)
         .map_err(|e| format!("{e:#}"))
 }
 
@@ -2189,15 +2200,35 @@ pub fn library_import_run(
         // 重 IO + 大量写库：独立连接，不长期持有 state.db 锁
         let db_path = crate::paths::library_db_path(Path::new(&current));
         let db = LibraryDb::open(&db_path).map_err(|e| format!("{e:#}"))?;
-        let listen_db = ListenDb::open_default().map_err(|e| format!("{e:#}"))?;
-        crate::import::run(
+
+        // 听歌史：短锁合并（任一库已有即跳过），避免整场导入堵住播放落库
+        let mut listen_added = 0i64;
+        let mut listen_skipped = 0i64;
+        let mut listen_errors: Vec<String> = Vec::new();
+        if selection.listen {
+            match crate::import::merge_listen_history(
+                &*state.listen.lock().map_err(|e| e.to_string())?,
+                Path::new(&path),
+            ) {
+                Ok((added, skipped)) => {
+                    listen_added = added;
+                    listen_skipped = skipped;
+                }
+                Err(e) => listen_errors.push(format!("听歌记录合并失败: {e:#}")),
+            }
+        }
+
+        let mut rest = crate::import::run(
             Path::new(&path),
             Path::new(&current),
             &db,
-            &listen_db,
             &selection,
         )
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))?;
+        rest.listen_added = listen_added;
+        rest.listen_skipped = listen_skipped;
+        rest.errors.append(&mut listen_errors);
+        Ok(rest)
     })();
     {
         let mut flag = state.scanning.lock().map_err(|e| e.to_string())?;

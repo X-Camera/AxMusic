@@ -379,7 +379,7 @@ export type RouteId =
   | "manage"
   | "settings";
 
-/** 一次有效听歌事件（data_root/listen_history.db） */
+/** 一次有效听歌事件（listen_history.db：库内或 data_root，展示汇总去重） */
 export interface ListenEvent {
   id: number;
   /** Unix 毫秒 */
@@ -717,7 +717,7 @@ export interface ImportPreview {
   covers: ImportItemStats;
   /** 歌单（playlists/*.m3u8） */
   playlists: ImportItemStats;
-  /** 听歌记录（源侧 listen_history.db） */
+  /** 听歌记录（源侧 data/listen_history.db） */
   listen: ImportItemStats;
   /** 源侧听歌库路径；未找到为 null */
   listen_path: string | null;

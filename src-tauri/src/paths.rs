@@ -104,7 +104,9 @@ pub const UNARCHIVED_DIR_NAME: &str = "Unarchived";
 pub const LRC_DIR_NAME: &str = "lrc";
 pub const COVERS_DIR_NAME: &str = "covers";
 pub const PLAYLISTS_DIR_NAME: &str = "playlists";
+pub const LIBRARY_DATA_DIR_NAME: &str = "data";
 pub const DB_FILE_NAME: &str = "axmusic.db";
+pub const LISTEN_DB_FILE_NAME: &str = "listen_history.db";
 
 /// 库内歌词目录：`<库根>/lrc/`
 pub fn library_lrc_dir(library_root: &Path) -> PathBuf {
@@ -121,6 +123,16 @@ pub fn library_unarchived_dir(library_root: &Path) -> PathBuf {
     library_root.join(UNARCHIVED_DIR_NAME)
 }
 
+/// 库内数据区：`<库根>/data/`（听歌史等随库迁移的独立小库）
+pub fn library_data_dir(library_root: &Path) -> PathBuf {
+    library_root.join(LIBRARY_DATA_DIR_NAME)
+}
+
+/// 听歌史：`<库根>/data/listen_history.db`（与 axmusic.db 分文件，跟库走）
+pub fn library_listen_db_path(library_root: &Path) -> PathBuf {
+    library_data_dir(library_root).join(LISTEN_DB_FILE_NAME)
+}
+
 /// 库根白名单目录/文件（见 docs/歌曲归档.md）。
 /// 含 SQLite WAL/rollback journal 伴生文件——journal 在非 WAL 回退或崩溃恢复时会出现，
 /// 被当成杂项挪走会导致库损坏。
@@ -130,6 +142,7 @@ pub const LIBRARY_ROOT_DIRS: &[&str] = &[
     LRC_DIR_NAME,
     COVERS_DIR_NAME,
     PLAYLISTS_DIR_NAME,
+    LIBRARY_DATA_DIR_NAME,
 ];
 pub const LIBRARY_ROOT_FILES: &[&str] = &[
     DB_FILE_NAME,
@@ -258,6 +271,12 @@ mod tests {
     fn library_db_under_root() {
         let p = library_db_path(Path::new(r"D:\Lib"));
         assert!(p.ends_with("axmusic.db"));
+    }
+
+    #[test]
+    fn listen_db_under_library_data() {
+        let p = library_listen_db_path(Path::new(r"D:\Lib"));
+        assert!(p.ends_with(r"data\listen_history.db") || p.ends_with("data/listen_history.db"));
     }
 
     #[test]

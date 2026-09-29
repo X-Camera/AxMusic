@@ -4,7 +4,7 @@
 //! - 刮削结果只进 catalog（不改音频文件）
 //! - 封面落 `<库>/covers/`，歌词落 `<库>/lrc/`，歌单落 `<库>/playlists/`
 //! - 歌曲复制保持源库相对路径，保证歌单相对路径可继续解析
-//! - 听歌史在 `data_root/listen_history.db`（不在库根），导入时在源路径附近探测
+//! - 听歌史在 `<库>/data/listen_history.db`（与 axmusic.db 分文件）；兼容探测旧版 data_root 布局
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::library::{CatalogRow, LibraryDb, TrackRow};
-use crate::listen_history::{ListenDb, ListenEvent};
+use crate::listen_history::{ListenDb, ListenEvent, ListenHub};
 use crate::paths;
 
 // ── IPC 类型 ────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ pub struct ImportPreview {
     pub covers: ImportItemStats,
     /// 歌单（playlists/*.m3u8）
     pub playlists: ImportItemStats,
-    /// 听歌记录（源侧 listen_history.db；找不到则 source_total=0）
+    /// 听歌记录（源侧 `data/listen_history.db`；找不到则 source_total=0）
     #[serde(default)]
     pub listen: ImportItemStats,
     /// 源侧听歌库路径（展示用；None = 未找到）
@@ -133,16 +133,23 @@ fn table_exists(conn: &Connection, table: &str) -> bool {
     .unwrap_or(false)
 }
 
-/// 听歌史不在库根，在 `data_root/`。源侧按常见布局探测：
-/// 库根旁 `data/`、库根自身、父目录 `data/`（绿色版 exe 与库目录同级时）。
+/// 听歌史跟库走：`<源库>/data/listen_history.db`。
+/// 兼容旧版（data_root 与库分离）：库根自身、父目录 `data/`、父目录下散落。
 fn find_source_listen_db(source_root: &Path) -> Option<PathBuf> {
     let mut candidates = vec![
-        source_root.join("listen_history.db"),
-        source_root.join("data").join("listen_history.db"),
+        source_root
+            .join(paths::LIBRARY_DATA_DIR_NAME)
+            .join(paths::LISTEN_DB_FILE_NAME),
+        source_root.join(paths::LISTEN_DB_FILE_NAME),
     ];
     if let Some(parent) = source_root.parent() {
-        candidates.push(parent.join("data").join("listen_history.db"));
-        candidates.push(parent.join("listen_history.db"));
+        // 旧版绿色版：应用 data/ 与库目录同级
+        candidates.push(
+            parent
+                .join(paths::LIBRARY_DATA_DIR_NAME)
+                .join(paths::LISTEN_DB_FILE_NAME),
+        );
+        candidates.push(parent.join(paths::LISTEN_DB_FILE_NAME));
     }
     candidates.into_iter().find(|p| p.is_file())
 }
@@ -151,6 +158,19 @@ fn load_source_listen_events(path: &Path) -> Result<Vec<ListenEvent>> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("打开听歌库失败: {}", path.display()))?;
     ListenDb::load_all_from(&conn)
+}
+
+/// 把源库听歌史合并进当前写入目标（调用方短锁持有 `listen_hub`）。
+/// 找不到源听歌库时返回 (0, 0)。
+pub fn merge_listen_history(
+    listen_hub: &ListenHub,
+    source_root: &Path,
+) -> Result<(i64, i64)> {
+    let Some(lp) = find_source_listen_db(source_root) else {
+        return Ok((0, 0));
+    };
+    let events = load_source_listen_events(&lp)?;
+    listen_hub.merge_events(&events)
 }
 
 /// 去掉 Windows `\\?\` 前缀、统一分隔符、去尾部 `\`（不改大小写）。
@@ -635,7 +655,12 @@ fn list_playlist_stems(root: &Path) -> Vec<String> {
 // ── 预览 ────────────────────────────────────────────────────────────
 
 /// 识别源库并生成与当前库的对比预览。
-pub fn preview(source_root: &Path, current_root: &Path, db: &LibraryDb) -> Result<ImportPreview> {
+pub fn preview(
+    source_root: &Path,
+    current_root: &Path,
+    db: &LibraryDb,
+    listen_hub: &ListenHub,
+) -> Result<ImportPreview> {
     let source_str = source_root.to_string_lossy().to_string();
     let current_str = current_root.to_string_lossy().to_string();
     // 不用 canonicalize（Windows 会加 \\?\，与 tracks.path 形式不一致）；归一化后比较
@@ -716,15 +741,14 @@ pub fn preview(source_root: &Path, current_root: &Path, db: &LibraryDb) -> Resul
         }
     }
 
-    // 听歌史（data_root 独立库；在源路径附近探测）
+    // 听歌史（`<库>/data/`，与 axmusic.db 分文件；兼容探测旧版布局）
     let mut listen = ImportItemStats::empty();
     let mut listen_path = None;
     if let Some(lp) = find_source_listen_db(source_root) {
         let events = load_source_listen_events(&lp)?;
         listen.source_total = events.len() as i64;
-        let cur = ListenDb::open_default()?;
         for e in &events {
-            if cur.has_event(e.started_at, &e.path, e.play_ms).unwrap_or(false) {
+            if listen_hub.has_event(e.started_at, &e.path, e.play_ms).unwrap_or(false) {
                 listen.duplicate += 1;
             } else {
                 listen.new += 1;
@@ -836,12 +860,12 @@ fn dest_song_path(source_root: &str, current_root: &Path, src_path: &str) -> Pat
         .join(format!("{stem}-import.{}", if ext.is_empty() { "bin".into() } else { ext }))
 }
 
-/// 执行导入。selection 全 false 时直接返回空结果。
+/// 执行导入（不含听歌史——由调用方短锁单独合并，避免整场导入占住 listen 锁）。
+/// selection 全 false（或只剩 listen）时直接返回空结果。
 pub fn run(
     source_root: &Path,
     current_root: &Path,
     db: &LibraryDb,
-    listen_db: &ListenDb,
     selection: &ImportSelection,
 ) -> Result<ImportResult> {
     let mut result = ImportResult::default();
@@ -849,8 +873,7 @@ pub fn run(
         || selection.songs
         || selection.lyrics
         || selection.covers
-        || selection.playlists
-        || selection.listen)
+        || selection.playlists)
     {
         return Ok(result);
     }
@@ -861,32 +884,7 @@ pub fn run(
         bail!("不能导入当前库自身");
     }
 
-    // 0) 听歌史（不依赖源库 axmusic.db；找不到就记 0）
-    if selection.listen {
-        if let Some(lp) = find_source_listen_db(source_root) {
-            match load_source_listen_events(&lp) {
-                Ok(events) => match listen_db.merge_events(&events) {
-                    Ok((added, skipped)) => {
-                        result.listen_added = added;
-                        result.listen_skipped = skipped;
-                    }
-                    Err(e) => result.errors.push(format!("听歌记录合并失败: {e}")),
-                },
-                Err(e) => result.errors.push(format!("读取听歌库失败: {e}")),
-            }
-        }
-    }
-
     // 其余项都要源库 axmusic.db
-    if !(selection.catalog
-        || selection.songs
-        || selection.lyrics
-        || selection.covers
-        || selection.playlists)
-    {
-        return Ok(result);
-    }
-
     let src_conn = open_source_db(source_root)?;
     let mut linked_now = 0i64;
 

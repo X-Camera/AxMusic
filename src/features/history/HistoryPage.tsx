@@ -115,7 +115,7 @@ const EMPTY_SUMMARY: ListenSummary = {
   unique_albums: 0,
 };
 
-/** 统计页：近 7 天 / 近 30 天 / 全部 三档；数据源 data_root/listen_history.db */
+/** 统计页：近 7 天 / 近 30 天 / 全部 三档；数据源汇总 <库>/data + data_root 两份 listen_history.db */
 export function HistoryPage() {
   const playQueue = useApp((s) => s.playQueue);
   const requestOpenArtist = useApp((s) => s.requestOpenArtist);
