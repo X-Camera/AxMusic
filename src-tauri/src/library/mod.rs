@@ -1118,13 +1118,23 @@ impl LibraryDb {
 
     /// Match local track → catalog by fields: MBID → title+artist+album → title+artist.
     pub fn find_catalog_fuzzy(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
-        // 1. MBID (recording, else release) — strongest key.
+        Ok(self.find_catalog_candidates(t)?.into_iter().next())
+    }
+
+    /// 全部候选（MBID 直配优先，再字段匹配），供对比面板切换不同匹配。
+    pub fn find_catalog_candidates(&self, t: &TrackRow) -> Result<Vec<CatalogRow>> {
+        let mut out: Vec<CatalogRow> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         if let Some(row) = self.find_catalog_by_mbid(t)? {
-            return Ok(Some(row));
+            seen.insert(row.id);
+            out.push(row);
         }
-        // 2/3. title + artist（+ album）— 简繁/大小写/标点等价（match_key）。
-        //      SQL 精确串比较会把「週杰倫 / 周杰伦」当成两首，在内存里按键匹配。
-        self.find_catalog_by_fields(t)
+        for c in self.find_catalog_matches(t)? {
+            if seen.insert(c.id) {
+                out.push(c);
+            }
+        }
+        Ok(out)
     }
 
     /// MBID 直配：录音 MBID → 发行 MBID + 轨号（碟号一致优先）。
@@ -1167,41 +1177,72 @@ impl LibraryDb {
         Ok(None)
     }
 
-    /// 字段匹配 catalog：title+artist+album 优先，否则 title+artist。
-    /// 两边都过 [`crate::text_norm::match_key`]，简繁体视为相同。
-    fn find_catalog_by_fields(&self, t: &TrackRow) -> Result<Option<CatalogRow>> {
+    /// 按字段找出**全部**可能的 catalog 候选（去重，优先级从高到低）。
+    /// 供对比面板切换：同一首歌可能同时命中录音室版 / Live / 不同专辑发行。
+    pub fn find_catalog_matches(&self, t: &TrackRow) -> Result<Vec<CatalogRow>> {
         const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
                         album_artist, year, track_no, release_type, cover_path, created_at, disc_no";
         let t_title = crate::text_norm::match_key(&t.title);
         let t_artist = crate::text_norm::match_key(&t.artist);
         if t_title.is_empty() || t_artist.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let t_album = crate::text_norm::match_key(&t.album);
+        let t_title_fuzzy = crate::text_norm::title_match_key(&t.title);
+        let t_title_plain = crate::text_norm::match_key(&t.title) == t_title_fuzzy;
 
         let mut stmt = self
             .conn
             .prepare(&format!("SELECT {COLS} FROM catalog ORDER BY id DESC"))?;
         let rows = stmt.query_map([], map_catalog)?;
 
-        let mut with_album: Option<CatalogRow> = None;
-        let mut title_artist: Option<CatalogRow> = None;
+        // 精确优先于模糊；同级里 album 命中优先。每档保留多条供切换。
+        let mut exact_album: Vec<CatalogRow> = Vec::new();
+        let mut exact_title_artist: Vec<CatalogRow> = Vec::new();
+        let mut fuzzy_album: Vec<CatalogRow> = Vec::new();
+        let mut fuzzy_title_artist: Vec<CatalogRow> = Vec::new();
         for row in rows {
             let c = row?;
-            if crate::text_norm::match_key(&c.title) != t_title
-                || crate::text_norm::match_key(&c.artist) != t_artist
-            {
+            if crate::text_norm::match_key(&c.artist) != t_artist {
                 continue;
             }
-            if !t_album.is_empty() && crate::text_norm::match_key(&c.album) == t_album {
-                with_album = Some(c);
-                break;
+            let c_title = crate::text_norm::match_key(&c.title);
+            let album_hit = !t_album.is_empty() && crate::text_norm::match_key(&c.album) == t_album;
+            if c_title == t_title {
+                if album_hit {
+                    exact_album.push(c);
+                } else {
+                    exact_title_artist.push(c);
+                }
+                continue;
             }
-            if title_artist.is_none() {
-                title_artist = Some(c);
+            // 版本后缀模糊：仅在「一侧无版本后缀」时允许（Live↔Remix 等双侧不同后缀不互串）
+            if !t_title_fuzzy.is_empty() {
+                let c_fuzzy = crate::text_norm::title_match_key(&c.title);
+                let c_plain = crate::text_norm::match_key(&c.title) == c_fuzzy;
+                let suffix_ok = t_title_plain || c_plain;
+                if suffix_ok && c_fuzzy == t_title_fuzzy {
+                    if album_hit {
+                        fuzzy_album.push(c);
+                    } else {
+                        fuzzy_title_artist.push(c);
+                    }
+                }
             }
         }
-        Ok(with_album.or(title_artist))
+        let mut out: Vec<CatalogRow> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for c in exact_album
+            .into_iter()
+            .chain(exact_title_artist)
+            .chain(fuzzy_album)
+            .chain(fuzzy_title_artist)
+        {
+            if seen.insert(c.id) {
+                out.push(c);
+            }
+        }
+        Ok(out)
     }
 
     /// Find catalog entry for a local track: linked id → match fields → link on hit.
@@ -1240,8 +1281,12 @@ impl LibraryDb {
 
         const COLS: &str = "id, source, kind, mbid, release_mbid, title, artist, album,
                         album_artist, year, track_no, release_type, cover_path, created_at, disc_no";
-        // (title_key, artist_key) → (album_key, row) 列表
-        let mut index: std::collections::HashMap<(String, String), Vec<(String, CatalogRow)>> =
+        // (title_key, artist_key) → (album_key, id, is_plain_title)；
+        // fuzzy 用 title_match_key 作键，收录全部候选，匹配时再按「一侧无版本后缀」过滤
+        type Cand = (String, i64, bool);
+        let mut index: std::collections::HashMap<(String, String), Vec<Cand>> =
+            std::collections::HashMap::new();
+        let mut fuzzy_index: std::collections::HashMap<(String, String), Vec<Cand>> =
             std::collections::HashMap::new();
         {
             let mut stmt = self
@@ -1250,17 +1295,37 @@ impl LibraryDb {
             let cat_rows = stmt.query_map([], map_catalog)?;
             for row in cat_rows {
                 let c = row?;
-                let key = (
-                    crate::text_norm::match_key(&c.title),
-                    crate::text_norm::match_key(&c.artist),
-                );
-                if key.0.is_empty() || key.1.is_empty() {
+                let artist_key = crate::text_norm::match_key(&c.artist);
+                let title_key = crate::text_norm::match_key(&c.title);
+                if title_key.is_empty() || artist_key.is_empty() {
                     continue;
                 }
                 let album_key = crate::text_norm::match_key(&c.album);
-                index.entry(key).or_default().push((album_key, c));
+                let ftitle = crate::text_norm::title_match_key(&c.title);
+                let c_plain = title_key == ftitle;
+                // 精确索引必进；模糊键为空只跳过 fuzzy（如标题整体是「(Live)」）
+                if !ftitle.is_empty() {
+                    fuzzy_index
+                        .entry((ftitle, artist_key.clone()))
+                        .or_default()
+                        .push((album_key.clone(), c.id, c_plain));
+                }
+                index
+                    .entry((title_key, artist_key))
+                    .or_default()
+                    .push((album_key, c.id, c_plain));
             }
         }
+
+        let pick = |cands: &[Cand], t_album: &str| -> Option<i64> {
+            let hit_album = |ak: &str| !t_album.is_empty() && ak == t_album;
+            // 优先 album 命中，再取第一条
+            cands
+                .iter()
+                .find(|(ak, _, _)| hit_album(ak))
+                .or_else(|| cands.first())
+                .map(|(_, id, _)| *id)
+        };
 
         let mut n = 0;
         for t in rows {
@@ -1276,20 +1341,26 @@ impl LibraryDb {
                 continue;
             }
             let t_album = crate::text_norm::match_key(&t.album);
-            let Some(cands) = index.get(&(t_title, t_artist)) else {
-                continue;
-            };
-            let hit = if t_album.is_empty() {
-                cands.first().map(|(_, c)| c.clone())
-            } else {
-                cands
-                    .iter()
-                    .find(|(ak, _)| *ak == t_album)
-                    .or_else(|| cands.first())
-                    .map(|(_, c)| c.clone())
-            };
-            if let Some(c) = hit {
-                self.link_track_catalog(t.id, c.id)?;
+            let t_title_fuzzy = crate::text_norm::title_match_key(&t.title);
+            let t_plain = t_title == t_title_fuzzy;
+            // 精确曲名优先；未命中再试剥版本后缀的模糊键（仅一侧带后缀，Live↔Remix 不互串）
+            let hit = index
+                .get(&(t_title, t_artist.clone()))
+                .and_then(|cands| pick(cands, &t_album))
+                .or_else(|| {
+                    if t_title_fuzzy.is_empty() {
+                        return None;
+                    }
+                    let cands = fuzzy_index.get(&(t_title_fuzzy, t_artist))?;
+                    let filtered: Vec<Cand> = cands
+                        .iter()
+                        .filter(|(_, _, c_plain)| t_plain || *c_plain)
+                        .cloned()
+                        .collect();
+                    pick(&filtered, &t_album)
+                });
+            if let Some(cid) = hit {
+                self.link_track_catalog(t.id, cid)?;
                 n += 1;
             }
         }
@@ -1562,6 +1633,84 @@ mod tests {
         assert!(n >= 1, "inherit 应至少补上一条");
         let after = db.get_track_by_path(&probe.path).unwrap().unwrap();
         assert_eq!(after.catalog_id, Some(cat_id));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn catalog_fuzzy_matches_version_suffix_title() {
+        let dir = std::env::temp_dir().join(format!("axmusic-fuzzy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("t.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = LibraryDb::open(&db_path).unwrap();
+
+        // catalog：录音室版「晴天」
+        let cat_id = db
+            .insert_catalog(&CatalogRow {
+                id: 0,
+                source: "musicbrainz".into(),
+                kind: "recording".into(),
+                mbid: "mb-qing".into(),
+                release_mbid: String::new(),
+                title: "晴天".into(),
+                artist: "周杰伦".into(),
+                album: "叶惠美".into(),
+                album_artist: "周杰伦".into(),
+                year: "2003".into(),
+                track_no: Some(1),
+                disc_no: None,
+                release_type: String::new(),
+                cover_path: None,
+                created_at: String::new(),
+            })
+            .unwrap();
+
+        // 本地：现场版标题，应靠模糊键挂上
+        let mut live = sample_track(&dir.join("live.flac").to_string_lossy());
+        live.title = "晴天 (Live)".into();
+        live.album = String::new();
+        db.upsert_track(&live, 1000, 1).unwrap();
+        let live_id = db
+            .get_track_by_path(&dir.join("live.flac").to_string_lossy())
+            .unwrap()
+            .unwrap()
+            .id;
+
+        let hit = db.find_catalog_fuzzy(&live).unwrap().expect("Live 版应模糊命中");
+        assert_eq!(hit.id, cat_id);
+
+        let n = db.auto_match_unlinked().unwrap();
+        assert!(n >= 1, "auto_match 应能挂上 Live 版");
+        let after = db.get_track_by_id(live_id).unwrap().unwrap();
+        assert_eq!(after.catalog_id, Some(cat_id));
+
+        // 精确键仍优先：catalog 里若另有同名 Live 行，应挂 Live 行而不是录音室版
+        let live_cat = db
+            .insert_catalog(&CatalogRow {
+                id: 0,
+                source: "musicbrainz".into(),
+                kind: "recording".into(),
+                mbid: "mb-qing-live".into(),
+                release_mbid: String::new(),
+                title: "晴天 (Live)".into(),
+                artist: "周杰伦".into(),
+                album: "无与伦比".into(),
+                album_artist: "周杰伦".into(),
+                year: "2004".into(),
+                track_no: Some(1),
+                disc_no: None,
+                release_type: String::new(),
+                cover_path: None,
+                created_at: String::new(),
+            })
+            .unwrap();
+        db.link_track_catalog(live_id, 0).unwrap(); // 清掉关联再测
+        // catalog_id=0 会被 auto_match 视为未关联
+        let n = db.auto_match_unlinked().unwrap();
+        let after = db.get_track_by_id(live_id).unwrap().unwrap();
+        assert_eq!(after.catalog_id, Some(live_cat), "精确 Live 行应优先于模糊命中");
+        assert!(n >= 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

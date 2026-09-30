@@ -4,7 +4,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
-use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackDetail, SRC_NETEASE};
+use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackAlbum, TrackDetail, SRC_NETEASE};
 use crate::lyrics::encode;
 use crate::scraper::rate_limit_wait;
 
@@ -250,11 +250,64 @@ pub fn fetch_track(song_id: &str) -> Result<TrackDetail> {
         .and_then(|x| x.as_str())
         .unwrap_or_default()
         .to_string();
+    let year = first
+        .get("album")
+        .and_then(|x| x.get("publishTime"))
+        .and_then(|x| x.as_i64())
+        .map(year_of_epoch_ms)
+        .unwrap_or_default();
     Ok(TrackDetail {
         id: song_id.to_string(),
         title,
         artist,
         album,
-        year: String::new(),
+        year,
     })
+}
+
+/// 单曲所属专辑（网易云一首歌通常只挂一个专辑）。
+pub fn fetch_track_albums(song_id: &str) -> Result<Vec<TrackAlbum>> {
+    if !crate::net_util::is_numeric_id(song_id) {
+        return Err(anyhow!("单曲 id 不合法"));
+    }
+    let url = format!("https://music.163.com/api/song/detail?ids=%5B{song_id}%5D");
+    let v = get_json(&url)?;
+    let first = v
+        .get("songs")
+        .and_then(|x| x.as_array())
+        .and_then(|a| a.first())
+        .cloned()
+        .ok_or_else(|| anyhow!("网易云未找到该单曲"))?;
+    let album = first.get("album").cloned().unwrap_or_default();
+    let Some(album_id) = album.get("id").and_then(|x| x.as_i64()) else {
+        return Ok(Vec::new());
+    };
+    let title = album
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let year = album
+        .get("publishTime")
+        .and_then(|x| x.as_i64())
+        .map(year_of_epoch_ms)
+        .unwrap_or_default();
+    let artist = first
+        .get("album")
+        .and_then(|x| x.get("artist"))
+        .and_then(|x| x.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok(vec![TrackAlbum {
+        source: SRC_NETEASE.into(),
+        release_id: album_id.to_string(),
+        title,
+        artist,
+        year,
+        track_count: 0,
+        country: String::new(),
+        release_type: String::new(),
+        disambiguation: String::new(),
+    }])
 }

@@ -211,20 +211,158 @@ pub struct RecordingDetail {
     pub id: String,
     pub title: String,
     pub artist: String,
+    /// 首个发行的专辑名（挑专辑前的兜底展示）
+    pub first_release_title: String,
+    pub first_release_year: String,
 }
 
-/// GET /recording/{id}?inc=artist-credits
+/// GET /recording/{id}?inc=artist-credits+releases+release-groups
 pub fn fetch_recording(recording_id: &str) -> Result<RecordingDetail> {
     if !crate::net_util::is_mbid(recording_id) {
         return Err(anyhow!("recording id 不合法"));
     }
-    let v = mb_get(&format!("recording/{recording_id}?inc=artist-credits&fmt=json"))?;
+    let v = mb_get(&format!(
+        "recording/{recording_id}?inc=artist-credits+releases+release-groups&fmt=json"
+    ))?;
+    let albums = parse_recording_releases(&v);
+    let (first_release_title, first_release_year) = albums
+        .first()
+        .map(|a| (a.title.clone(), a.year.clone()))
+        .unwrap_or_default();
     let rec: MbRecording = serde_json::from_value(v).context("recording 结构解析失败")?;
     Ok(RecordingDetail {
         id: recording_id.to_string(),
         title: rec.title.unwrap_or_default(),
         artist: credit_name(&rec.artist_credit),
+        first_release_title,
+        first_release_year,
     })
+}
+
+/// 录音所属发行列表（挑专辑用）：原专优先，再按年份。
+pub fn fetch_recording_albums(recording_id: &str) -> Result<Vec<super::TrackAlbum>> {
+    if !crate::net_util::is_mbid(recording_id) {
+        return Err(anyhow!("recording id 不合法"));
+    }
+    let v = mb_get(&format!(
+        "recording/{recording_id}?inc=releases+release-groups+artist-credits&fmt=json"
+    ))?;
+    Ok(parse_recording_releases(&v))
+}
+
+/// 解析 recording lookup 的 `releases[]`（含 release-group primary-type）。
+fn parse_recording_releases(v: &Value) -> Vec<super::TrackAlbum> {
+    use super::TrackAlbum;
+
+    let mut out: Vec<TrackAlbum> = Vec::new();
+    let Some(list) = v.get("releases").and_then(|x| x.as_array()) else {
+        return out;
+    };
+    for item in list {
+        let Some(id) = item.get("id").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let title = item
+            .get("title")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let year = year_of(&item.get("date").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .or_else(|| {
+                year_of(
+                    &item
+                        .pointer("/release-group/first-release-date")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
+                )
+            })
+            .unwrap_or_default();
+        let country = item
+            .get("country")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let track_count = item.get("track-count").and_then(|x| x.as_i64()).unwrap_or(0);
+        let release_type = {
+            let primary = item
+                .pointer("/release-group/primary-type")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default();
+            // Live/Compilation/Remix 等在 secondary-types；合并展示便于挑专辑
+            let mut secondary: Vec<String> = item
+                .pointer("/release-group/secondary-types")
+                .and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if secondary.is_empty() {
+                primary.to_string()
+            } else {
+                secondary.sort();
+                format!("{} ({})", primary, secondary.join("+"))
+            }
+        };
+        let disambiguation = item
+            .get("disambiguation")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let artist = {
+            let ac: Option<Vec<MbNameCredit>> = item
+                .get("artist-credit")
+                .and_then(|ac| serde_json::from_value(ac.clone()).ok());
+            credit_name(&ac)
+        };
+        out.push(TrackAlbum {
+            source: SRC_MB.into(),
+            release_id: id.to_string(),
+            title,
+            artist,
+            year,
+            track_count,
+            country,
+            release_type,
+            disambiguation,
+        });
+    }
+    // 原专（Album）优先，其次 EP/Single；空年份排最后，再按年份升序
+    out.sort_by(|a, b| {
+        type_rank(&a.release_type)
+            .cmp(&type_rank(&b.release_type))
+            .then_with(|| match (a.year.is_empty(), b.year.is_empty()) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => a.year.cmp(&b.year),
+            })
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    out
+}
+
+fn type_rank(t: &str) -> u8 {
+    let k = t.to_ascii_lowercase();
+    // secondary 拼在括号里（如 "Album (Live)"），含即降级
+    let has_secondary = k.contains("live")
+        || k.contains("compilation")
+        || k.contains("remix")
+        || k.contains("soundtrack")
+        || k.contains("dj-mix")
+        || k.contains("mixtape");
+    if has_secondary {
+        return 4;
+    }
+    if k.starts_with("album") {
+        0
+    } else if k.starts_with("ep") {
+        1
+    } else if k.starts_with("single") {
+        2
+    } else {
+        3
+    }
 }
 
 /// Fetch release + recordings + artist-credit.
@@ -333,7 +471,8 @@ fn urlencoding_lite(s: &str) -> String {
 }
 
 /// Title similarity (0..1) for track matching.
-/// 简繁/全角/大小写/标点差异视为相同（[`crate::text_norm::match_key`]）。
+/// 简繁/全角/大小写/标点差异视为相同（[`crate::text_norm::match_key`]）；
+/// 仅版本后缀不同（Live/Remix/feat…）计 0.92（[`crate::text_norm::title_match_key`]）。
 pub fn title_similarity(a: &str, b: &str) -> f64 {
     let na = crate::text_norm::match_key(a);
     let nb = crate::text_norm::match_key(b);
@@ -342,6 +481,11 @@ pub fn title_similarity(a: &str, b: &str) -> f64 {
     }
     if na == nb {
         return 1.0;
+    }
+    let fa = crate::text_norm::title_match_key(a);
+    let fb = crate::text_norm::title_match_key(b);
+    if !fa.is_empty() && fa == fb {
+        return 0.92;
     }
     if na.contains(&nb) || nb.contains(&na) {
         return 0.85;

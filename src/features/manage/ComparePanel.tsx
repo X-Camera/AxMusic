@@ -60,6 +60,8 @@ const EDIT_FIELDS: readonly string[] = EDIT_GROUPS.flat();
 export interface CompareData {
   track: TrackRow;
   catalog: CatalogRow | null;
+  /** 全部匹配候选（MBID/字段），可切换后按指定条写入 */
+  matches?: CatalogRow[];
   changes: FieldChange[];
   /** catalog 缓存封面（data URL），未刮取为 null */
   cover_data: string | null;
@@ -81,6 +83,8 @@ export function ComparePanel({
   onScrape: () => void;
 }) {
   const [data, setData] = useState<CompareData | null>(null);
+  /** 多候选时当前选用的 catalog id（写入字段按这条） */
+  const [activeCatId, setActiveCatId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [writingField, setWritingField] = useState<string | null>(null);
   const [writingCover, setWritingCover] = useState(false);
@@ -121,6 +125,7 @@ export function ComparePanel({
         const d = await api.catalogCompare(trackId);
         if (!cancelled) {
           setData(d);
+          setActiveCatId(d.catalog?.id ?? d.matches?.[0]?.id ?? null);
           setCatalogCover(d.cover_data);
           setDraft({
             title: d.track.title || "",
@@ -161,8 +166,27 @@ export function ComparePanel({
     return `${artist} - ${title}`;
   }, [data]);
 
+  /** 当前选用的 catalog（多候选切换）；无 matches 时退回关联行 */
+  const activeCatalog = useMemo(() => {
+    if (!data) return null;
+    const list = data.matches ?? (data.catalog ? [data.catalog] : []);
+    if (activeCatId != null) {
+      const hit = list.find((m) => m.id === activeCatId);
+      if (hit) return hit;
+    }
+    return data.catalog ?? list[0] ?? null;
+  }, [data, activeCatId]);
+
+  const matches = useMemo(() => {
+    if (!data) return [] as CatalogRow[];
+    const list = data.matches ?? (data.catalog ? [data.catalog] : []);
+    // 去重，保持顺序
+    const seen = new Set<number>();
+    return list.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+  }, [data]);
+
   const fields = useMemo(() => {
-    const cat = data?.catalog;
+    const cat = activeCatalog;
     const track = data?.track;
     if (!cat || !track) return [];
     const oldOf: Record<string, string> = {
@@ -200,14 +224,14 @@ export function ComparePanel({
         writable: changed && writable,
       };
     }).filter((f) => f.value.trim() !== "" || f.field === "track_no");
-  }, [data]);
+  }, [activeCatalog, data]);
 
   const writeField = useCallback(
     async (field: string) => {
       setWritingField(field);
       setError(null);
       try {
-        await api.catalogApplyToTrack(trackId, [field], false);
+        await api.catalogApplyToTrack(trackId, [field], false, activeCatId ?? undefined);
         onWritten();
       } catch (e) {
         setError(friendlyErr(e));
@@ -215,21 +239,21 @@ export function ComparePanel({
         setWritingField(null);
       }
     },
-    [trackId, onWritten],
+    [trackId, onWritten, activeCatId],
   );
 
   const writeCover = useCallback(async () => {
     setWritingCover(true);
     setError(null);
     try {
-      await api.catalogApplyToTrack(trackId, [], true);
+      await api.catalogApplyToTrack(trackId, [], true, activeCatId ?? undefined);
       onWritten();
     } catch (e) {
       setError(friendlyErr(e));
     } finally {
       setWritingCover(false);
     }
-  }, [trackId, onWritten]);
+  }, [trackId, onWritten, activeCatId]);
 
   const dirtyFields = useMemo(() => {
     if (!data) return [] as { field: string; old: string; new: string }[];
@@ -379,7 +403,7 @@ export function ComparePanel({
           </div>
         </div>
       )}
-      {data && !data.catalog && (
+      {data && !data.catalog && matches.length === 0 && (
         <>
           <div className="tertiary cmp-hint">
             尚未关联 catalog。可改正文件标签后写入，有助于刮削/匹配；把字段清空再写入 = 删除该标签。
@@ -418,9 +442,38 @@ export function ComparePanel({
           </div>
         </>
       )}
-      {data && data.catalog && (
+      {data && (data.catalog || matches.length > 0) && (
         <div className="cmp-fields">
-          <div className="cmp-fields-title">catalog 字段</div>
+          <div className="cmp-fields-title">
+            catalog 字段
+            {matches.length > 1 && (
+              <span className="tertiary cmp-match-hint"> · {matches.length} 条匹配，点选切换</span>
+            )}
+          </div>
+          {matches.length > 1 && (
+            <div className="cmp-match-list" role="listbox" aria-label="catalog 匹配候选">
+              {matches.map((m, i) => {
+                const active = activeCatalog?.id === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={`cmp-match-chip${active ? " active" : ""}`}
+                    title={`${m.source} · ${m.album || "—"}${m.year ? ` · ${m.year}` : ""}`}
+                    onClick={() => setActiveCatId(m.id)}
+                  >
+                    <span className="cmp-match-n">{i + 1}</span>
+                    <span className="ellipsis">
+                      {m.title || "—"}
+                      {m.album ? ` · ${m.album}` : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {FIELD_GROUPS.map((group, gi) => {
             const items = group
               .map((field) => fields.find((f) => f.field === field))
@@ -457,6 +510,7 @@ export function ComparePanel({
           })}
           <div className="tertiary cmp-hint">
             带写入按钮的字段与文件不一致；catalog 空值不写入。
+            {matches.length > 1 ? "切换上方匹配可写入不同记录的字段。" : ""}
           </div>
         </div>
       )}

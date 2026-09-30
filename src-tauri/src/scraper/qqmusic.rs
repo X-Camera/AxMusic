@@ -5,7 +5,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
-use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackDetail, SRC_QQ};
+use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackAlbum, TrackDetail, SRC_QQ};
 use crate::lyrics::encode;
 use crate::scraper::rate_limit_wait;
 
@@ -220,16 +220,7 @@ pub fn fetch_track(song_mid: &str) -> Result<TrackDetail> {
     if !crate::net_util::is_token_id(song_mid) {
         return Err(anyhow!("单曲 mid 不合法"));
     }
-    // musicu.fcg：data 参数为 JSON（get_song_detail_yqq）
-    let data = format!(
-        r#"{{"comm":{{"ct":24,"cv":0}},"songinfo":{{"module":"music.pf_song_detail_svr","method":"get_song_detail_yqq","param":{{"song_mid":"{song_mid}"}}}}}}"#
-    );
-    let url = format!("https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data={}", encode(&data));
-    let v = get_json(&url)?;
-    let ti = v
-        .pointer("/songinfo/data/track_info")
-        .cloned()
-        .ok_or_else(|| anyhow!("QQ音乐未找到该单曲"))?;
+    let ti = fetch_track_info(song_mid)?;
     let title = ti.get("name").and_then(|x| x.as_str()).unwrap_or_default().to_string();
     if title.is_empty() {
         return Err(anyhow!("QQ音乐未找到该单曲"));
@@ -253,4 +244,68 @@ pub fn fetch_track(song_mid: &str) -> Result<TrackDetail> {
         album,
         year,
     })
+}
+
+/// 单曲所属专辑（QQ 一首歌通常只挂一个专辑）。
+pub fn fetch_track_albums(song_mid: &str) -> Result<Vec<TrackAlbum>> {
+    if !crate::net_util::is_token_id(song_mid) {
+        return Err(anyhow!("单曲 mid 不合法"));
+    }
+    let ti = fetch_track_info(song_mid)?;
+    let album = ti.get("album").cloned().unwrap_or_default();
+    let Some(album_mid) = album
+        .get("mid")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![TrackAlbum {
+        source: SRC_QQ.into(),
+        release_id: album_mid,
+        title: album
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        artist: {
+            // 专辑详情才有 singername；单曲详情常无 → 回落曲目歌手
+            let from_album = album
+                .get("singername")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if !from_album.is_empty() {
+                from_album
+            } else {
+                join_singers(
+                    ti.get("singer")
+                        .and_then(|x| x.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| serde_json::from_value(s.clone()).ok())
+                                .collect()
+                        }),
+                )
+            }
+        },
+        year: year_of(ti.get("time_public").and_then(|x| x.as_str()).unwrap_or("")),
+        track_count: 0,
+        country: String::new(),
+        release_type: String::new(),
+        disambiguation: String::new(),
+    }])
+}
+
+fn fetch_track_info(song_mid: &str) -> Result<serde_json::Value> {
+    // musicu.fcg：data 参数为 JSON（get_song_detail_yqq）
+    let data = format!(
+        r#"{{"comm":{{"ct":24,"cv":0}},"songinfo":{{"module":"music.pf_song_detail_svr","method":"get_song_detail_yqq","param":{{"song_mid":"{song_mid}"}}}}}}"#
+    );
+    let url = format!("https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data={}", encode(&data));
+    let v = get_json(&url)?;
+    v.pointer("/songinfo/data/track_info")
+        .cloned()
+        .ok_or_else(|| anyhow!("QQ音乐未找到该单曲"))
 }

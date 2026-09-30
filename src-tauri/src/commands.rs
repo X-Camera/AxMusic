@@ -2241,7 +2241,9 @@ pub fn library_import_run(
 
 // ���� scrape (MusicBrainz / Cover Art Archive) ������������������������������������������
 
-use crate::scraper::{self, ApplyPlan, CatalogTrackDraft, FieldChange, ScrapeCandidate, TrackPlan};
+use crate::scraper::{
+    self, ApplyPlan, CatalogTrackDraft, FieldChange, ScrapeCandidate, TrackAlbum, TrackPlan,
+};
 
 /// 专辑刮削搜索：四源（MB / iTunes / 网易云 / QQ）并发。
 /// 立即返回；各源结果经 `scrape://batch`（{searchId, source, items, error?}）流式推送，
@@ -2267,6 +2269,20 @@ pub async fn scrape_search_track(
 ) -> Result<(), String> {
     scrape_search_fanout(app, search_id, "track", title, artist);
     Ok(())
+}
+
+/// 单曲所属专辑列表（挑专辑用）。MB 可能多条（原专/单曲/精选…），其它源通常一条。
+#[tauri::command]
+pub async fn scrape_track_albums(
+    source: String,
+    track_id: String,
+) -> Result<Vec<TrackAlbum>, String> {
+    // 阻塞网络调用放工作线程，避免卡 UI
+    tauri::async_runtime::spawn_blocking(move || {
+        scraper::fetch_track_albums_by_source(&source, &track_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn scrape_search_fanout(
@@ -2398,6 +2414,13 @@ fn build_plan_inner(
                 field("title", &t.title, &rec.title),
                 field("artist", &t.artist, &rec.artist),
             ];
+            // 空值不进计划：FieldChange 空值 = 删除语义，云端无值时不能提议清空标签
+            if !rec.album.trim().is_empty() {
+                changes.push(field("album", &t.album, &rec.album));
+            }
+            if !rec.year.trim().is_empty() {
+                changes.push(field("year", &t.year, &rec.year));
+            }
             // MBID 只认 MusicBrainz 来源；其它源的 id 不写进 MB 字段
             if is_mb {
                 changes.push(field("musicbrainz_recording", "", &rec.id));
@@ -2640,12 +2663,13 @@ pub async fn catalog_save(
 
 /// Compare local file tags vs linked catalog row (empty fields if no link).
 /// 若本次比较触发了字段匹配并写入 catalog_id，`linked_now` 为 true（前端应刷新列表）。
+/// `matches` 为全部候选（MBID/字段），前端可切换后按指定 catalog 写入字段。
 #[tauri::command]
 pub fn catalog_compare(
     state: State<'_, AppState>,
     track_id: i64,
 ) -> Result<serde_json::Value, String> {
-    let (track, catalog, linked_now) = {
+    let (track, catalog, matches, linked_now) = {
         let guard = require_db(&state)?;
         let db = db_ref(&guard)?;
         let before = db
@@ -2656,13 +2680,22 @@ pub fn catalog_compare(
         let catalog = db
             .find_catalog_for_track(track_id)
             .map_err(|e| e.to_string())?;
+        // 全部候选（含已关联那条），供对比面板切换
+        let mut matches = db
+            .find_catalog_candidates(&before)
+            .map_err(|e| e.to_string())?;
+        if let Some(cat) = &catalog {
+            if !matches.iter().any(|m| m.id == cat.id) {
+                matches.insert(0, cat.clone());
+            }
+        }
         // 重新取行：find_catalog_for_track 可能刚写入 catalog_id
         let track = db
             .get_track_by_id(track_id)
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?;
         let linked_now = !was_linked && track.catalog_id.is_some_and(|c| c > 0);
-        (track, catalog, linked_now)
+        (track, catalog, matches, linked_now)
     };
     // db 锁已放：封面读盘 / settings 取根都在锁外
     let changes = if let Some(cat) = &catalog {
@@ -2721,6 +2754,7 @@ pub fn catalog_compare(
     Ok(serde_json::json!({
         "track": track,
         "catalog": catalog,
+        "matches": matches,
         "changes": changes,
         "cover_data": cover_data_of(catalog.as_ref(), track_id, &state),
         "linked_now": linked_now,
@@ -3033,12 +3067,14 @@ pub fn replaygain_write(
 /// Write selected catalog fields into the audio file (tags + optional cover from covers/).
 /// Only fields listed in `fields` are written; empty catalog values never overwrite tags.
 /// `write_cover` 在未关联 catalog 时也可用（读 `covers/track-{id}.jpg`）。
+/// `catalog_id` 可选：指定从哪条匹配写入（多候选切换）；缺省用当前关联。
 #[tauri::command]
 pub fn catalog_apply_to_track(
     state: State<'_, AppState>,
     track_id: i64,
     fields: Vec<String>,
     write_cover: bool,
+    catalog_id: Option<i64>,
 ) -> Result<i64, String> {
     // settings 先取先放（不与 db 锁嵌套）
     let root = {
@@ -3057,7 +3093,10 @@ pub fn catalog_apply_to_track(
             .get_track_by_id(track_id)
             .map_err(|e| e.to_string())?
             .ok_or("曲目不存在")?;
-        let cat = db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?;
+        let cat = match catalog_id {
+            Some(id) if id > 0 => db.get_catalog(id).map_err(|e| e.to_string())?,
+            _ => db.find_catalog_for_track(track_id).map_err(|e| e.to_string())?,
+        };
         if cat.is_none() && !fields.is_empty() {
             return Err("未关联 catalog，请先刮削或自动匹配".into());
         }

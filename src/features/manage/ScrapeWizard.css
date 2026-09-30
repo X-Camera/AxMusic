@@ -47,6 +47,32 @@
   grid-template-columns: 1fr 1.4fr;
 }
 
+.scrape-hint-inline {
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+/* 单曲模式：所属专辑列表（挑专辑） */
+.scrape-album-pick {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 42%;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.scrape-album-pick .scrape-list,
+.scrape-album-list {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
 .scrape-head-actions {
   display: flex;
   align-items: center;

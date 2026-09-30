@@ -6,7 +6,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { nextSearchId } from "../../lib/async";
-import type { ApplyPlan, FieldChange, ScrapeBatch, ScrapeCandidate, TrackRow } from "../../lib/types";
+import type {
+  ApplyPlan,
+  FieldChange,
+  ScrapeBatch,
+  ScrapeCandidate,
+  TrackAlbum,
+  TrackRow,
+} from "../../lib/types";
 import "./ScrapeWizard.css";
 
 /** 刮削源展示名 */
@@ -16,6 +23,31 @@ const SOURCE_LABEL: Record<string, string> = {
   netease: "网易云",
   qq: "QQ",
 };
+
+/** MB 恒排最前（后到也插队），其余按到达顺序（sort 稳定）。 */
+function sortCandidatesMbFirst(items: ScrapeCandidate[]): ScrapeCandidate[] {
+  return [...items].sort((a, b) => {
+    const ra = a.source === "musicbrainz" ? 0 : 1;
+    const rb = b.source === "musicbrainz" ? 0 : 1;
+    return ra - rb;
+  });
+}
+
+/** 专辑类型展示（MB release-group primary-type） */
+function albumTypeLabel(t: string): string {
+  if (!t) return "";
+  const map: Record<string, string> = {
+    Album: "专辑",
+    Single: "单曲",
+    EP: "EP",
+    Compilation: "精选",
+    Soundtrack: "原声",
+    Live: "现场",
+    Remix: "混音",
+    Other: "其他",
+  };
+  return map[t] ?? t;
+}
 
 const FIELD_LABEL: Record<string, string> = {
   title: "曲名",
@@ -54,6 +86,9 @@ export function ScrapeWizard({
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<ScrapeCandidate[]>([]);
   const [selectedCand, setSelectedCand] = useState<ScrapeCandidate | null>(null);
+  /** 单曲模式：所属专辑列表（挑专辑） */
+  const [trackAlbums, setTrackAlbums] = useState<TrackAlbum[]>([]);
+  const [selectedAlbum, setSelectedAlbum] = useState<TrackAlbum | null>(null);
   const [plan, setPlan] = useState<ApplyPlan | null>(null);
   const [applying, setApplying] = useState(false);
   const [savedCount, setSavedCount] = useState<number | null>(null);
@@ -100,7 +135,7 @@ export function ScrapeWizard({
           return;
         }
         if (e.payload.items.length > 0) {
-          setCandidates((prev) => [...prev, ...e.payload.items]);
+          setCandidates((prev) => sortCandidatesMbFirst([...prev, ...e.payload.items]));
         }
       });
       unDone = await listen<{ searchId: number }>("scrape://done", (e) => {
@@ -122,6 +157,8 @@ export function ScrapeWizard({
     setCandidates([]);
     setPlan(null);
     setSelectedCand(null);
+    setTrackAlbums([]);
+    setSelectedAlbum(null);
     setSavedCount(null);
     setError(null);
     setSourceErrs({});
@@ -135,6 +172,8 @@ export function ScrapeWizard({
     setError(null);
     setPlan(null);
     setSelectedCand(null);
+    setTrackAlbums([]);
+    setSelectedAlbum(null);
     setSavedCount(null);
     setSourceErrs({});
     setCandidates([]);
@@ -157,8 +196,50 @@ export function ScrapeWizard({
     setSavedCount(null);
     setLoading(true);
     setError(null);
+    setTrackAlbums([]);
+    setSelectedAlbum(null);
     try {
-      const p = await api.scrapeBuildPlan(c.source, c.release_id, [track.id], mode);
+      if (mode === "track") {
+        // 先拉所属专辑（MB 可多条），默认选第一条并按专辑模式建计划（带曲目表）
+        const albums = await api.scrapeTrackAlbums(c.source, c.release_id);
+        if (seq !== planSeqRef.current) return;
+        setTrackAlbums(albums);
+        const first = albums[0] ?? null;
+        if (first) {
+          setSelectedAlbum(first);
+          const p = await api.scrapeBuildPlan(first.source, first.release_id, [track.id], "album");
+          if (seq !== planSeqRef.current) return;
+          setPlan(p);
+        } else {
+          // 无所属专辑信息：退回单曲计划（只补 title/artist/album/year）
+          const p = await api.scrapeBuildPlan(c.source, c.release_id, [track.id], "track");
+          if (seq !== planSeqRef.current) return;
+          setPlan(p);
+        }
+      } else {
+        const p = await api.scrapeBuildPlan(c.source, c.release_id, [track.id], mode);
+        if (seq !== planSeqRef.current) return;
+        setPlan(p);
+      }
+    } catch (e) {
+      if (seq !== planSeqRef.current) return;
+      setPlan(null);
+      setError(friendlyErr(e));
+    } finally {
+      if (seq === planSeqRef.current) setLoading(false);
+    }
+  }
+
+  /** 单曲模式：换一个所属专辑 → 重拉整张曲目表 + 字段计划。 */
+  async function pickTrackAlbum(al: TrackAlbum) {
+    if (!selectedCand) return;
+    const seq = ++planSeqRef.current;
+    setSelectedAlbum(al);
+    setLoading(true);
+    setError(null);
+    setSavedCount(null);
+    try {
+      const p = await api.scrapeBuildPlan(al.source, al.release_id, [track.id], "album");
       if (seq !== planSeqRef.current) return;
       setPlan(p);
     } catch (e) {
@@ -172,22 +253,22 @@ export function ScrapeWizard({
 
   /** 自动匹配失败/匹配不对时，从专辑曲目列表手动指定本地曲目对应的一首。 */
   async function pickRemoteTrack(trackNo: number) {
-    if (!selectedCand) return;
+    // 单曲模式已选所属专辑时，以该专辑为上下文（整张曲目表）；否则用当前候选
+    const source = selectedAlbum?.source ?? selectedCand?.source;
+    const releaseId = selectedAlbum?.release_id ?? selectedCand?.release_id;
+    if (!source || !releaseId) return;
+    const planMode: "album" | "track" = selectedAlbum ? "album" : mode;
     const seq = ++planSeqRef.current;
     setLoading(true);
     setError(null);
+    setSavedCount(null);
     try {
-      const p = await api.scrapeBuildPlan(
-        selectedCand.source,
-        selectedCand.release_id,
-        [track.id],
-        mode,
-        trackNo,
-      );
+      const p = await api.scrapeBuildPlan(source, releaseId, [track.id], planMode, trackNo);
       if (seq !== planSeqRef.current) return;
       setPlan(p);
     } catch (e) {
       if (seq !== planSeqRef.current) return;
+      setPlan(null);
       setError(friendlyErr(e));
     } finally {
       if (seq === planSeqRef.current) setLoading(false);
@@ -224,7 +305,7 @@ export function ScrapeWizard({
       : localPlan.changes;
   }
 
-  /** 专辑模式中间列：整张曲目表（按轨号排序） */
+  /** 中间列：整张曲目表（按轨号排序） */
   const albumTracks = useMemo(
     () => [...(plan?.catalog_tracks ?? [])].sort((a, b) => (a.track_no ?? 0) - (b.track_no ?? 0)),
     [plan],
@@ -242,6 +323,12 @@ export function ScrapeWizard({
   const isMatchedTrack = (mbid: string, trackNo: number | null) =>
     (notNil(matchedRef?.mbid) && mbid !== "" && mbid === matchedRef.mbid) ||
     (isNil(matchedRef?.mbid) && notNil(matchedRef?.trackNo) && trackNo === matchedRef.trackNo);
+
+  /** 单曲模式已选出专辑，或专辑模式有曲目表 → 中间列展示曲目 */
+  const showAlbumTracks =
+    mode === "album"
+      ? Boolean(plan && plan.catalog_tracks.length > 0)
+      : Boolean(selectedAlbum && plan && plan.catalog_tracks.length > 0);
 
   return (
     <div className="scrape-overlay" role="dialog" aria-label="刮削向导">
@@ -323,15 +410,18 @@ export function ScrapeWizard({
           </div>
         )}
 
-        <div className={`scrape-body${mode === "track" ? " two-col" : ""}`}>
+        <div className="scrape-body">
           <section className="scrape-col">
-            <h3>候选{loading && candidates.length > 0 ? "（陆续到达…）" : ""}</h3>
+            <h3>
+              候选{loading && candidates.length > 0 ? "（陆续到达…）" : ""}
+              <span className="tertiary scrape-hint-inline"> MB 优先</span>
+            </h3>
             <div className="scrape-list">
               {candidates.length === 0 && !loading && (
                 <div className="tertiary scrape-empty">
                   {searchIdRef.current > 0
                     ? "无候选。可改关键词后重试（四源聚合，MusicBrainz 限速约 1 次/秒）。"
-                    : "搜索后显示四个来源的候选"}
+                    : "搜索后显示四个来源的候选（MB 排最前）"}
                 </div>
               )}
               {candidates.map((c, i) => (
@@ -353,7 +443,7 @@ export function ScrapeWizard({
                   <span className="tertiary ellipsis">
                     {c.artist}
                     {c.year ? ` · ${c.year}` : ""}
-                    {c.track_count ? ` · ${c.track_count} 曲` : ""}
+                    {c.track_count > 1 ? ` · ${c.track_count} 曲` : ""}
                     {c.country ? ` · ${c.country}` : ""}
                   </span>
                   {c.disambiguation && (
@@ -364,16 +454,66 @@ export function ScrapeWizard({
             </div>
           </section>
 
-          {mode === "album" && (
-            <section className="scrape-col">
-              <h3>专辑曲目{plan ? `（${albumTracks.length} 首）` : ""}</h3>
-              <div className="scrape-list">
-                {!plan && (
-                  <div className="tertiary scrape-empty">
-                    点击左侧候选后显示整张曲目；点某一首可手动指定它就是本地曲目
-                  </div>
-                )}
-                {albumTracks.map((ct) => {
+          <section className="scrape-col">
+            {mode === "track" && (
+              <div className="scrape-album-pick">
+                <h3>
+                  所属专辑
+                  {trackAlbums.length > 0 ? `（${trackAlbums.length}）` : ""}
+                </h3>
+                <div className="scrape-album-list">
+                  {!selectedCand && (
+                    <div className="tertiary scrape-empty">
+                      点左侧单曲候选后，这里列出它收在哪些专辑；点专辑看整张曲目
+                    </div>
+                  )}
+                  {selectedCand && trackAlbums.length === 0 && !loading && (
+                    <div className="tertiary scrape-empty">该候选未返回所属专辑信息</div>
+                  )}
+                  {trackAlbums.map((al) => {
+                    const active =
+                      selectedAlbum?.release_id === al.release_id &&
+                      selectedAlbum?.source === al.source;
+                    return (
+                      <button
+                        key={`${al.source}:${al.release_id}`}
+                        className={`scrape-item${active ? " active" : ""}`}
+                        disabled={loading && !active}
+                        onClick={() => void pickTrackAlbum(al)}
+                      >
+                        <span className="ellipsis">{al.title || "（未命名专辑）"}</span>
+                        <span className="tertiary ellipsis">
+                          {[
+                            albumTypeLabel(al.release_type),
+                            al.year,
+                            al.track_count > 0 ? `${al.track_count} 曲` : "",
+                            al.country,
+                            al.disambiguation,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <h3>
+              {mode === "track" && selectedAlbum ? `「${selectedAlbum.title}」曲目` : "专辑曲目"}
+              {showAlbumTracks && albumTracks.length > 0 ? `（${albumTracks.length} 首）` : ""}
+            </h3>
+            <div className="scrape-list">
+              {!showAlbumTracks && (
+                <div className="tertiary scrape-empty">
+                  {mode === "track"
+                    ? "选定所属专辑后，这里显示整张曲目，方便对照挑选"
+                    : "点击左侧候选后显示整张曲目；点某一首可手动指定它就是本地曲目"}
+                </div>
+              )}
+              {showAlbumTracks &&
+                albumTracks.map((ct) => {
                   const matched = isMatchedTrack(ct.mbid, ct.track_no ?? null);
                   return (
                     <button
@@ -391,9 +531,8 @@ export function ScrapeWizard({
                     </button>
                   );
                 })}
-              </div>
-            </section>
-          )}
+            </div>
+          </section>
 
           <section className="scrape-col wide">
             <div className="scrape-col-head">
@@ -418,7 +557,7 @@ export function ScrapeWizard({
                 <div className="tertiary scrape-empty">
                   候选「{plan.candidate_label}」没能自动匹配到本地曲目
                   {plan.unmatched.length > 0 ? `（${plan.unmatched.join("、")}）` : ""}
-                  {mode === "album"
+                  {plan.catalog_tracks.length > 1
                     ? "——简繁/译名差异时常见。在中间「专辑曲目」列挑一首即可核对字段；不挑也可以直接「存入本地 catalog」，整张曲目表会备档。"
                     : "。可换候选重试。"}
                 </div>

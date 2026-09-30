@@ -99,6 +99,61 @@
   margin-bottom: 4px;
 }
 
+.cmp-match-hint {
+  font-weight: 400;
+}
+
+/* 多条 catalog 匹配切换 */
+.cmp-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 8px;
+}
+
+.cmp-match-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmp-match-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.cmp-match-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.cmp-match-n {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+}
+
+.cmp-match-chip.active .cmp-match-n {
+  background: var(--accent);
+  color: var(--accent-on, #fff);
+}
+
 .cmp-field {
   display: grid;
   grid-template-columns: 72px 1fr 28px;

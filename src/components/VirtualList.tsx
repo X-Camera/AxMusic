@@ -1,4 +1,12 @@
-import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useVirtualizer, type VirtualItem, type Virtualizer } from "@tanstack/react-virtual";
 
 /** 列表行高（含行距）。必须与各列表 CSS 的行高逐像素一致，否则虚拟化错位。 */
@@ -91,6 +99,12 @@ export function VirtualList<T>({
         ? keyFn(itemsRef.current[index] as T, index)
         : index,
   });
+
+  // estimateSize 只进首次缓存；rowHeight 变化（网格量出列宽、窗口缩放）必须作废重估，
+  // 否则旧高度会让下一行盖住本行文案（卡片标题丢失）。布局前重估，避免闪一帧错位。
+  useLayoutEffect(() => {
+    virtualizer.measure();
+  }, [rowHeight, virtualizer]);
 
   const total = virtualizer.getTotalSize();
   const vis = virtualizer.getVirtualItems();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { notNil } from "../../lib/nil";
 import { friendlyErr } from "../../lib/errors";
 import { LayoutGrid, List, ListEnd, ListPlus, Play } from "lucide-react";
@@ -19,6 +19,12 @@ type ViewMode = "list" | "grid";
 
 const SONGS_LIMIT = 10000;
 
+/**
+ * 视图模式跨页缓存：SongsPage 在路由切换时会整页卸载，
+ * 若每次都从「列表」异步切回「网格」，行高会在 ref 未就绪时按错误宽度估算。
+ */
+let songsViewCache: ViewMode | null = null;
+
 /** 把一维曲目切成网格行（每行 cols 个），供按行虚拟化 */
 function chunkRows(items: TrackRow[], cols: number): TrackRow[][] {
   const n = Math.max(1, cols);
@@ -35,7 +41,8 @@ export function SongsPage() {
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  // 首帧就用上次的视图，避免「先列表后网格」二次挂载把行高算歪
+  const [viewMode, setViewMode] = useState<ViewMode>(songsViewCache ?? "list");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerItems, setPickerItems] = useState<PlaylistAddItem[] | null>(null);
@@ -43,13 +50,17 @@ export function SongsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridCols, setGridCols] = useState(5);
+  /** 网格容器实测宽度（切换到卡片后才有效；0 = 尚未量到） */
+  const [gridWidth, setGridWidth] = useState(0);
   /** 列表请求代次：连点刷新丢弃过期响应 */
   const reloadSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
     void api.getSettings().then((s) => {
-      if (!cancelled) setViewMode(s.songs_view);
+      if (cancelled) return;
+      songsViewCache = s.songs_view;
+      setViewMode(s.songs_view);
     });
     return () => {
       cancelled = true;
@@ -108,37 +119,53 @@ export function SongsPage() {
   }
 
   function switchView(mode: ViewMode) {
+    songsViewCache = mode;
     setViewMode(mode);
     void api.updateSettings({ songs_view: mode }).catch(() => {});
   }
 
-  /** 卡片网格：量出列数，行高 = 封面(正方形≈列宽) + 文案，按「行」虚拟化 */
+  /** 卡片网格：量出列数/宽度，行高 = 封面(正方形≈列宽) + 文案，按「行」虚拟化 */
   const gridRows = useMemo(
     () => chunkRows(filtered, gridCols),
     [filtered, gridCols],
   );
 
-  useEffect(() => {
+  /**
+   * 网格是否已在 DOM 里：与渲染分支对齐（loading/error 只在无曲目时占位）。
+   * 有数据时 reload 不应卸载虚拟列表，否则丢滚动并重建测量缓存。
+   */
+  const gridVisible = viewMode === "grid" && filtered.length > 0;
+
+  // 布局后立刻量宽（避免按占位宽度画一帧再校正）；ResizeObserver 跟随缩放
+  useLayoutEffect(() => {
     const el = gridRef.current;
-    if (!el || viewMode !== "grid") return;
+    if (!el || !gridVisible) {
+      setGridWidth(0);
+      return;
+    }
     const measure = () => {
       const w = el.clientWidth;
       // 与 CSS minmax(160px,1fr) / gap 16 对齐
       const cols = Math.max(1, Math.floor((w + 16) / 176));
+      setGridWidth(w);
       setGridCols(cols);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [viewMode]);
+  }, [gridVisible]);
 
+  /**
+   * 行高必须用「实测列宽」算封面高度。切换列表↔卡片时若用未挂载 ref / 固定 800，
+   * 会把行高压小，下一行盖住封面下的标题。未量到前不挂虚拟列表。
+   */
   const gridRowHeight = useMemo(() => {
-    const w = gridRef.current?.clientWidth ?? 800;
-    const colW = (w - (gridCols - 1) * 16) / gridCols;
+    const colW =
+      gridWidth > 0 ? (gridWidth - (gridCols - 1) * 16) / gridCols : 160;
     // 封面(1:1) + gap 8 + 标题行 + 副标题 + 行距
     return Math.round(colW + 8 + 22 + 18 + 16);
-  }, [gridCols, viewMode]);
+  }, [gridCols, gridWidth]);
 
   const viewToggle = (
     <div className="view-toggle" role="group" aria-label="显示模式">
@@ -267,67 +294,70 @@ export function SongsPage() {
           </div>
         ) : (
           <div ref={gridRef} key="grid">
-            <VirtualList
-              items={gridRows}
-              rowHeight={gridRowHeight}
-              getScrollElement={() => scrollRef.current}
-              renderRow={(rowItems) => (
-                <div
-                  className="songs-grid"
-                  style={
-                    {
-                      "--grid-cols": gridCols,
-                      display: "grid",
-                      gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
-                      gap: "var(--space-4)",
-                    } as React.CSSProperties
-                  }
-                >
-                  {rowItems.map((t) => (
-                    <div
-                      key={t.id}
-                      className="song-card"
-                      title="播放"
-                      onClick={() => playOne(t)}
-                    >
-                      <div className="song-card-cover">
-                        <AlbumCover
-                          path={t.path}
-                          mtime={t.mtime}
-                          hasCover={t.has_cover}
-                          initial={(t.title || t.filename || "?").slice(0, 1).toUpperCase()}
-                        />
-                        <span className="song-card-play" aria-hidden>
-                          <Play size={36} fill="currentColor" strokeWidth={0} />
-                        </span>
-                        <button
-                          type="button"
-                          className="song-card-add"
-                          title="加入队列"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void enqueue([trackRowToQueueItem(t)]);
-                          }}
-                        >
-                          <ListEnd size={14} />
-                        </button>
+            {/* 未量到宽度不挂虚拟列表：避免用错误行高建缓存 */}
+            {gridWidth > 0 && (
+              <VirtualList
+                items={gridRows}
+                rowHeight={gridRowHeight}
+                getScrollElement={() => scrollRef.current}
+                renderRow={(rowItems) => (
+                  <div
+                    className="songs-grid"
+                    style={
+                      {
+                        "--grid-cols": gridCols,
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+                        gap: "var(--space-4)",
+                      } as React.CSSProperties
+                    }
+                  >
+                    {rowItems.map((t) => (
+                      <div
+                        key={t.id}
+                        className="song-card"
+                        title="播放"
+                        onClick={() => playOne(t)}
+                      >
+                        <div className="song-card-cover">
+                          <AlbumCover
+                            path={t.path}
+                            mtime={t.mtime}
+                            hasCover={t.has_cover}
+                            initial={(t.title || t.filename || "?").slice(0, 1).toUpperCase()}
+                          />
+                          <span className="song-card-play" aria-hidden>
+                            <Play size={36} fill="currentColor" strokeWidth={0} />
+                          </span>
+                          <button
+                            type="button"
+                            className="song-card-add"
+                            title="加入队列"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void enqueue([trackRowToQueueItem(t)]);
+                            }}
+                          >
+                            <ListEnd size={14} />
+                          </button>
+                        </div>
+                        <div className="song-card-title-row">
+                          <FavoriteHeart item={trackRowToAddItem(t)} />
+                          <div className="song-card-title">{t.title || t.filename}</div>
+                        </div>
+                        <div className="song-card-sub tertiary">
+                          <span className="ellipsis">
+                            {t.artist || "—"}
+                            {t.album ? ` · ${t.album}` : ""}
+                          </span>
+                          <span className="mono song-card-dur">{formatTime(t.duration_ms)}</span>
+                        </div>
                       </div>
-                      <div className="song-card-title-row">
-                        <FavoriteHeart item={trackRowToAddItem(t)} />
-                        <div className="song-card-title">{t.title || t.filename}</div>
-                      </div>
-                      <div className="song-card-sub tertiary">
-                        <span className="ellipsis">
-                          {t.artist || "—"}
-                          {t.album ? ` · ${t.album}` : ""}
-                        </span>
-                        <span className="mono song-card-dur">{formatTime(t.duration_ms)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            />
+                    ))}
+                  </div>
+                )}
+              />
+            )}
           </div>
         )}
       </div>

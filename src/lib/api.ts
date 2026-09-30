@@ -131,6 +131,9 @@ export const api = {
   /** 单曲刮削：同上，按曲名 */
   scrapeSearchTrack: (searchId: number, title: string, artist: string) =>
     invoke<void>("scrape_search_track", { searchId, title, artist }),
+  /** 单曲所属专辑列表（挑专辑用；MB 可多条） */
+  scrapeTrackAlbums: (source: string, trackId: string) =>
+    invoke<import("./types").TrackAlbum[]>("scrape_track_albums", { source, trackId }),
   scrapeBuildPlan: (
     source: string,
     releaseMbid: string,
@@ -155,8 +158,13 @@ export const api = {
   /** 采纳封面候选：下载大图存 `<库>/covers/` 并更新 catalog 引用，返回 data URL */
   coverApply: (trackId: number, url: string) =>
     invoke<string>("cover_apply", { trackId, url }),
-  catalogApplyToTrack: (trackId: number, fields: string[], writeCover: boolean) =>
-    invoke<number>("catalog_apply_to_track", { trackId, fields, writeCover }),
+  catalogApplyToTrack: (trackId: number, fields: string[], writeCover: boolean, catalogId?: number) =>
+    invoke<number>("catalog_apply_to_track", {
+      trackId,
+      fields,
+      writeCover,
+      ...(catalogId && catalogId > 0 ? { catalogId } : {}),
+    }),
   /** 用户编辑文件标签写回（空值不覆盖）；写后会再试一次 catalog 字段关联 */
   trackWriteTags: (trackId: number, changes: { field: string; old: string; new: string }[]) =>
     invoke<number>("track_write_tags", { trackId, changes }),

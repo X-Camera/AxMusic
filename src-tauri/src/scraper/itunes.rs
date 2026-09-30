@@ -4,7 +4,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
-use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackDetail, SRC_ITUNES};
+use super::{ReleaseDetail, ReleaseTrack, ScrapeCandidate, TrackAlbum, TrackDetail, SRC_ITUNES};
 use crate::lyrics::encode;
 use crate::scraper::rate_limit_wait;
 
@@ -59,6 +59,8 @@ struct SongItem {
     track_name: Option<String>,
     #[serde(rename = "artistName")]
     artist_name: Option<String>,
+    #[serde(rename = "collectionId")]
+    collection_id: Option<i64>,
     #[serde(rename = "collectionName")]
     collection_name: Option<String>,
     #[serde(rename = "releaseDate")]
@@ -213,4 +215,28 @@ pub fn fetch_track(track_id: &str) -> Result<TrackDetail> {
         album: s.collection_name.unwrap_or_default(),
         year: year_of(s.release_date.as_deref().unwrap_or("")),
     })
+}
+
+/// 单曲所属专辑（iTunes 一首歌通常只挂一个 collection）。
+pub fn fetch_track_albums(track_id: &str) -> Result<Vec<TrackAlbum>> {
+    let results = lookup_tw_then_default(track_id, None)?;
+    let first = results
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("iTunes 未找到该单曲"))?;
+    let s: SongItem = serde_json::from_value(first).context("iTunes 单曲解析失败")?;
+    let Some(collection_id) = s.collection_id else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![TrackAlbum {
+        source: SRC_ITUNES.into(),
+        release_id: collection_id.to_string(),
+        title: s.collection_name.unwrap_or_default(),
+        artist: s.artist_name.unwrap_or_default(),
+        year: year_of(s.release_date.as_deref().unwrap_or("")),
+        track_count: 0,
+        country: String::new(),
+        release_type: String::new(),
+        disambiguation: String::new(),
+    }])
 }

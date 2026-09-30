@@ -148,9 +148,23 @@ export function TrackTable({
 
   return (
     <table className="track-table" ref={tableRef}>
+      {/* 固定列宽：虚拟滚动时可见行内容变化不再撑动布局（table-layout:fixed） */}
+      <colgroup>
+        <col style={{ width: 40 }} />
+        <col style={{ width: 56 }} />
+        <col style={{ width: 40 }} />
+        <col style={{ width: "24%" }} />
+        <col style={{ width: "14%" }} />
+        <col style={{ width: "16%" }} />
+        <col style={{ width: 56 }} />
+        <col style={{ width: 48 }} />
+        <col style={{ width: 56 }} />
+        <col style={{ width: 56 }} />
+        <col style={{ width: 56 }} />
+      </colgroup>
       <thead>
         <tr>
-          <th style={{ width: 36 }}>
+          <th>
             <input
               type="checkbox"
               aria-label="全选"
@@ -158,26 +172,16 @@ export function TrackTable({
               onChange={toggleAll}
             />
           </th>
-          <th style={{ width: 56 }} title="封面（文件内嵌）">
-            封面
-          </th>
-          <th style={{ width: 40 }} title="喜爱">
-            ♥
-          </th>
+          <th title="封面（文件内嵌）">封面</th>
+          <th title="喜爱">♥</th>
           <th className="cell-left">曲名</th>
           <th className="cell-left">歌手</th>
           <th>专辑</th>
-          <th style={{ width: 56 }}>年份</th>
-          <th style={{ width: 48 }}>轨号</th>
-          <th style={{ width: 56 }} title="文件格式">
-            格式
-          </th>
-          <th style={{ width: 56 }} title="歌词：嵌=标签内，挂=外挂 .lrc（绿=有）">
-            歌词
-          </th>
-          <th style={{ width: 56 }} title="归档状态（已关联 catalog 才检查；未关联显示 —）">
-            归档
-          </th>
+          <th>年份</th>
+          <th>轨号</th>
+          <th title="文件格式">格式</th>
+          <th title="歌词：嵌=标签内，挂=外挂 .lrc（绿=有）">歌词</th>
+          <th title="归档状态（已关联 catalog 才检查；未关联显示 —）">归档</th>
         </tr>
       </thead>
       <tbody>
@@ -221,19 +225,19 @@ export function TrackTable({
                 className={`ellipsis cell-left${mTitle ? " cell-match" : ""}`}
                 title={t.title || t.filename}
               >
-                {t.title || t.filename}
+                <span>{t.title || t.filename}</span>
               </td>
               <td
                 className={`ellipsis cell-left${mArtist ? " cell-match" : ""}${t.artist ? "" : " cell-empty"}`}
                 title={t.artist}
               >
-                {t.artist || "—"}
+                <span>{t.artist || "—"}</span>
               </td>
               <td
                 className={`ellipsis${mAlbum ? " cell-match" : ""}${t.album ? "" : " cell-empty"}`}
                 title={t.album}
               >
-                {t.album || "—"}
+                <span>{t.album || "—"}</span>
               </td>
               <td
                 className={`mono${mYear ? " cell-match" : ""}${t.year ? "" : " cell-empty"}`}

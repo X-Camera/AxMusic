@@ -139,6 +139,21 @@ pub struct TrackDetail {
     pub year: String,
 }
 
+/// 单曲所属专辑（挑专辑用；`release_id` 可直接喂给 [`fetch_release_by_source`]）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackAlbum {
+    pub source: String,
+    pub release_id: String,
+    pub title: String,
+    pub artist: String,
+    pub year: String,
+    pub track_count: i64,
+    pub country: String,
+    /// Album / Single / Compilation / Live…（MB release-group；其它源空串）
+    pub release_type: String,
+    pub disambiguation: String,
+}
+
 /// 按来源分发：拉发行曲目表
 pub fn fetch_release_by_source(source: &str, id: &str) -> anyhow::Result<ReleaseDetail> {
     match source {
@@ -157,14 +172,27 @@ pub fn fetch_track_by_source(source: &str, id: &str) -> anyhow::Result<TrackDeta
             id: r.id,
             title: r.title,
             artist: r.artist,
-            album: String::new(),
-            year: String::new(),
+            // 专辑名交给 fetch_track_albums 挑；此处只作兜底展示
+            album: r.first_release_title,
+            year: r.first_release_year,
         }),
         SRC_ITUNES => itunes::fetch_track(id),
         SRC_NETEASE => netease::fetch_track(id),
         SRC_QQ => qqmusic::fetch_track(id),
         other => anyhow::bail!("未知刮削源: {other}"),
     }
+}
+
+/// 按来源分发：单曲所属专辑列表（MB 可多条；其它源通常一条）
+pub fn fetch_track_albums_by_source(source: &str, id: &str) -> anyhow::Result<Vec<TrackAlbum>> {
+    let list = match source {
+        SRC_MB => musicbrainz::fetch_recording_albums(id)?,
+        SRC_ITUNES => itunes::fetch_track_albums(id)?,
+        SRC_NETEASE => netease::fetch_track_albums(id)?,
+        SRC_QQ => qqmusic::fetch_track_albums(id)?,
+        other => anyhow::bail!("未知刮削源: {other}"),
+    };
+    Ok(list)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

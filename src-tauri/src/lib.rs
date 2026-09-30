@@ -229,6 +229,7 @@ pub fn run() {
             commands::folder_meta_read,
             commands::scrape_search_album,
             commands::scrape_search_track,
+            commands::scrape_track_albums,
             commands::scrape_build_plan,
             commands::catalog_save,
             commands::catalog_compare,

@@ -446,6 +446,20 @@ export interface ScrapeCandidate {
   release_id: string;
 }
 
+/** 单曲所属专辑（挑专辑用；release_id 可喂给 scrapeBuildPlan 的 album 模式） */
+export interface TrackAlbum {
+  source: string;
+  release_id: string;
+  title: string;
+  artist: string;
+  year: string;
+  track_count: number;
+  country: string;
+  /** Album / Single / Compilation / Live…（仅 MB） */
+  release_type: string;
+  disambiguation: string;
+}
+
 export interface FieldChange {
   field: string;
   old: string;
@@ -517,6 +531,8 @@ export interface CatalogRow {
 export interface CompareData {
   track: TrackRow;
   catalog: CatalogRow | null;
+  /** 全部匹配候选（MBID/字段），可切换后按指定条写入 */
+  matches?: CatalogRow[];
   changes: FieldChange[];
   /** catalog 缓存封面（data URL），未刮取为 null */
   cover_data: string | null;
