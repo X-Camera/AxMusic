@@ -67,10 +67,10 @@
   gap: 8px;
 }
 
-/* 深浅色快捷切换：无文字圆角方钮，紧挨窗口按钮
-   必须写成 .btn.theme-toggle：压过 .btn 的 padding:0 14px，
+/* 顶栏图标方钮（深浅切换 / 迷你模式共用）：无文字圆角方钮
+   必须写成 .btn.topbar-icon：压过 .btn 的 padding:0 14px，
    否则 30px 宽被左右 padding 挤成 0，图标被 flex 压没只剩空框 */
-.btn.theme-toggle {
+.btn.topbar-icon {
   width: 30px;
   height: 30px;
   padding: 0;
@@ -78,11 +78,11 @@
   color: var(--text-secondary);
 }
 
-.btn.theme-toggle:hover {
+.btn.topbar-icon:hover {
   color: var(--text);
 }
 
-.btn.theme-toggle svg {
+.btn.topbar-icon svg {
   width: 15px;
   height: 15px;
   flex-shrink: 0;

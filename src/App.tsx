@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { CloseDialog } from "./components/CloseDialog";
 import { DropOpenLayer } from "./components/DropOpenLayer";
+import { MiniMode } from "./components/MiniMode";
 import { MiniPlayer } from "./components/MiniPlayer";
 import { RightDock } from "./components/RightDock";
 import { Sidebar } from "./components/Sidebar";
@@ -31,6 +32,7 @@ const QUEUE_SLOT_ROUTES = new Set(["manage", "settings"]);
 export default function App() {
   const route = useApp((s) => s.route);
   const fullPlayer = useApp((s) => s.fullPlayer);
+  const miniMode = useApp((s) => s.miniMode);
   const queuePanelOpen = useApp((s) => s.queuePanelOpen);
   const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
   const sideOpen = queuePanelOpen || lyricsPanelOpen;
@@ -55,6 +57,17 @@ export default function App() {
   }
   if (win === "viz-settings") {
     return <VizSettingsWindow />;
+  }
+
+  // mini 模式：同窗缩成玻璃小卡，只留播放壳（关闭询问/通用弹窗仍可用）
+  if (miniMode) {
+    return (
+      <>
+        <MiniMode />
+        <CloseDialog />
+        <DialogHost />
+      </>
+    );
   }
 
   return (

@@ -27,7 +27,7 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      className="btn theme-toggle"
+      className="btn topbar-icon"
       title={nextLabel}
       aria-label={nextLabel}
       onClick={() => {

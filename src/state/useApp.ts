@@ -14,6 +14,9 @@ interface AppState {
   /** 满窗播放模式（封面点开 / 缩回关闭） */
   fullPlayer: boolean;
   setFullPlayer: (v: boolean) => void;
+  /** mini 模式（主窗缩成桌面角玻璃小卡 / 回到默认） */
+  miniMode: boolean;
+  setMiniMode: (v: boolean) => void;
   /** 播放列表右边栏（迷你条按钮切换；管理/设置点左区自动收起） */
   queuePanelOpen: boolean;
   setQueuePanelOpen: (v: boolean) => void;
@@ -100,6 +103,8 @@ export const useApp = create<AppState>((set, get) => ({
   clearPendingArtist: () => set({ pendingArtist: null }),
   fullPlayer: false,
   setFullPlayer: (fullPlayer) => set({ fullPlayer }),
+  miniMode: false,
+  setMiniMode: (miniMode) => set({ miniMode }),
   queuePanelOpen: false,
   setQueuePanelOpen: (queuePanelOpen) => set({ queuePanelOpen }),
   toggleQueuePanel: () => set((s) => ({ queuePanelOpen: !s.queuePanelOpen })),
