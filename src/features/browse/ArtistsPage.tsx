@@ -198,7 +198,9 @@ export function ArtistsPage() {
                   {selected.name || "Unknown Artist"}
                 </div>
                 <div className="tertiary">
-                  {selected.album_count} 张专辑 · {selected.track_count} 首
+                  {/* 详情到达后按真实列表计数：曲目口径比墙聚合宽（含演唱客串），墙计数会偏小 */}
+                  {detailLoading ? selected.album_count : albums.length} 张专辑 ·{" "}
+                  {detailLoading ? selected.track_count : tracks.length} 首
                 </div>
               </div>
             </div>

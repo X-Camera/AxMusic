@@ -960,12 +960,17 @@ impl LibraryDb {
                  CASE WHEN t.album = '' THEN 'Unknown Album' ELSE t.album END AS album_key,
                  CASE WHEN t.album_artist = '' THEN
                    (CASE WHEN t.artist = '' THEN 'Unknown Artist' ELSE t.artist END)
-                 ELSE t.album_artist END AS artist_name
+                 ELSE t.album_artist END AS artist_name,
+                 -- 排序键与名字同口径派生（py_* NULL=未回填，回退原文）；
+                 -- 'Unknown Artist' 手写其 pinyin_sort_key 结果，避免大写 U 漂到拼音键前面
+                 CASE WHEN t.album_artist = '' THEN
+                   (CASE WHEN t.artist = '' THEN 'unknown artist' ELSE COALESCE(t.py_artist, t.artist) END)
+                 ELSE COALESCE(t.py_album_artist, t.album_artist) END AS artist_py
                FROM tracks t
                WHERE t.is_deleted = 0
              )
              GROUP BY artist_name
-             ORDER BY artist_name",
+             ORDER BY MIN(artist_py), artist_name",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -983,9 +988,23 @@ impl LibraryDb {
     }
 
     /// 歌手名匹配：与 list_artists 聚合口径一致（album_artist 优先，空则 artist）。
-    fn artist_match_sql() -> &'static str {
-        "CASE WHEN ?1 = 'Unknown Artist' THEN (album_artist = '' AND (artist = '' OR artist = ?1))
-              ELSE album_artist = ?1 OR (album_artist = '' AND artist = ?1) END"
+    /// `q` 是调用方 FROM 里 tracks 的可见名（load_album_seeds 联了 catalog，
+    /// 不带表前缀的 artist/album_artist 是歧义列）。
+    fn artist_match_sql(q: &str) -> String {
+        format!(
+            "CASE WHEN ?1 = 'Unknown Artist' THEN ({q}.album_artist = '' AND ({q}.artist = '' OR {q}.artist = ?1))
+                  ELSE {q}.album_artist = ?1 OR ({q}.album_artist = '' AND {q}.artist = ?1) END"
+        )
+    }
+
+    /// 曲目列表的歌手匹配：比聚合口径宽——专辑艺人或演唱者任一命中即算该歌手的歌。
+    /// 听歌史/统计按原始 artist 标签聚合，跳进来的名字（合辑里的演唱者、合唱名）
+    /// 在窄口径下会整页空，故曲目放宽；专辑区仍用窄口径，避免列出别人的半张专辑。
+    fn artist_track_match_sql(q: &str) -> String {
+        format!(
+            "CASE WHEN ?1 = 'Unknown Artist' THEN ({q}.album_artist = '' AND ({q}.artist = '' OR {q}.artist = ?1))
+                  ELSE {q}.album_artist = ?1 OR {q}.artist = ?1 END"
+        )
     }
 
     /// 读取专辑聚合用轻量行（含 catalog 佐证字段）。`artist_filter` 与歌手列表口径一致。
@@ -1003,7 +1022,7 @@ impl LibraryDb {
              WHERE t.is_deleted = 0",
         );
         if artist_filter.is_some() {
-            sql.push_str(&format!(" AND ({})", Self::artist_match_sql()));
+            sql.push_str(&format!(" AND ({})", Self::artist_match_sql("t")));
         }
         sql.push_str(" ORDER BY t.id");
         let mut stmt = self.conn.prepare(&sql)?;
@@ -1029,8 +1048,8 @@ impl LibraryDb {
             "SELECT {TRACK_COLS}
              FROM tracks
              WHERE is_deleted = 0 AND ({})
-             ORDER BY album, COALESCE(disc_no, 1), track_no, filename",
-            Self::artist_match_sql()
+             ORDER BY COALESCE(py_album, album), album, COALESCE(disc_no, 1), track_no, filename",
+            Self::artist_track_match_sql("tracks")
         );
         let rows = self
             .conn
@@ -2243,6 +2262,101 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].title, "爱在西元前", "拼音序：ai < zhou，got {:?}", list.iter().map(|t| &t.title).collect::<Vec<_>>());
         assert_eq!(list[1].title, "周杰伦");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 歌手详情曲目用宽口径（album_artist 或 artist 命中）：
+    /// 合辑演唱者（album_artist=群星）、合唱名（artist=A/B）从听歌史跳进时不应为空；
+    /// 专辑区仍是窄口径，不把别人专辑艺人的半张专辑列进来。
+    #[test]
+    fn artist_tracks_match_lead_singer_and_duet() {
+        let (dir, db) = temp_db("artist-match");
+
+        // 合辑：演唱者张韶涵，专辑艺人群星
+        let mut va = sample_track(&dir.join("va.flac").to_string_lossy());
+        va.title = "隐形的翅膀".into();
+        va.artist = "张韶涵".into();
+        va.album = "潘朵拉".into();
+        va.album_artist = "群星".into();
+        db.upsert_track(&va, 1000, 1).unwrap();
+
+        // 合唱：artist=周杰伦/温岚，album_artist=周杰伦
+        let mut duet = sample_track(&dir.join("duet.flac").to_string_lossy());
+        duet.title = "屋顶".into();
+        duet.artist = "周杰伦/温岚".into();
+        duet.album = "叶惠美".into();
+        duet.album_artist = "周杰伦".into();
+        db.upsert_track(&duet, 1000, 2).unwrap();
+
+        let zsh = db.tracks_of_artist("张韶涵").unwrap();
+        assert_eq!(zsh.len(), 1, "合辑演唱者应能查到自己的歌，got {:?}", zsh.iter().map(|t| &t.title).collect::<Vec<_>>());
+        assert_eq!(zsh[0].title, "隐形的翅膀");
+
+        let duet_hits = db.tracks_of_artist("周杰伦/温岚").unwrap();
+        assert_eq!(duet_hits.len(), 1, "合唱名应命中合唱曲");
+        assert_eq!(duet_hits[0].title, "屋顶");
+
+        // 宽口径下点「周杰伦」：命中 album_artist=周杰伦 的合唱曲
+        let zjl = db.tracks_of_artist("周杰伦").unwrap();
+        assert_eq!(zjl.len(), 1);
+        assert_eq!(zjl[0].title, "屋顶");
+
+        // 专辑区保持窄口径：张韶涵名下不列「群星」的半张合辑
+        assert!(db.albums_of_artist("张韶涵").unwrap().is_empty());
+        assert_eq!(db.albums_of_artist("周杰伦").unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 歌手墙与歌手详情曲目都按拼音排序（阿 du < 林 lin < 群 qun < 周 zhou；碟内 十一 shi < 叶 ye）。
+    #[test]
+    fn artist_lists_sort_by_pinyin() {
+        let (dir, db) = temp_db("artist-py-sort");
+
+        let mut adu = sample_track(&dir.join("adu.flac").to_string_lossy());
+        adu.title = "天黑".into();
+        adu.artist = "阿杜".into();
+        adu.album = "天黑".into();
+        adu.album_artist = "阿杜".into();
+        db.upsert_track(&adu, 1000, 1).unwrap();
+
+        let mut ljj = sample_track(&dir.join("ljj.flac").to_string_lossy());
+        ljj.title = "江南".into();
+        ljj.artist = "林俊杰".into();
+        ljj.album = "第二天堂".into();
+        ljj.album_artist = "林俊杰".into();
+        db.upsert_track(&ljj, 1000, 2).unwrap();
+
+        let mut qx = sample_track(&dir.join("qx.flac").to_string_lossy());
+        qx.title = "隐形的翅膀".into();
+        qx.artist = "张韶涵".into();
+        qx.album = "潘朵拉".into();
+        qx.album_artist = "群星".into();
+        db.upsert_track(&qx, 1000, 3).unwrap();
+
+        // 周杰伦两张专辑，插入顺序与拼音序相反（叶 ye 应先于 十一 shi 入庫）
+        let mut ye = sample_track(&dir.join("ye.flac").to_string_lossy());
+        ye.title = "晴天".into();
+        ye.artist = "周杰伦".into();
+        ye.album = "叶惠美".into();
+        ye.album_artist = "周杰伦".into();
+        db.upsert_track(&ye, 1000, 4).unwrap();
+
+        let mut shi = sample_track(&dir.join("shi.flac").to_string_lossy());
+        shi.title = "夜曲".into();
+        shi.artist = "周杰伦".into();
+        shi.album = "十一月的萧邦".into();
+        shi.album_artist = "周杰伦".into();
+        db.upsert_track(&shi, 1000, 5).unwrap();
+
+        let wall = db.list_artists().unwrap();
+        let names: Vec<&str> = wall.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["阿杜", "林俊杰", "群星", "周杰伦"], "歌手墙应按拼音序");
+
+        let tracks = db.tracks_of_artist("周杰伦").unwrap();
+        let albums: Vec<&str> = tracks.iter().map(|t| t.album.as_str()).collect();
+        assert_eq!(albums, ["十一月的萧邦", "叶惠美"], "曲目应按专辑拼音分组排序");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
