@@ -44,6 +44,27 @@ pub fn match_key(s: &str) -> String {
     folded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// 拼音排序键：汉字→无声调拼音（繁体先转简体），西文/数字小写保留，其余折叠为空格。
+/// 「周杰伦」→ `zhoujielun`；「Jay Chou」→ `jay chou`。多音字按字典常见音，偶有偏差。
+pub fn pinyin_sort_key(s: &str) -> String {
+    use pinyin::ToPinyin;
+    if s.is_empty() {
+        return String::new();
+    }
+    let hans = to_hans(&fold_width(s));
+    let mut out = String::with_capacity(hans.len() * 2);
+    for ch in hans.chars() {
+        if let Some(py) = ch.to_pinyin() {
+            out.push_str(py.plain());
+        } else if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(' ');
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// 曲名比较键：在 [`match_key`] 基础上再剥掉常见版本/合作后缀，
 /// 使「晴天 (Live)」与「晴天」、「Song feat. X」与「Song」共用同一键。
 /// 仅用于匹配，不改写库内原文；精确键仍优先于本键。
@@ -211,6 +232,17 @@ mod tests {
     #[test]
     fn empty_stays_empty() {
         assert_eq!(match_key(""), "");
+        assert_eq!(pinyin_sort_key(""), "");
+    }
+
+    #[test]
+    fn pinyin_sort_key_folds_han_and_latin() {
+        assert_eq!(pinyin_sort_key("周杰伦"), "zhoujielun");
+        assert_eq!(pinyin_sort_key("週杰倫"), "zhoujielun");
+        assert_eq!(pinyin_sort_key("Jay Chou"), "jay chou");
+        assert_eq!(pinyin_sort_key("爱在西元前"), "aizaixiyuanqian");
+        // 拼音序：爱(ai) 应在 周(zhou) 前
+        assert!(pinyin_sort_key("爱在西元前") < pinyin_sort_key("周杰伦"));
     }
 
     #[test]

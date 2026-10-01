@@ -78,6 +78,8 @@ pub struct AlbumCard {
     /// 封面懒加载样例曲目（组内优先有封面的）
     pub cover_track_path: Option<String>,
     pub cover_track_mtime: i64,
+    /// 专辑聚合稳定键（`id:{组内最小曲目id}`），取曲目用它，避免展示字段变化导致对不上
+    pub group_key: String,
 }
 
 /// 歌手浏览卡片：按 album_artist（空则 artist）聚合。
@@ -122,9 +124,12 @@ pub struct TrackFilter {
     pub unlinked_only: bool,
     #[serde(default)]
     pub limit: Option<i64>,
-    /// "album"（默认）| "title" | "artist"
+    /// 排序字段：title（默认）| artist | album | album_artist | year | track_no | format | duration | filename
     #[serde(default)]
     pub sort: Option<String>,
+    /// 升/降序："asc"（默认）| "desc"
+    #[serde(default)]
+    pub sort_dir: Option<String>,
 }
 
 /// Unix 秒时间戳（存 TEXT 列，省 chrono 依赖）。名实相符：不是 ISO 串。
@@ -231,7 +236,11 @@ impl LibraryDb {
                 release_type TEXT NOT NULL DEFAULT '',
                 mb_recording_mbid TEXT NOT NULL DEFAULT '',
                 mb_release_mbid TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT ''
+                updated_at TEXT NOT NULL DEFAULT '',
+                py_title TEXT,
+                py_artist TEXT,
+                py_album TEXT,
+                py_album_artist TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
@@ -259,8 +268,17 @@ impl LibraryDb {
             // 多碟发行的碟号（P1：多碟曲号配对/排序用；NULL = 无碟号信息，按 1 处理）
             "ALTER TABLE tracks ADD COLUMN disc_no INTEGER",
             "ALTER TABLE catalog ADD COLUMN disc_no INTEGER",
+            // 汉字拼音排序键（管理表按曲名等排序）；NULL=未算，''=算过（纯符号标题）
+            "ALTER TABLE tracks ADD COLUMN py_title TEXT",
+            "ALTER TABLE tracks ADD COLUMN py_artist TEXT",
+            "ALTER TABLE tracks ADD COLUMN py_album TEXT",
+            "ALTER TABLE tracks ADD COLUMN py_album_artist TEXT",
         ] {
             let _ = self.conn.execute(ddl, []);
+        }
+        // 历史库补拼音排序键（新库空表秒回）
+        if let Err(e) = self.backfill_pinyin_keys() {
+            eprintln!("[AxMusic] 拼音排序键回填跳过: {e}");
         }
         // catalog.mbid 部分唯一索引（空 mbid 不参与）。先收敛历史重复行：
         // 每组保留最小 id，tracks.catalog_id 重指后删多余行；任何一步失败只记录不致命。
@@ -366,6 +384,10 @@ impl LibraryDb {
     // ── tracks ─────────────────────────────────────────────────────
 
     pub fn upsert_track(&self, t: &TrackRow, file_size: u64, mtime: u64) -> Result<()> {
+        let py_title = crate::text_norm::pinyin_sort_key(&t.title);
+        let py_artist = crate::text_norm::pinyin_sort_key(&t.artist);
+        let py_album = crate::text_norm::pinyin_sort_key(&t.album);
+        let py_album_artist = crate::text_norm::pinyin_sort_key(&t.album_artist);
         self.conn.execute(
             r#"
             INSERT INTO tracks (
@@ -373,9 +395,10 @@ impl LibraryDb {
                 duration_ms, format, sample_rate, bit_rate,
                 has_cover, has_lyrics, has_lrc, has_year, has_mb_id, tag_status, missing,
                 file_size, mtime, is_deleted,
-                release_type, mb_recording_mbid, mb_release_mbid, updated_at, disc_no
+                release_type, mb_recording_mbid, mb_release_mbid, updated_at, disc_no,
+                py_title, py_artist, py_album, py_album_artist
             ) VALUES (
-                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0,?22,?23,?24,?25,?26
+                ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0,?22,?23,?24,?25,?26,?27,?28,?29,?30
             )
             ON CONFLICT(path) DO UPDATE SET
                 filename=excluded.filename,
@@ -403,7 +426,11 @@ impl LibraryDb {
                 release_type=excluded.release_type,
                 mb_recording_mbid=excluded.mb_recording_mbid,
                 mb_release_mbid=excluded.mb_release_mbid,
-                updated_at=excluded.updated_at
+                updated_at=excluded.updated_at,
+                py_title=excluded.py_title,
+                py_artist=excluded.py_artist,
+                py_album=excluded.py_album,
+                py_album_artist=excluded.py_album_artist
             "#,
             params![
                 t.path,
@@ -432,10 +459,55 @@ impl LibraryDb {
                 t.mb_release_mbid,
                 now_unix_secs(),
                 t.disc_no,
+                py_title,
+                py_artist,
+                py_album,
+                py_album_artist,
             ],
         )?;
         // Re-apply any known catalog link (upsert keeps catalog_id on conflict).
         Ok(())
+    }
+
+    /// 为尚未计算拼音排序键的行补键（入库早于拼音功能的库）。
+    /// NULL=未算（含历史 ALTER 后的旧行），''=算过但结果为空（纯符号标题），不重写。
+    /// 返回补写行数。扫描/写回走 upsert 会顺带维护，这里兜底历史数据。
+    pub fn backfill_pinyin_keys(&self) -> Result<usize> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, artist, album, album_artist FROM tracks
+             WHERE py_title IS NULL
+                OR py_artist IS NULL
+                OR py_album IS NULL
+                OR py_album_artist IS NULL",
+        )?;
+        let rows: Vec<(i64, String, String, String, String)> = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(stmt);
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.transaction()?;
+        let mut n = 0;
+        for (id, title, artist, album, album_artist) in rows {
+            tx.execute(
+                "UPDATE tracks SET
+                    py_title = ?1, py_artist = ?2, py_album = ?3, py_album_artist = ?4
+                 WHERE id = ?5",
+                params![
+                    crate::text_norm::pinyin_sort_key(&title),
+                    crate::text_norm::pinyin_sort_key(&artist),
+                    crate::text_norm::pinyin_sort_key(&album),
+                    crate::text_norm::pinyin_sort_key(&album_artist),
+                    id,
+                ],
+            )?;
+            n += 1;
+        }
+        tx.commit()?;
+        Ok(n)
     }
 
     /// 归档移动后改写 tracks.path / filename（按 id 定位，避免 upsert 插新行）。
@@ -720,10 +792,35 @@ impl LibraryDb {
         if filter.unlinked_only {
             where_conds.push("(catalog_id IS NULL OR catalog_id = 0)");
         }
-        let order = match filter.sort.as_deref() {
-            Some("title") => "title, album_artist, album, COALESCE(disc_no, 1), track_no, filename",
-            Some("artist") => "artist, album, COALESCE(disc_no, 1), track_no, filename",
-            _ => "album_artist, album, COALESCE(disc_no, 1), track_no, filename",
+        let order = {
+            let primary = match filter.sort.as_deref() {
+                Some("artist") => "artist",
+                Some("album") => "album",
+                Some("album_artist") => "album_artist",
+                Some("year") => "year",
+                Some("track_no") => "track_no",
+                Some("format") => "format",
+                Some("duration") => "duration_ms",
+                Some("filename") => "filename",
+                // 默认曲名：写标签后不易整表跳动（不依赖 album_artist）
+                _ => "title",
+            };
+            let dir = match filter.sort_dir.as_deref() {
+                Some("desc") => "DESC",
+                _ => "ASC",
+            };
+            // 汉字按拼音键排序（upsert/回填维护，NULL 回退原文防未回填时乱序）
+            let primary = match primary {
+                "title" => "COALESCE(py_title, title)",
+                "artist" => "COALESCE(py_artist, artist)",
+                "album" => "COALESCE(py_album, album)",
+                "album_artist" => "COALESCE(py_album_artist, album_artist)",
+                other => other,
+            };
+            // 次级：专辑 → 碟号 → 曲序 → 文件名 → 专辑艺人（表里不显示，垫底）
+            format!(
+                "{primary} {dir}, COALESCE(py_album, album), COALESCE(disc_no, 1), track_no, filename, COALESCE(py_album_artist, album_artist)"
+            )
         };
         let sql = format!(
             "SELECT {TRACK_COLS}
@@ -783,68 +880,55 @@ impl LibraryDb {
         })
     }
 
+    /// 专辑墙/歌手页专辑列表。同一张专辑按「标签归一 / release MBID / catalog 身份」
+    /// 任一命中合并，避免整理写入 album_artist 后裂成两张。
     pub fn list_albums(&self) -> Result<Vec<AlbumCard>> {
-        // cover_track_*：组内优先有封面的样例曲目，前端 coverCache 懒加载封面
-        let mut stmt = self.conn.prepare(
-            "SELECT
-                CASE WHEN t.album = '' THEN 'Unknown Album' ELSE t.album END AS album,
-                CASE WHEN t.album_artist = '' THEN
-                    (CASE WHEN t.artist = '' THEN 'Unknown Artist' ELSE t.artist END)
-                ELSE t.album_artist END AS album_artist,
-                MAX(t.year) AS year,
-                MAX(t.has_cover) AS has_cover,
-                COUNT(*) AS track_count,
-                (SELECT t2.path FROM tracks t2
-                  WHERE t2.is_deleted = 0
-                    AND t2.album = t.album
-                    AND t2.album_artist = t.album_artist
-                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
-                  LIMIT 1) AS cover_track_path,
-                (SELECT t2.mtime FROM tracks t2
-                  WHERE t2.is_deleted = 0
-                    AND t2.album = t.album
-                    AND t2.album_artist = t.album_artist
-                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
-                  LIMIT 1) AS cover_track_mtime
-             FROM tracks t
-             WHERE t.is_deleted = 0
-             GROUP BY t.album, t.album_artist
-             ORDER BY album_artist, album",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(AlbumCard {
-                    album: r.get(0)?,
-                    album_artist: r.get(1)?,
-                    year: r.get::<_, String>(2).unwrap_or_default(),
-                    has_cover: r.get::<_, i64>(3)? != 0,
-                    track_count: r.get(4)?,
-                    cover_path: None,
-                    cover_track_path: r.get(5)?,
-                    cover_track_mtime: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let seeds = self.load_album_seeds(None)?;
+        let mut cards: Vec<AlbumCard> = group_album_seeds(seeds)
+            .into_iter()
+            .map(|g| g.into_card())
+            .collect();
+        cards.sort_by_key(|c| {
+            (
+                crate::text_norm::pinyin_sort_key(&c.album_artist),
+                crate::text_norm::pinyin_sort_key(&c.album),
+            )
+        });
+        Ok(cards)
     }
 
-    pub fn tracks_of_album(&self, album: &str, album_artist: &str) -> Result<Vec<TrackRow>> {
-        let rows = self
+    /// 按聚合键取整张专辑的曲目（键来自 [`AlbumCard::group_key`]）。
+    pub fn tracks_of_album(&self, group_key: &str) -> Result<Vec<TrackRow>> {
+        let seeds = self.load_album_seeds(None)?;
+        let Some(group) = group_album_seeds(seeds).into_iter().find(|g| g.group_key == group_key)
+        else {
+            return Err(anyhow::anyhow!(
+                "专辑分组键 {group_key} 已失效（曲目删除或标签变更导致重组），请刷新专辑列表"
+            ));
+        };
+        if group.member_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 一次 IN 取回，避免逐条点查
+        let placeholders = vec!["?"; group.member_ids.len()].join(",");
+        let sql = format!("SELECT {TRACK_COLS} FROM tracks WHERE id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::types::ToSql> = group
+            .member_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let mut rows = self
             .conn
-            .prepare(&format!(
-                "SELECT {TRACK_COLS}
-                 FROM tracks
-                 WHERE is_deleted = 0
-                   AND CASE WHEN ?1 = 'Unknown Album' THEN album = '' ELSE album = ?1 END
-                   AND (
-                     CASE WHEN ?2 = 'Unknown Artist' THEN (album_artist = '' AND (artist = '' OR artist = ?2))
-                     WHEN ?2 = 'Unknown Album Artist' THEN album_artist = ''
-                     ELSE album_artist = ?2 OR (album_artist = '' AND artist = ?2) END
-                   )
-                 ORDER BY COALESCE(disc_no, 1), track_no, filename"
-            ))?
-            .query_map(params![album, album_artist], map_track)?
-            .collect::<Result<Vec<_>, _>>()?;
+            .prepare(&sql)?
+            .query_map(params.as_slice(), map_track)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.sort_by(|a, b| {
+            a.disc_no
+                .unwrap_or(1)
+                .cmp(&b.disc_no.unwrap_or(1))
+                .then(a.track_no.cmp(&b.track_no))
+                .then(a.filename.cmp(&b.filename))
+        });
         Ok(rows)
     }
 
@@ -904,50 +988,40 @@ impl LibraryDb {
               ELSE album_artist = ?1 OR (album_artist = '' AND artist = ?1) END"
     }
 
-    pub fn albums_of_artist(&self, artist: &str) -> Result<Vec<AlbumCard>> {
-        let sql = format!(
-            "SELECT
-                CASE WHEN t.album = '' THEN 'Unknown Album' ELSE t.album END AS album,
-                CASE WHEN t.album_artist = '' THEN
-                    (CASE WHEN t.artist = '' THEN 'Unknown Artist' ELSE t.artist END)
-                ELSE t.album_artist END AS album_artist,
-                MAX(t.year) AS year,
-                MAX(t.has_cover) AS has_cover,
-                COUNT(*) AS track_count,
-                (SELECT t2.path FROM tracks t2
-                  WHERE t2.is_deleted = 0
-                    AND t2.album = t.album
-                    AND t2.album_artist = t.album_artist
-                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
-                  LIMIT 1) AS cover_track_path,
-                (SELECT t2.mtime FROM tracks t2
-                  WHERE t2.is_deleted = 0
-                    AND t2.album = t.album
-                    AND t2.album_artist = t.album_artist
-                  ORDER BY t2.has_cover DESC, t2.track_no, t2.filename
-                  LIMIT 1) AS cover_track_mtime
+    /// 读取专辑聚合用轻量行（含 catalog 佐证字段）。`artist_filter` 与歌手列表口径一致。
+    fn load_album_seeds(&self, artist_filter: Option<&str>) -> Result<Vec<AlbumSeed>> {
+        let mut sql = String::from(
+            "SELECT t.id, t.path, t.filename, t.artist, t.album, t.album_artist, t.year,
+                    t.track_no, t.disc_no, t.has_cover, t.mtime, t.mb_release_mbid, t.catalog_id,
+                    COALESCE(c.album, ''),
+                    COALESCE(c.album_artist, ''),
+                    COALESCE(c.artist, ''),
+                    COALESCE(c.release_mbid, ''),
+                    COALESCE(c.year, '')
              FROM tracks t
-             WHERE t.is_deleted = 0 AND ({})
-             GROUP BY t.album, t.album_artist
-             ORDER BY album",
-            Self::artist_match_sql()
+             LEFT JOIN catalog c ON c.id = t.catalog_id
+             WHERE t.is_deleted = 0",
         );
+        if artist_filter.is_some() {
+            sql.push_str(&format!(" AND ({})", Self::artist_match_sql()));
+        }
+        sql.push_str(" ORDER BY t.id");
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params![artist], |r| {
-                Ok(AlbumCard {
-                    album: r.get(0)?,
-                    album_artist: r.get(1)?,
-                    year: r.get::<_, String>(2).unwrap_or_default(),
-                    has_cover: r.get::<_, i64>(3)? != 0,
-                    track_count: r.get(4)?,
-                    cover_path: None,
-                    cover_track_path: r.get(5)?,
-                    cover_track_mtime: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let rows = match artist_filter {
+            Some(artist) => stmt.query_map(params![artist], map_album_seed)?,
+            None => stmt.query_map([], map_album_seed)?,
+        };
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn albums_of_artist(&self, artist: &str) -> Result<Vec<AlbumCard>> {
+        let seeds = self.load_album_seeds(Some(artist))?;
+        let mut cards: Vec<AlbumCard> = group_album_seeds(seeds)
+            .into_iter()
+            .map(|g| g.into_card())
+            .collect();
+        cards.sort_by_key(|c| crate::text_norm::pinyin_sort_key(&c.album));
+        Ok(cards)
     }
 
     pub fn tracks_of_artist(&self, artist: &str) -> Result<Vec<TrackRow>> {
@@ -1409,6 +1483,226 @@ fn map_catalog(r: &rusqlite::Row<'_>) -> rusqlite::Result<CatalogRow> {
     })
 }
 
+/// 专辑聚合用轻量曲目（含 catalog 佐证字段，不进 TrackRow）。
+#[derive(Clone)]
+struct AlbumSeed {
+    id: i64,
+    path: String,
+    filename: String,
+    artist: String,
+    album: String,
+    album_artist: String,
+    year: String,
+    track_no: Option<i64>,
+    disc_no: Option<i64>,
+    has_cover: bool,
+    mtime: i64,
+    mb_release_mbid: String,
+    catalog_id: Option<i64>,
+    catalog_album: String,
+    catalog_album_artist: String,
+    catalog_artist: String,
+    catalog_release_mbid: String,
+    catalog_year: String,
+}
+
+fn map_album_seed(r: &rusqlite::Row<'_>) -> rusqlite::Result<AlbumSeed> {
+    Ok(AlbumSeed {
+        id: r.get(0)?,
+        path: r.get(1)?,
+        filename: r.get(2)?,
+        artist: r.get(3)?,
+        album: r.get(4)?,
+        album_artist: r.get(5)?,
+        year: r.get(6)?,
+        track_no: r.get(7)?,
+        disc_no: r.get(8)?,
+        has_cover: r.get::<_, i64>(9)? != 0,
+        mtime: r.get(10)?,
+        mb_release_mbid: r.get(11)?,
+        catalog_id: r.get(12)?,
+        catalog_album: r.get(13)?,
+        catalog_album_artist: r.get(14)?,
+        catalog_artist: r.get(15)?,
+        catalog_release_mbid: r.get(16)?,
+        catalog_year: r.get(17)?,
+    })
+}
+
+impl AlbumSeed {
+    /// 文件标签上的有效专辑艺人：album_artist 优先，空则 artist。
+    fn tag_album_artist(&self) -> &str {
+        if self.album_artist.trim().is_empty() {
+            self.artist.as_str()
+        } else {
+            self.album_artist.as_str()
+        }
+    }
+
+    /// 合并身份键：标签归一、release MBID、catalog 专辑身份，任一相同即同一张专辑。
+    /// mbid 不全时靠标签键兜底；catalog 作佐证把整理前后标签不一致的曲目并回来。
+    fn identity_keys(&self) -> Vec<String> {
+        let mut keys = Vec::new();
+        let album_k = crate::text_norm::match_key(&self.album);
+        let artist_k = crate::text_norm::match_key(self.tag_album_artist());
+        if !album_k.is_empty() || !artist_k.is_empty() {
+            keys.push(format!("tag:{album_k}|{artist_k}"));
+        }
+        let rel = if !self.mb_release_mbid.trim().is_empty() {
+            self.mb_release_mbid.trim()
+        } else {
+            self.catalog_release_mbid.trim()
+        };
+        if !rel.is_empty() {
+            keys.push(format!("rel:{}", rel.to_ascii_lowercase()));
+        }
+        if self.catalog_id.is_some() {
+            let ca = crate::text_norm::match_key(&self.catalog_album);
+            let caa = if self.catalog_album_artist.trim().is_empty() {
+                crate::text_norm::match_key(&self.catalog_artist)
+            } else {
+                crate::text_norm::match_key(&self.catalog_album_artist)
+            };
+            if !ca.is_empty() {
+                keys.push(format!("cat:{ca}|{caa}"));
+            }
+        }
+        keys
+    }
+}
+
+/// 合并后的专辑组。
+struct AlbumGroup {
+    group_key: String,
+    member_ids: Vec<i64>,
+    seeds: Vec<AlbumSeed>,
+}
+
+impl AlbumGroup {
+    fn into_card(self) -> AlbumCard {
+        let album = display_album(&self.seeds);
+        let album_artist = display_album_artist(&self.seeds);
+        let mut year = String::new();
+        let mut has_cover = false;
+        for s in &self.seeds {
+            let y = if !s.catalog_year.trim().is_empty() {
+                s.catalog_year.trim()
+            } else {
+                s.year.trim()
+            };
+            if !y.is_empty() && (year.is_empty() || y > year.as_str()) {
+                year = y.to_string();
+            }
+            if s.has_cover {
+                has_cover = true;
+            }
+        }
+        // 组内优先有封面的样例曲目，其次曲序更前
+        let mut cover_sorted: Vec<&AlbumSeed> = self.seeds.iter().collect();
+        cover_sorted.sort_by(|a, b| {
+            b.has_cover
+                .cmp(&a.has_cover)
+                .then(a.disc_no.unwrap_or(1).cmp(&b.disc_no.unwrap_or(1)))
+                .then(a.track_no.cmp(&b.track_no))
+                .then(a.filename.cmp(&b.filename))
+        });
+        let cover_sample = cover_sorted.first().map(|s| (s.path.clone(), s.mtime));
+
+        AlbumCard {
+            album,
+            album_artist,
+            year,
+            has_cover,
+            track_count: self.seeds.len() as i64,
+            cover_path: None,
+            cover_track_path: cover_sample.as_ref().map(|c| c.0.clone()),
+            cover_track_mtime: cover_sample.map(|c| c.1).unwrap_or(0),
+            group_key: self.group_key,
+        }
+    }
+}
+
+fn display_album(seeds: &[AlbumSeed]) -> String {
+    if let Some(s) = seeds.iter().find(|m| !m.catalog_album.trim().is_empty()) {
+        return s.catalog_album.trim().to_string();
+    }
+    if let Some(s) = seeds.iter().find(|m| !m.album.trim().is_empty()) {
+        return s.album.trim().to_string();
+    }
+    "Unknown Album".into()
+}
+
+fn display_album_artist(seeds: &[AlbumSeed]) -> String {
+    if let Some(s) = seeds
+        .iter()
+        .find(|m| !m.catalog_album_artist.trim().is_empty())
+    {
+        return s.catalog_album_artist.trim().to_string();
+    }
+    if let Some(s) = seeds.iter().find(|m| !m.catalog_artist.trim().is_empty()) {
+        return s.catalog_artist.trim().to_string();
+    }
+    if let Some(s) = seeds.iter().find(|m| !m.album_artist.trim().is_empty()) {
+        return s.album_artist.trim().to_string();
+    }
+    if let Some(s) = seeds.iter().find(|m| !m.artist.trim().is_empty()) {
+        return s.artist.trim().to_string();
+    }
+    "Unknown Artist".into()
+}
+
+/// union-find：任一身份键相同即合并（标签归一 / mbid / catalog 佐证）。
+fn group_album_seeds(seeds: Vec<AlbumSeed>) -> Vec<AlbumGroup> {
+    let n = seeds.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        if parent[i] != i {
+            parent[i] = find(parent, parent[i]);
+        }
+        parent[i]
+    }
+    let mut first: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, seed) in seeds.iter().enumerate() {
+        for key in seed.identity_keys() {
+            if let Some(&j) = first.get(&key) {
+                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                if ri != rj {
+                    if ri < rj {
+                        parent[rj] = ri;
+                    } else {
+                        parent[ri] = rj;
+                    }
+                }
+            } else {
+                first.insert(key, i);
+            }
+        }
+    }
+    let mut buckets: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    for i in 0..n {
+        let r = find(&mut parent, i);
+        buckets.entry(r).or_default().push(i);
+    }
+    buckets
+        .into_values()
+        .map(|idxs| {
+            let mut member_ids: Vec<i64> = idxs.iter().map(|&i| seeds[i].id).collect();
+            member_ids.sort_unstable();
+            let group_key = format!("id:{}", member_ids.first().copied().unwrap_or(0));
+            let mut group_seeds: Vec<AlbumSeed> = idxs.into_iter().map(|i| seeds[i].clone()).collect();
+            group_seeds.sort_by_key(|s| s.id);
+            AlbumGroup {
+                group_key,
+                member_ids,
+                seeds: group_seeds,
+            }
+        })
+        .collect()
+}
+
 fn map_track(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
     Ok(TrackRow {
         id: r.get(0)?,
@@ -1769,6 +2063,186 @@ mod tests {
             )
             .unwrap();
         assert!(miss.is_none(), "匹配不到才算真失效");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn temp_db(tag: &str) -> (std::path::PathBuf, LibraryDb) {
+        let dir = std::env::temp_dir().join(format!("axmusic-album-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("t.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = LibraryDb::open(&db_path).unwrap();
+        (dir, db)
+    }
+
+    fn seed_catalog(db: &LibraryDb, release_mbid: &str, album: &str, album_artist: &str) -> i64 {
+        db.insert_catalog(&CatalogRow {
+            id: 0,
+            source: "musicbrainz".into(),
+            kind: "recording".into(),
+            mbid: format!("mb-{}", album),
+            release_mbid: release_mbid.into(),
+            title: "晴天".into(),
+            artist: album_artist.into(),
+            album: album.into(),
+            album_artist: album_artist.into(),
+            year: "2003".into(),
+            track_no: Some(1),
+            disc_no: None,
+            release_type: String::new(),
+            cover_path: None,
+            created_at: String::new(),
+        })
+        .unwrap()
+    }
+
+    /// 整理写入 album_artist 后不应把同一专辑裂成两张（标签归一合并）。
+    #[test]
+    fn album_merges_when_album_artist_written() {
+        let (dir, db) = temp_db("merge-aa");
+
+        let mut organized = sample_track(&dir.join("archived/周杰伦/周杰伦 - 晴天.flac").to_string_lossy());
+        organized.album_artist = "周杰伦".into();
+        organized.track_no = Some(1);
+        db.upsert_track(&organized, 1000, 1).unwrap();
+
+        let mut pending = sample_track(&dir.join("Unarchived/东风破.flac").to_string_lossy());
+        pending.title = "东风破".into();
+        pending.album_artist = String::new(); // 未整理：album_artist 空
+        pending.artist = "周杰伦".into();
+        pending.track_no = Some(2);
+        db.upsert_track(&pending, 1000, 2).unwrap();
+
+        let albums = db.list_albums().unwrap();
+        assert_eq!(albums.len(), 1, "同专不应裂成两张，got {:?}", albums);
+        assert_eq!(albums[0].track_count, 2);
+        assert_eq!(albums[0].album, "叶惠美");
+
+        let tracks = db.tracks_of_album(&albums[0].group_key).unwrap();
+        assert_eq!(tracks.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 无 mbid 时用 catalog 专辑身份作佐证合并。
+    #[test]
+    fn album_merges_by_catalog_identity_without_mbid() {
+        let (dir, db) = temp_db("merge-cat");
+
+        let cat_a = seed_catalog(&db, "", "叶惠美", "周杰伦");
+        let mut a = sample_track(&dir.join("a.flac").to_string_lossy());
+        a.album_artist = "周杰伦".into();
+        a.catalog_id = Some(cat_a);
+        db.upsert_track(&a, 1000, 1).unwrap();
+        db.link_track_catalog(
+            db.get_track_by_path(&a.path).unwrap().unwrap().id,
+            cat_a,
+        )
+        .unwrap();
+
+        // 另一半：标签 album_artist 被写成了别的写法，且未填 mbid
+        let mut b = sample_track(&dir.join("b.flac").to_string_lossy());
+        b.title = "东风破".into();
+        b.album = "葉惠美".into(); // 繁体
+        b.album_artist = "周傑倫".into();
+        b.track_no = Some(2);
+        db.upsert_track(&b, 1000, 2).unwrap();
+        let b_id = db.get_track_by_path(&b.path).unwrap().unwrap().id;
+        // catalog 同一专辑身份（无 release_mbid）
+        let cat_b = seed_catalog(&db, "", "叶惠美", "周杰伦");
+        db.link_track_catalog(b_id, cat_b).unwrap();
+
+        let albums = db.list_albums().unwrap();
+        assert_eq!(albums.len(), 1, "catalog 佐证应合并，got {:?}", albums);
+        assert_eq!(albums[0].track_count, 2);
+        assert_eq!(albums[0].album, "叶惠美");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 有 release_mbid 时更强：标签不一致也能并。
+    #[test]
+    fn album_merges_by_release_mbid() {
+        let (dir, db) = temp_db("merge-rel");
+
+        let cat = seed_catalog(&db, "rel-1", "叶惠美", "周杰伦");
+        let mut a = sample_track(&dir.join("a.flac").to_string_lossy());
+        a.mb_release_mbid = "rel-1".into();
+        a.catalog_id = Some(cat);
+        db.upsert_track(&a, 1000, 1).unwrap();
+        db.link_track_catalog(db.get_track_by_path(&a.path).unwrap().unwrap().id, cat)
+            .unwrap();
+
+        let mut b = sample_track(&dir.join("b.flac").to_string_lossy());
+        b.title = "东风破".into();
+        b.album = "随便写的专辑名".into();
+        b.album_artist = String::new();
+        b.mb_release_mbid = "rel-1".into();
+        b.track_no = Some(2);
+        db.upsert_track(&b, 1000, 2).unwrap();
+
+        let albums = db.list_albums().unwrap();
+        assert_eq!(albums.len(), 1, "同 release 应合并，got {:?}", albums);
+        assert_eq!(albums[0].track_count, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 不同专辑仍分开。
+    #[test]
+    fn album_keeps_different_albums_apart() {
+        let (dir, db) = temp_db("split");
+
+        let mut a = sample_track(&dir.join("a.flac").to_string_lossy());
+        a.album = "叶惠美".into();
+        db.upsert_track(&a, 1000, 1).unwrap();
+
+        let mut b = sample_track(&dir.join("b.flac").to_string_lossy());
+        b.title = "夜曲".into();
+        b.album = "十一月的萧邦".into();
+        b.track_no = Some(1);
+        db.upsert_track(&b, 1000, 2).unwrap();
+
+        let albums = db.list_albums().unwrap();
+        assert_eq!(albums.len(), 2, "不同专辑不应合并，got {:?}", albums);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 历史行补拼音键后，曲名按拼音序（爱 < 周）。
+    #[test]
+    fn backfill_pinyin_and_sort_by_title() {
+        let (dir, db) = temp_db("pinyin");
+
+        let mut zhou = sample_track(&dir.join("zhou.flac").to_string_lossy());
+        zhou.title = "周杰伦".into();
+        db.upsert_track(&zhou, 1000, 1).unwrap();
+
+        let mut ai = sample_track(&dir.join("ai.flac").to_string_lossy());
+        ai.title = "爱在西元前".into();
+        ai.track_no = Some(2);
+        db.upsert_track(&ai, 1000, 2).unwrap();
+
+        // 模拟「拼音功能之前入库」：清掉排序键（NULL=未算）
+        db.raw_conn()
+            .execute(
+                "UPDATE tracks SET py_title = NULL, py_artist = NULL, py_album = NULL, py_album_artist = NULL",
+                [],
+            )
+            .unwrap();
+        let n = db.backfill_pinyin_keys().unwrap();
+        assert!(n >= 2, "应补写历史行，got {n}");
+
+        let list = db
+            .list_tracks(&TrackFilter {
+                sort: Some("title".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].title, "爱在西元前", "拼音序：ai < zhou，got {:?}", list.iter().map(|t| &t.title).collect::<Vec<_>>());
+        assert_eq!(list[1].title, "周杰伦");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

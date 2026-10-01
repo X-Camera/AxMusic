@@ -57,6 +57,8 @@ rustfft = "6"
 ebur128 = "0.1"
 # 匹配键：繁体→简体（刮削/库内简繁混用时视为相同）
 zhconv = "0.4"
+# 汉字拼音排序键（管理表/歌曲列表按曲名等排序）
+pinyin = "0.10"
 
 # 任务栏缩略图工具栏（ITaskbarList3 播放控制按钮）
 [target.'cfg(windows)'.dependencies]

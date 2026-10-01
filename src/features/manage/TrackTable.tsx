@@ -1,8 +1,8 @@
-import { Music } from "lucide-react";
+import { ArrowDown, ArrowUp, Music } from "lucide-react";
 import { isNil, notNil } from "../../lib/nil";
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import type { ArchiveStatus, TrackRow } from "../../lib/types";
+import type { ArchiveStatus, TrackRow, TrackSortField } from "../../lib/types";
 import { trackRowToAddItem } from "../../lib/api";
 import { matchKey } from "../../lib/textNorm";
 import { FavoriteHeart } from "../../components/FavoriteHeart";
@@ -12,6 +12,51 @@ import "./TrackTable.css";
 
 /** 与 thead 的 th 数量一致；spacer 行 colSpan 用 */
 const COL_COUNT = 11;
+
+const SORT_DIR_ARIA: Record<"asc" | "desc", "ascending" | "descending"> = {
+  asc: "ascending",
+  desc: "descending",
+};
+
+function SortTh({
+  field,
+  sortField,
+  sortDir,
+  onSort,
+  className,
+  title,
+  children,
+}: {
+  field: TrackSortField;
+  sortField: TrackSortField;
+  sortDir: "asc" | "desc";
+  onSort: (f: TrackSortField) => void;
+  className?: string;
+  title?: string;
+  children: ReactNode;
+}) {
+  const active = sortField === field;
+  return (
+    <th
+      className={`th-sortable${active ? " active" : ""}${className ? ` ${className}` : ""}`}
+      title={title}
+      tabIndex={0}
+      onClick={() => onSort(field)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSort(field);
+        }
+      }}
+      aria-sort={active ? SORT_DIR_ARIA[sortDir] : undefined}
+    >
+      <span className="th-sort-label">
+        {children}
+        {active && (sortDir === "asc" ? <ArrowUp size={12} aria-hidden /> : <ArrowDown size={12} aria-hidden />)}
+      </span>
+    </th>
+  );
+}
 
 /* ── 与 catalog 的匹配判定：简繁/大小写/标点等价（matchKey）；年取前 4 位；轨号按数值 ── */
 function matchStr(file: string, catalog: string | null): boolean {
@@ -85,6 +130,9 @@ export function TrackTable({
   activeId,
   archiveMap,
   scrollRef,
+  sortField,
+  sortDir,
+  onSort,
   onSelectedChange,
   onPlay,
   onActivate,
@@ -96,6 +144,9 @@ export function TrackTable({
   archiveMap: Record<number, ArchiveStatus> | null;
   /** 滚动容器（.page-scroll），虚拟化据此算可视窗口 */
   scrollRef: RefObject<HTMLElement | null>;
+  sortField: TrackSortField;
+  sortDir: "asc" | "desc";
+  onSort: (f: TrackSortField) => void;
   onSelectedChange: (s: Set<number>) => void;
   onPlay: (row: TrackRow, indexInView: number) => void;
   /** 单击行 → 右侧显示 catalog 字段（再次单击已激活行 → 回到统计） */
@@ -174,12 +225,24 @@ export function TrackTable({
           </th>
           <th title="封面（文件内嵌）">封面</th>
           <th title="喜爱">♥</th>
-          <th className="cell-left">曲名</th>
-          <th className="cell-left">歌手</th>
-          <th>专辑</th>
-          <th>年份</th>
-          <th>轨号</th>
-          <th title="文件格式">格式</th>
+          <SortTh field="title" sortField={sortField} sortDir={sortDir} onSort={onSort} className="cell-left">
+            曲名
+          </SortTh>
+          <SortTh field="artist" sortField={sortField} sortDir={sortDir} onSort={onSort} className="cell-left">
+            歌手
+          </SortTh>
+          <SortTh field="album" sortField={sortField} sortDir={sortDir} onSort={onSort}>
+            专辑
+          </SortTh>
+          <SortTh field="year" sortField={sortField} sortDir={sortDir} onSort={onSort}>
+            年份
+          </SortTh>
+          <SortTh field="track_no" sortField={sortField} sortDir={sortDir} onSort={onSort}>
+            轨号
+          </SortTh>
+          <SortTh field="format" sortField={sortField} sortDir={sortDir} onSort={onSort} title="文件格式">
+            格式
+          </SortTh>
           <th title="歌词：嵌=标签内，挂=外挂 .lrc（绿=有）">歌词</th>
           <th title="归档状态（已关联 catalog 才检查；未关联显示 —）">归档</th>
         </tr>

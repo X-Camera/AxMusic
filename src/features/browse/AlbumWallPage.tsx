@@ -60,12 +60,13 @@ export function AlbumWallPage() {
     setTracks([]);
     setDetailLoading(true);
     try {
-      const list = await api.getAlbumTracks(a.album, a.album_artist);
+      const list = await api.getAlbumTracks(a.group_key);
       if (seq !== loadSeq.current) return;
       setTracks(list);
-    } catch {
+    } catch (e) {
       if (seq !== loadSeq.current) return;
       setTracks([]);
+      showToast(friendlyErr(e));
     } finally {
       if (seq === loadSeq.current) setDetailLoading(false);
     }
@@ -80,9 +81,9 @@ export function AlbumWallPage() {
 
   async function playAlbum(a: AlbumCard, e?: React.MouseEvent) {
     e?.stopPropagation();
-    const list = selected && selected.album === a.album && selected.album_artist === a.album_artist
+    const list = selected && selected.group_key === a.group_key
       ? tracks
-      : await api.getAlbumTracks(a.album, a.album_artist).catch(() => [] as TrackRow[]);
+      : await api.getAlbumTracks(a.group_key).catch(() => [] as TrackRow[]);
     if (list.length === 0) return;
     await playQueue(list.map(trackRowToQueueItem), 0);
   }
@@ -130,7 +131,7 @@ export function AlbumWallPage() {
       />
       <div className="page-scroll" ref={scrollRef}>
         {selected ? (
-          <div className="album-detail" key={`${selected.album_artist}::${selected.album}`}>
+          <div className="album-detail" key={selected.group_key}>
             <div className="album-detail-head">
               <AlbumCover
                 path={selected.cover_track_path}
@@ -233,7 +234,7 @@ export function AlbumWallPage() {
             {filtered.map((a) => {
               return (
                 <button
-                  key={`${a.album_artist}::${a.album}`}
+                  key={a.group_key}
                   className="album-card"
                   title="打开专辑"
                   onClick={() => void openAlbum(a)}

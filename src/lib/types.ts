@@ -131,6 +131,8 @@ export interface AlbumCard {
   /** 封面懒加载样例曲目（组内优先有封面的） */
   cover_track_path: string | null;
   cover_track_mtime: number;
+  /** 专辑聚合稳定键，取曲目用它 */
+  group_key: string;
 }
 
 /** 歌手浏览卡片：album_artist 优先，空则 artist */
@@ -163,9 +165,14 @@ export interface TrackFilter {
   missing_only?: boolean;
   unlinked_only?: boolean;
   limit?: number | null;
-  /** "album"（默认）| "title" | "artist" */
-  sort?: "album" | "title" | "artist" | null;
+  /** 排序字段，默认 title（曲名） */
+  sort?: TrackSortField | "album_artist" | "duration" | "filename" | null;
+  /** 升/降序，默认 asc */
+  sort_dir?: "asc" | "desc" | null;
 }
+
+/** 管理表可点列排序字段（TrackFilter.sort 的子集） */
+export type TrackSortField = "title" | "artist" | "album" | "year" | "track_no" | "format";
 
 export interface ScanProgress {
   scanned: number;

@@ -7,7 +7,7 @@ import { FolderPlus, FolderSearch, ListPlus, ListRestart, Loader2, Play, Search 
 
 import { api, trackRowToAddItem, trackRowToQueueItem } from "../../lib/api";
 import { fieldHit } from "../../lib/textNorm";
-import type { ArchiveStatus, LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow } from "../../lib/types";
+import type { ArchiveStatus, LibraryRoot, LibraryStats, PlaylistAddItem, ScanProgress, ScanResult, TrackRow, TrackSortField } from "../../lib/types";
 import { onLyricsSaved, openLyricsWindow } from "../../lib/lyricsWindow";
 import { promptText } from "../../lib/dialog";
 import { useApp } from "../../state/useApp";
@@ -33,6 +33,9 @@ export function ManagePage() {
   const [missingOnly, setMissingOnly] = useState(false);
   const [unlinkedOnly, setUnlinkedOnly] = useState(false);
   const [query, setQuery] = useState("");
+  /** 列表排序：默认曲名升序；点列头切换 */
+  const [sortField, setSortField] = useState<TrackSortField>("title");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [lastScan, setLastScan] = useState<ScanResult | null>(null);
@@ -66,6 +69,8 @@ export function ManagePage() {
           missing_only: missingOnly,
           unlinked_only: unlinkedOnly,
           limit: TRACKS_LIMIT,
+          sort: sortField,
+          sort_dir: sortDir,
         }),
         api.getLibraryStats(),
       ]);
@@ -86,7 +91,20 @@ export function ManagePage() {
       // 失败保留旧列表（避免瞬时故障把表格清空），错误条单独提示
       setError(friendlyErr(e));
     }
-  }, [missingOnly, unlinkedOnly]);
+  }, [missingOnly, unlinkedOnly, sortField, sortDir]);
+
+  /** 点列头：同列切换升降序，换列则升序（纯事件处理，勿在 updater 里再 setState） */
+  const toggleSort = useCallback(
+    (field: TrackSortField) => {
+      if (field === sortField) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortField(field);
+        setSortDir("asc");
+      }
+    },
+    [sortField],
+  );
 
   // 歌词子窗口保存后刷新列表
   useEffect(() => onLyricsSaved(() => void reloadTracks()), [reloadTracks]);
@@ -385,6 +403,9 @@ export function ManagePage() {
                 activeId={compareId}
                 archiveMap={archiveMap}
                 scrollRef={tableScrollRef}
+                sortField={sortField}
+                sortDir={sortDir}
+                onSort={toggleSort}
                 onSelectedChange={setSelected}
                 onPlay={(row) => void playQueue([trackRowToQueueItem(row)], 0)}
                 onActivate={(row) =>

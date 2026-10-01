@@ -54,8 +54,8 @@ export const api = {
   getTracks: (filter?: TrackFilter) =>
     invoke<TrackRow[]>("get_tracks", { filter: filter ?? null }),
   getAlbums: () => invoke<AlbumCard[]>("get_albums"),
-  getAlbumTracks: (album: string, albumArtist: string) =>
-    invoke<TrackRow[]>("get_album_tracks", { album, albumArtist }),
+  getAlbumTracks: (groupKey: string) =>
+    invoke<TrackRow[]>("get_album_tracks", { groupKey }),
   getArtists: () => invoke<ArtistCard[]>("get_artists"),
   getArtistAlbums: (artist: string) =>
     invoke<AlbumCard[]>("get_artist_albums", { artist }),

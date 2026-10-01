@@ -688,12 +688,11 @@ pub fn get_albums(state: State<'_, AppState>) -> Result<Vec<AlbumCard>, String> 
 #[tauri::command]
 pub fn get_album_tracks(
     state: State<'_, AppState>,
-    album: String,
-    album_artist: String,
+    group_key: String,
 ) -> Result<Vec<TrackRow>, String> {
     let guard = require_db(&state)?;
     let db = db_ref(&guard)?;
-    db.tracks_of_album(&album, &album_artist)
+    db.tracks_of_album(&group_key)
         .map_err(|e| e.to_string())
 }
 

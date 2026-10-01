@@ -136,7 +136,7 @@ export function ArtistsPage() {
   async function playAlbum(al: AlbumCard, e?: React.MouseEvent) {
     e?.stopPropagation();
     const list = await api
-      .getAlbumTracks(al.album, al.album_artist)
+      .getAlbumTracks(al.group_key)
       .catch(() => [] as TrackRow[]);
     if (list.length === 0) return;
     await playQueue(list.map(trackRowToQueueItem), 0);
@@ -213,7 +213,7 @@ export function ArtistsPage() {
                     <div className="artist-albums">
                       {albums.map((al) => (
                         <button
-                          key={`${al.album_artist}::${al.album}`}
+                          key={al.group_key}
                           className="album-card"
                           title="播放专辑"
                           onClick={(e) => void playAlbum(al, e)}

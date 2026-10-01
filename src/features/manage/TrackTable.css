@@ -26,6 +26,26 @@
   white-space: nowrap;
 }
 
+/* 可点列头排序 */
+.track-table th.th-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.track-table th.th-sortable:hover {
+  color: var(--text);
+}
+
+.track-table th.th-sortable.active {
+  color: var(--accent);
+}
+
+.track-table th.th-sortable .th-sort-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 /* 圆角表头（替代 overflow:hidden 裁切） */
 .track-table thead th:first-child {
   border-top-left-radius: var(--radius-card);
