@@ -418,3 +418,24 @@
 .mp-vol {
   width: 88px;
 }
+
+/* 播放错误浮条（引擎 snapshot 透传；如 Opus 暂不支持） */
+.mp-error-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  max-width: min(560px, 80vw);
+  padding: 8px 14px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-md, 10px);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 6;
+}

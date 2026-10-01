@@ -27,6 +27,9 @@ interface AppState {
   toggleLyricsPanel: () => void;
   player: PlayerSnapshot | null;
   refreshing: boolean;
+  /** 引擎上报的播放错误（快照取出即清，这里自增序号保证同文案也能再弹） */
+  playerError: { msg: string; seq: number } | null;
+  clearPlayerError: () => void;
   setPlayer: (p: PlayerSnapshot | null) => void;
   refreshPlayer: () => Promise<void>;
   playPath: (path: string) => Promise<void>;
@@ -67,6 +70,7 @@ const emptyPlayer = (): PlayerSnapshot => ({
   shuffle: false,
   repeat: "off",
   replaygain: emptyReplayGain(),
+  error: null,
 });
 
 /** 播放器操作序号：轮询结果不得覆盖更新的点播/控制操作 */
@@ -113,6 +117,8 @@ export const useApp = create<AppState>((set, get) => ({
   toggleLyricsPanel: () => set((s) => ({ lyricsPanelOpen: !s.lyricsPanelOpen })),
   player: null,
   refreshing: false,
+  playerError: null,
+  clearPlayerError: () => set({ playerError: null }),
   setPlayer: (p) => set({ player: p }),
   refreshPlayer: async () => {
     if (get().refreshing || writesInFlight > 0) return;
@@ -120,6 +126,10 @@ export const useApp = create<AppState>((set, get) => ({
     const rev = playerRev;
     try {
       const p = await api.getPlayerState();
+      // 错误透传独立于快照回写守卫：哪怕本次快照被丢弃，错误也不能丢
+      if (p.error) {
+        set((s) => ({ playerError: { msg: p.error!, seq: (s.playerError?.seq ?? 0) + 1 } }));
+      }
       if (rev === playerRev && writesInFlight === 0) set({ player: p });
     } catch {
       /* keep last */
@@ -156,6 +166,7 @@ export const useApp = create<AppState>((set, get) => ({
             repeat: prev?.repeat ?? "off",
             // 乐观帧先不带增益，等后端快照回填（避免旧曲标识残留）
             replaygain: emptyReplayGain(),
+            error: null,
           },
         });
       }

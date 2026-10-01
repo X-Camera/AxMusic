@@ -372,14 +372,15 @@ pub struct ReplayGainScan {
 
 /// 解码整轨 PCM 并用 EBU R128 测积分响度与样本峰值
 fn analyze_loudness(path: &Path) -> Result<(Option<f32>, Option<f32>)> {
-    use symphonia::core::audio::AudioBufferRef;
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::audio::sample::{i24, u24};
+    use symphonia::core::audio::conv::ConvertibleSample;
+    use symphonia::core::audio::{Audio, AudioBuffer, GenericAudioBufferRef};
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
     use symphonia::core::errors::Error as SymError;
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-    use symphonia::core::sample::{i24, u24};
 
     let file = std::fs::File::open(path).with_context(|| format!("无法打开 {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -387,25 +388,27 @@ fn analyze_loudness(path: &Path) -> Result<(Option<f32>, Option<f32>)> {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe()
-        .format(
+    let mut reader = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .context("无法解析音频容器")?;
-    let mut reader = probed.format;
     let track = reader
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .default_track(TrackType::Audio)
         .context("无可用音频轨")?
         .clone();
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100).max(1);
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio().cloned())
+        .context("音轨缺少编解码参数")?;
+    let sample_rate = params.sample_rate.unwrap_or(44_100).max(1);
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(&params, &AudioDecoderOptions::default())
         .context("不支持的编解码器")?;
 
     // 解码端统一立体声交错；ebur128 按 2ch 累计
@@ -417,20 +420,21 @@ fn analyze_loudness(path: &Path) -> Result<(Option<f32>, Option<f32>)> {
     .context("初始化响度计失败")?;
 
     // 与播放引擎相同的交错立体声转换（直接内联，避免依赖 engine 私有函数）
-    fn pack_stereo(buf: &AudioBufferRef<'_>) -> Vec<f32> {
-        fn conv_planes<T: Copy>(planes: &[&[T]], f: impl Fn(T) -> f32) -> Vec<f32> {
-            match planes {
-                [] => Vec::new(),
-                [mono] => {
-                    let mut out = Vec::with_capacity(mono.len() * 2);
-                    for &s in *mono {
-                        let v = f(s);
-                        out.push(v);
-                        out.push(v);
-                    }
-                    out
+    fn conv_planes<S: ConvertibleSample>(buf: &AudioBuffer<S>, f: impl Fn(S) -> f32) -> Vec<f32> {
+        match buf.num_planes() {
+            0 => Vec::new(),
+            1 => {
+                let mono = buf.plane(0).unwrap_or(&[]);
+                let mut out = Vec::with_capacity(mono.len() * 2);
+                for &s in mono {
+                    let v = f(s);
+                    out.push(v);
+                    out.push(v);
                 }
-                [l, r, ..] => {
+                out
+            }
+            _ => match buf.plane_pair(0, 1) {
+                Some((l, r)) => {
                     let n = l.len().min(r.len());
                     let mut out = Vec::with_capacity(n * 2);
                     for i in 0..n {
@@ -439,48 +443,51 @@ fn analyze_loudness(path: &Path) -> Result<(Option<f32>, Option<f32>)> {
                     }
                     out
                 }
-            }
+                None => Vec::new(),
+            },
         }
+    }
+    fn pack_stereo(buf: &GenericAudioBufferRef<'_>) -> Vec<f32> {
         match buf {
-            AudioBufferRef::F32(b) => conv_planes(b.planes().planes(), |s: f32| s),
-            AudioBufferRef::U8(b) => {
-                conv_planes(b.planes().planes(), |s: u8| (s as f32 - 128.0) / 128.0)
+            GenericAudioBufferRef::F32(b) => conv_planes(*b, |s: f32| s),
+            GenericAudioBufferRef::U8(b) => {
+                conv_planes(*b, |s: u8| (s as f32 - 128.0) / 128.0)
             }
-            AudioBufferRef::U16(b) => {
-                conv_planes(b.planes().planes(), |s: u16| s as f32 / 32768.0 - 1.0)
+            GenericAudioBufferRef::U16(b) => {
+                conv_planes(*b, |s: u16| s as f32 / 32768.0 - 1.0)
             }
-            AudioBufferRef::U24(b) => {
-                conv_planes(b.planes().planes(), |s: u24| {
-                    (s.inner() as f32 / 8_388_608.0) - 1.0
-                })
+            GenericAudioBufferRef::U24(b) => {
+                conv_planes(*b, |s: u24| (s.inner() as f32 / 8_388_608.0) - 1.0)
             }
-            AudioBufferRef::U32(b) => {
-                conv_planes(b.planes().planes(), |s: u32| s as f32 / 2_147_483_648.0 - 1.0)
+            GenericAudioBufferRef::U32(b) => {
+                conv_planes(*b, |s: u32| s as f32 / 2_147_483_648.0 - 1.0)
             }
-            AudioBufferRef::S8(b) => {
-                conv_planes(b.planes().planes(), |s: i8| s as f32 / 128.0)
+            GenericAudioBufferRef::S8(b) => {
+                conv_planes(*b, |s: i8| s as f32 / 128.0)
             }
-            AudioBufferRef::S16(b) => {
-                conv_planes(b.planes().planes(), |s: i16| s as f32 / 32768.0)
+            GenericAudioBufferRef::S16(b) => {
+                conv_planes(*b, |s: i16| s as f32 / 32768.0)
             }
-            AudioBufferRef::S24(b) => {
-                conv_planes(b.planes().planes(), |s: i24| s.inner() as f32 / 8_388_608.0)
+            GenericAudioBufferRef::S24(b) => {
+                conv_planes(*b, |s: i24| s.inner() as f32 / 8_388_608.0)
             }
-            AudioBufferRef::S32(b) => {
-                conv_planes(b.planes().planes(), |s: i32| s as f32 / 2_147_483_648.0)
+            GenericAudioBufferRef::S32(b) => {
+                conv_planes(*b, |s: i32| s as f32 / 2_147_483_648.0)
             }
-            AudioBufferRef::F64(b) => conv_planes(b.planes().planes(), |s: f64| s as f32),
+            GenericAudioBufferRef::F64(b) => conv_planes(*b, |s: f64| s as f32),
         }
     }
 
     loop {
         let packet = match reader.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            // 0.6：EOF = Ok(None)；IoError(UnexpectedEof) 留作防御
+            Ok(None) => break,
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(SymError::ResetRequired) => break,
             Err(e) => return Err(e.into()),
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         match decoder.decode(&packet) {

@@ -29,6 +29,15 @@ export function MiniPlayer() {
   const toggleQueuePanel = useApp((s) => s.toggleQueuePanel);
   const lyricsPanelOpen = useApp((s) => s.lyricsPanelOpen);
   const toggleLyricsPanel = useApp((s) => s.toggleLyricsPanel);
+  const playerError = useApp((s) => s.playerError);
+  const clearPlayerError = useApp((s) => s.clearPlayerError);
+
+  // 引擎错误（如格式暂不支持）：弹 4s 自动消失，点击立即关闭
+  useEffect(() => {
+    if (!playerError) return;
+    const t = window.setTimeout(clearPlayerError, 4000);
+    return () => window.clearTimeout(t);
+  }, [playerError, clearPlayerError]);
 
   const [seeking, setSeeking] = useState(false);
   const [seekMs, setSeekMs] = useState(0);
@@ -222,6 +231,16 @@ export function MiniPlayer() {
 
   return (
     <footer className="mini-player" aria-label="迷你播放条">
+      {playerError && (
+        <button
+          key={playerError.seq}
+          type="button"
+          className="mp-error-toast"
+          onClick={clearPlayerError}
+        >
+          {playerError.msg}
+        </button>
+      )}
       <div className="mp-seek-wrap">
         <input
           ref={seekInputRef}

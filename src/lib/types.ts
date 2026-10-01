@@ -73,6 +73,8 @@ export interface PlayerSnapshot {
   repeat: RepeatMode;
   /** 响度均衡状态（未启用/无标签为默认零值） */
   replaygain: ReplayGainInfo;
+  /** 引擎上报的错误（如格式暂不支持）；取出即清，收到后弹一次提示 */
+  error: string | null;
 }
 
 export interface LibraryRoot {

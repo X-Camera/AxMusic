@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod engine;
 pub mod replaygain;
+pub mod resampler;
 pub mod viz;
 
 pub use engine::SymphoniaPlayer;
@@ -67,6 +68,9 @@ pub struct PlayerSnapshot {
     /// 响度均衡状态（UI 标识用；未启用/无标签为默认）
     #[serde(default)]
     pub replaygain: ReplayGainInfo,
+    /// 播放失败等错误（取出即清，前端弹一次 toast；此前错误只在引擎内部打转，用户无感知）
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// Swappable playback engine surface (thin).

@@ -13,14 +13,16 @@ use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat, Stream};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
-use symphonia::core::audio::AudioBufferRef;
-use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::audio::sample::{i24, u24};
+use symphonia::core::audio::conv::ConvertibleSample;
+use symphonia::core::audio::{Audio, AudioBuffer, GenericAudioBufferRef};
+use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymError;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
-use symphonia::core::sample::{i24, u24};
 use symphonia::core::units::Time;
 
 use super::replaygain::{self, ReplayGainInfo, ReplayGainMode};
@@ -340,6 +342,8 @@ impl SymphoniaPlayer {
             shuffle: self.shared.shuffle(),
             repeat: self.shared.repeat(),
             replaygain: self.shared.replaygain(),
+            // 取出即清：前端每次轮询拿快照，同一条错误只弹一次
+            error: self.shared.error.lock().ok().and_then(|mut e| e.take()),
         }
     }
 
@@ -710,7 +714,7 @@ fn quick_track_info(path: &Path) -> TrackInfo {
 
 struct DecoderState {
     reader: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     duration_ms: u64,
     src_sample_rate: u32,
@@ -946,7 +950,10 @@ struct DecoderState2 {
     inner: DecoderState,
     /// pending samples at device rate (stereo interleaved)
     pending: Vec<f32>,
-    resample_pos: f64,
+    /// 源率≠设备率时的 sinc 重采样器（None = 同率直通）；fill_block 首调时按 out_rate 惰性建立
+    resampler: Option<super::resampler::SincResampler>,
+    /// 是否已按设备率判定过重采样需求（区分"未初始化"与"已判定直通"）
+    resampler_decided: bool,
 }
 
 /// 预取的下一曲解码器：本曲播放中提前打开，EOF 切换时免开文件，队列衔接不空档
@@ -1049,31 +1056,43 @@ fn open_decoder(path: &Path) -> Result<DecoderState> {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe()
-        .format(
+    let reader = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .context("无法解析音频容器")?;
-    let reader = probed.format;
     let track = reader
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .default_track(TrackType::Audio)
         .ok_or_else(|| anyhow!("无可用音频轨"))?
         .clone();
     let track_id = track.id;
-    let params = track.codec_params.clone();
-    let duration_ms = match (params.n_frames, params.sample_rate) {
-        (Some(frames), Some(rate)) if rate > 0 => (frames as u128 * 1000 / rate as u128) as u64,
-        _ => 0,
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio().cloned())
+        .ok_or_else(|| anyhow!("音轨缺少编解码参数"))?;
+    // Ogg 容器能识别 Opus 头但引擎没有解码器：明确告知，别让错误细节糊住重点
+    if params.codec == CODEC_ID_OPUS {
+        anyhow::bail!("Opus 编码暂不支持播放（待接入 FFmpeg 后端）；文件可正常入库管理");
+    }
+    // 0.6：时长优先取 Track.duration + time_base，回落 num_frames/采样率
+    let duration_ms = match (track.time_base, track.duration) {
+        (Some(tb), Some(dur)) => tb
+            .calc_duration(dur)
+            .map(|t| (t.as_secs_f64() * 1000.0) as u64)
+            .unwrap_or(0),
+        _ => match (track.num_frames, params.sample_rate) {
+            (Some(frames), Some(rate)) if rate > 0 => frames * 1000 / rate as u64,
+            _ => 0,
+        },
     };
     let src_sample_rate = params.sample_rate.unwrap_or(44_100).max(1);
-    let src_channels = params.channels.map(|c| c.count() as u16).unwrap_or(2);
+    let src_channels = params.channels.as_ref().map(|c| c.count() as u16).unwrap_or(2);
     let decoder = symphonia::default::get_codecs()
-        .make(&params, &DecoderOptions::default())
+        .make_audio_decoder(&params, &AudioDecoderOptions::default())
         .context("不支持的编解码器")?;
     Ok(DecoderState {
         reader,
@@ -1140,7 +1159,8 @@ fn activate_decoder(
     DecoderState2 {
         inner: st,
         pending: Vec::new(),
-        resample_pos: 0.0,
+        resampler: None,
+        resampler_decided: false,
     }
 }
 
@@ -1167,7 +1187,7 @@ fn open_track_full(
 }
 
 fn seek_decoder(st: &mut DecoderState, ms: u64) -> Result<()> {
-    let time = Time::from(ms as f64 / 1000.0);
+    let time = Time::from_nanos_u64(ms.saturating_mul(1_000_000));
     st.reader.seek(
         SeekMode::Coarse,
         SeekTo::Time {
@@ -1186,7 +1206,12 @@ fn decode_chunk_native(st: &mut DecoderState) -> std::result::Result<Option<Vec<
     }
     loop {
         let packet = match st.reader.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            // 0.6：EOF = Ok(None)；IoError(UnexpectedEof) 分支留作防御
+            Ok(None) => {
+                st.end = true;
+                return Ok(None);
+            }
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 st.end = true;
                 return Ok(None);
@@ -1197,7 +1222,7 @@ fn decode_chunk_native(st: &mut DecoderState) -> std::result::Result<Option<Vec<
             }
             Err(e) => return Err(e),
         };
-        if packet.track_id() != st.track_id {
+        if packet.track_id != st.track_id {
             continue;
         }
         match st.decoder.decode(&packet) {
@@ -1208,11 +1233,11 @@ fn decode_chunk_native(st: &mut DecoderState) -> std::result::Result<Option<Vec<
     }
 }
 
-fn pack_planes<T: Copy>(planes: &[&[T]], convert: impl Fn(T) -> f32) -> Vec<f32> {
-    match planes.len() {
+fn pack_planes<S: ConvertibleSample>(buf: &AudioBuffer<S>, convert: impl Fn(S) -> f32) -> Vec<f32> {
+    match buf.num_planes() {
         0 => Vec::new(),
         1 => {
-            let mono = planes[0];
+            let mono = buf.plane(0).unwrap_or(&[]);
             let mut out = Vec::with_capacity(mono.len() * 2);
             for &s in mono {
                 let v = convert(s);
@@ -1221,91 +1246,70 @@ fn pack_planes<T: Copy>(planes: &[&[T]], convert: impl Fn(T) -> f32) -> Vec<f32>
             }
             out
         }
-        _ => {
-            let l = planes[0];
-            let r = planes[1];
-            let n = l.len().min(r.len());
-            let mut out = Vec::with_capacity(n * 2);
-            for i in 0..n {
-                out.push(convert(l[i]));
-                out.push(convert(r[i]));
+        _ => match buf.plane_pair(0, 1) {
+            Some((l, r)) => {
+                let n = l.len().min(r.len());
+                let mut out = Vec::with_capacity(n * 2);
+                for i in 0..n {
+                    out.push(convert(l[i]));
+                    out.push(convert(r[i]));
+                }
+                out
             }
-            out
-        }
+            None => Vec::new(),
+        },
     }
 }
 
-fn to_interleaved_stereo(buf: &AudioBufferRef<'_>) -> Vec<f32> {
+fn to_interleaved_stereo(buf: &GenericAudioBufferRef<'_>) -> Vec<f32> {
     match buf {
-        AudioBufferRef::F32(b) => pack_planes(b.planes().planes(), |s: f32| s),
-        AudioBufferRef::U8(b) => {
-            pack_planes(b.planes().planes(), |s: u8| (s as f32 - 128.0) / 128.0)
+        GenericAudioBufferRef::F32(b) => pack_planes(*b, |s: f32| s),
+        GenericAudioBufferRef::U8(b) => pack_planes(*b, |s: u8| (s as f32 - 128.0) / 128.0),
+        GenericAudioBufferRef::U16(b) => {
+            pack_planes(*b, |s: u16| (s as f32 / 32768.0) - 1.0)
         }
-        AudioBufferRef::U16(b) => {
-            pack_planes(b.planes().planes(), |s: u16| (s as f32 / 32768.0) - 1.0)
-        }
-        AudioBufferRef::U24(b) => pack_planes(b.planes().planes(), |s: u24| {
+        GenericAudioBufferRef::U24(b) => pack_planes(*b, |s: u24| {
             (s.inner() as f32 / 8_388_608.0) - 1.0
         }),
-        AudioBufferRef::U32(b) => pack_planes(b.planes().planes(), |s: u32| {
-            (s as f32 / 2_147_483_648.0) - 1.0
-        }),
-        AudioBufferRef::S8(b) => pack_planes(b.planes().planes(), |s: i8| s as f32 / 128.0),
-        AudioBufferRef::S16(b) => pack_planes(b.planes().planes(), |s: i16| s as f32 / 32768.0),
-        AudioBufferRef::S24(b) => pack_planes(b.planes().planes(), |s: i24| {
+        GenericAudioBufferRef::U32(b) => {
+            pack_planes(*b, |s: u32| (s as f32 / 2_147_483_648.0) - 1.0)
+        }
+        GenericAudioBufferRef::S8(b) => pack_planes(*b, |s: i8| s as f32 / 128.0),
+        GenericAudioBufferRef::S16(b) => pack_planes(*b, |s: i16| s as f32 / 32768.0),
+        GenericAudioBufferRef::S24(b) => pack_planes(*b, |s: i24| {
             s.inner() as f32 / 8_388_608.0
         }),
-        AudioBufferRef::S32(b) => pack_planes(b.planes().planes(), |s: i32| {
-            s as f32 / 2_147_483_648.0
-        }),
-        AudioBufferRef::F64(b) => pack_planes(b.planes().planes(), |s: f64| s as f32),
-    }
-}
-
-/// Convert a source-rate stereo block to device rate (linear interpolation).
-fn resample_stereo(input: &[f32], in_rate: u32, out_rate: u32, pos: &mut f64) -> Vec<f32> {
-    if in_rate == out_rate {
-        return input.to_vec();
-    }
-    let frames_in = input.len() / 2;
-    if frames_in == 0 {
-        return Vec::new();
-    }
-    let step = in_rate as f64 / out_rate as f64;
-    let mut out = Vec::with_capacity(((frames_in as f64) / step).ceil() as usize * 2 + 4);
-    // pos is the fractional read cursor in input frames
-    while *pos + 1.0 < frames_in as f64 {
-        let i0 = (*pos).floor() as usize;
-        let i1 = i0 + 1;
-        let frac = (*pos) - i0 as f64;
-        for ch in 0..2 {
-            let a = input[i0 * 2 + ch];
-            let b = input[i1 * 2 + ch];
-            out.push(a + (b - a) * frac as f32);
+        GenericAudioBufferRef::S32(b) => {
+            pack_planes(*b, |s: i32| s as f32 / 2_147_483_648.0)
         }
-        *pos += step;
+        GenericAudioBufferRef::F64(b) => pack_planes(*b, |s: f64| s as f32),
     }
-    // keep leftover position relative to next buffer
-    *pos -= frames_in as f64;
-    if *pos < 0.0 {
-        *pos = 0.0;
-    }
-    out
 }
 
 fn fill_block(dec: &mut DecoderState2, out_rate: u32) -> Option<Vec<f32>> {
+    // 惰性判定：源率 == 设备率则直通（bit-perfect 前提，见 docs/播放引擎调研.md §4.4）
+    if !dec.resampler_decided {
+        dec.resampler_decided = true;
+        if dec.inner.src_sample_rate != out_rate {
+            dec.resampler = Some(super::resampler::SincResampler::new(
+                dec.inner.src_sample_rate,
+                out_rate,
+            ));
+        }
+    }
     while dec.pending.len() < BLOCK_SAMPLES {
         match decode_chunk_native(&mut dec.inner) {
-            Ok(Some(native)) => {
-                let rs = resample_stereo(
-                    &native,
-                    dec.inner.src_sample_rate,
-                    out_rate,
-                    &mut dec.resample_pos,
-                );
-                dec.pending.extend_from_slice(&rs);
+            Ok(Some(native)) => match dec.resampler.as_mut() {
+                Some(r) => r.process(&native, &mut dec.pending),
+                None => dec.pending.extend_from_slice(&native),
+            },
+            Ok(None) => {
+                // EOF：补零挤出重采样器尾部（幂等），总长帧数守恒
+                if let Some(r) = dec.resampler.as_mut() {
+                    r.flush(&mut dec.pending);
+                }
+                break;
             }
-            Ok(None) => break,
             Err(SymError::DecodeError(_)) => {}
             Err(_) => {
                 dec.inner.end = true;
@@ -1493,7 +1497,10 @@ fn decode_loop(
                     if let Some(d) = dec.as_mut() {
                         if seek_decoder(&mut d.inner, ms).is_ok() {
                             d.pending.clear();
-                            d.resample_pos = 0.0;
+                            // seek 后源从新位置吐帧：重采样历史必须清空，否则带出前一段残留
+                            if let Some(r) = d.resampler.as_mut() {
+                                r.reset();
+                            }
                             shared.request_flush();
                             pending_block = None;
                             // seek 不换曲：预取仍有效，但 planned 要按新位置重估不必要——同曲下一首不变
@@ -1591,7 +1598,9 @@ fn decode_loop(
                         if let Some(d) = dec.as_mut() {
                             if seek_decoder(&mut d.inner, position_ms).is_ok() {
                                 d.pending.clear();
-                                d.resample_pos = 0.0;
+                                if let Some(r) = d.resampler.as_mut() {
+                                    r.reset();
+                                }
                                 let rate = shared.sample_rate.load(Ordering::SeqCst).max(1);
                                 let frames = position_ms.saturating_mul(rate) / 1000;
                                 shared.position_frames.store(frames, Ordering::SeqCst);
@@ -1825,5 +1834,80 @@ fn decode_loop(
         } else {
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 最小合法 AIFF（PCM s16be）：FORM/AIFF + COMM + SSND
+    fn build_aiff_s16(frames: usize, rate: u32, channels: u16, freq: f64) -> Vec<u8> {
+        // 80-bit IEEE754 extended：44100 → 指数 16383+15，尾数左对齐
+        fn extended80(v: u32) -> [u8; 10] {
+            assert!(v > 0);
+            let msb = 31 - v.leading_zeros();
+            let exp = (16383 + msb) as u16;
+            let mantissa = (v as u64) << (63 - msb);
+            let mut out = [0u8; 10];
+            out[0] = (exp >> 8) as u8;
+            out[1] = exp as u8;
+            out[2..10].copy_from_slice(&mantissa.to_be_bytes());
+            out
+        }
+        let data_len = frames * channels as usize * 2;
+        let mut v = Vec::new();
+        v.extend_from_slice(b"FORM");
+        v.extend_from_slice(&(4 + (8 + 18) + (8 + 8 + data_len) as u32).to_be_bytes());
+        v.extend_from_slice(b"AIFF");
+        v.extend_from_slice(b"COMM");
+        v.extend_from_slice(&18u32.to_be_bytes());
+        v.extend_from_slice(&channels.to_be_bytes());
+        v.extend_from_slice(&(frames as u32).to_be_bytes());
+        v.extend_from_slice(&16u16.to_be_bytes());
+        v.extend_from_slice(&extended80(rate));
+        v.extend_from_slice(b"SSND");
+        v.extend_from_slice(&(8 + data_len as u32).to_be_bytes());
+        v.extend_from_slice(&0u32.to_be_bytes()); // offset
+        v.extend_from_slice(&0u32.to_be_bytes()); // blocksize
+        for i in 0..frames {
+            let s = (2.0 * std::f64::consts::PI * freq * i as f64 / rate as f64).sin();
+            let q = (s * 32767.0) as i16;
+            for _ in 0..channels {
+                v.extend_from_slice(&q.to_be_bytes());
+            }
+        }
+        v
+    }
+
+    /// AIFF 假支持回归：能 probe、能解码、帧数与能量对得上（0.6 起 aiff feature 生效）
+    #[test]
+    fn aiff_decodes_end_to_end() {
+        let frames = 4410usize; // 0.1s @44.1k
+        let bytes = build_aiff_s16(frames, 44_100, 2, 1000.0);
+        let dir = std::env::temp_dir().join(format!("axmusic-aiff-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.aiff");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let mut st = open_decoder(&path).expect("AIFF 应能打开");
+        assert_eq!(st.src_sample_rate, 44_100);
+        assert_eq!(st.src_channels, 2);
+        assert_eq!(st.duration_ms, 100);
+
+        let mut total_frames = 0usize;
+        let mut energy = 0f64;
+        while let Ok(Some(block)) = decode_chunk_native(&mut st) {
+            total_frames += block.len() / 2;
+            energy += block.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(total_frames, frames, "解码帧数应精确等于源帧数");
+        let rms = (energy / (total_frames * 2) as f64).sqrt();
+        assert!(
+            (rms - std::f64::consts::FRAC_1_SQRT_2).abs() < 0.05,
+            "满幅 1kHz 正弦 RMS 应≈0.707，实得 {rms:.3}（说明解出了真实波形而非静音）"
+        );
     }
 }
