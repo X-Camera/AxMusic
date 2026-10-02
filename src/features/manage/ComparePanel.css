@@ -308,6 +308,15 @@
   font-size: 12px;
 }
 
+/* 可选建议（如去版本括号）：中性弱化，不用警告色 */
+.cmp-archive-issue.optional {
+  background: var(--bg-hover);
+}
+
+.cmp-archive-issue.optional .cmp-archive-msg {
+  color: var(--text-secondary);
+}
+
 .cmp-archive-issue-row {
   display: flex;
   align-items: center;

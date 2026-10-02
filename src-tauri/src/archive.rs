@@ -18,7 +18,7 @@ use crate::scanner::{self, AUDIO_EXTS};
 /// 一项归档问题
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveIssue {
-    /// "song_location" | "song_name" | "lyrics_location" | "lyrics_name"
+    /// "song_location" | "song_name" | "song_strip_version" | "lyrics_location" | "lyrics_name"
     pub kind: String,
     /// 中文描述
     pub message: String,
@@ -26,6 +26,8 @@ pub struct ArchiveIssue {
     pub current: String,
     /// 期望路径
     pub expected: String,
+    /// true = 可选建议（如去除末尾版本括号），不影响规范判定
+    pub optional: bool,
 }
 
 /// 单曲归档状态
@@ -95,6 +97,21 @@ fn path_eq(a: &Path, b: &Path) -> bool {
         .eq_ignore_ascii_case(&b.to_string_lossy())
 }
 
+/// 标签歌名本身已以该版本括号结尾（忽略 ASCII 大小写）。
+/// 用 `get` 切片避免 UTF-8 非字符边界 panic。
+fn title_ends_with_version(title: &str, version: &str) -> bool {
+    let t = title.trim_end();
+    t.get(t.len().saturating_sub(version.len())..)
+        .map(|tail| tail.eq_ignore_ascii_case(version))
+        .unwrap_or(false)
+}
+
+/// 定出版本说明：标签歌名已带同一括号时不重复追加
+/// （否则 `歌(国语)` 标签 + `歌(国语).flac` 的期望名会变 `歌(国语)(国语).flac`）。
+fn resolve_version(title: &str, version: Option<String>) -> Option<String> {
+    version.filter(|v| !title_ends_with_version(title, v))
+}
+
 /// 期望文件主名（不含扩展名）：`{artist} - {title}{version}`
 pub fn expected_stem(artist: &str, title: &str, version: Option<&str>) -> String {
     let v = version.unwrap_or("");
@@ -152,6 +169,7 @@ pub fn expected_song_path_from(
     } else {
         title.to_string()
     };
+    let version = resolve_version(&title, version);
     let name = expected_song_filename(artist, &title, version.as_deref(), &file_ext(src));
     paths::library_archived_dir(library_root)
         .join(norm_artist(artist))
@@ -167,6 +185,7 @@ pub fn expected_lrc_path(library_root: &Path, track: &TrackRow) -> PathBuf {
         .unwrap_or_default();
     let version = extract_version_suffix(&stem);
     let title = title_with_fallback(track, &stem, version.as_deref());
+    let version = resolve_version(&title, version);
     let name = format!(
         "{}.lrc",
         expected_stem(&track.artist, &title, version.as_deref())
@@ -235,6 +254,28 @@ fn move_sidecar_with_audio(src_audio: &Path, dest_audio: &Path) {
     let _ = std::fs::rename(&src_lrc, &dest_lrc);
 }
 
+/// 可选建议：文件名末尾版本括号在标签歌名中不存在时，建议去除
+/// （如标签歌名「陪你度过漫长岁月」+ 文件 `…陪你度过漫长岁月(国语).flac`）。
+/// 保留括号同样是合法命名，故仅为建议、不影响规范判定。
+fn strip_version_suggestion(track: &TrackRow, current: &Path) -> Option<ArchiveIssue> {
+    let stem = current.file_stem()?.to_string_lossy().to_string();
+    let version = extract_version_suffix(&stem)?;
+    let title = title_with_fallback(track, &stem, Some(&version));
+    if title_ends_with_version(&title, &version) {
+        return None; // 括号来自标签歌名本身，不是多余的
+    }
+    let name = expected_song_filename(&track.artist, &title, None, &file_ext(current));
+    // 动作为就地改名，期望路径用当前目录（位置规范与否由 song_location 独立负责）
+    let expected = current.parent()?.join(name);
+    Some(ArchiveIssue {
+        kind: "song_strip_version".into(),
+        message: format!("可去除末尾版本括号 {version}"),
+        current: current.to_string_lossy().into(),
+        expected: expected.to_string_lossy().into(),
+        optional: true,
+    })
+}
+
 /// 检查单曲归档状态（歌曲文件 + 外挂歌词）。
 /// **仅已关联 catalog 的曲目**做归档要求；未关联不报（前端提示先刮削）。
 /// 歌词仅在有外挂歌词时查。
@@ -256,6 +297,7 @@ pub fn check_track(library_root: &Path, track: &TrackRow) -> ArchiveStatus {
             message: "歌曲文件丢失".into(),
             current: track.path.clone(),
             expected: expected.to_string_lossy().into(),
+            optional: false,
         });
     } else {
         let expected_parent = expected.parent();
@@ -270,6 +312,7 @@ pub fn check_track(library_root: &Path, track: &TrackRow) -> ArchiveStatus {
                 message: "歌曲不在归档目录".into(),
                 current: current.to_string_lossy().into(),
                 expected: expected.to_string_lossy().into(),
+                optional: false,
             });
         }
 
@@ -284,7 +327,10 @@ pub fn check_track(library_root: &Path, track: &TrackRow) -> ArchiveStatus {
                 message: "歌曲命名不规范".into(),
                 current: current.to_string_lossy().into(),
                 expected: expected.to_string_lossy().into(),
+                optional: false,
             });
+        } else if let Some(suggestion) = strip_version_suggestion(track, current) {
+            issues.push(suggestion);
         }
     }
 
@@ -300,6 +346,7 @@ pub fn check_track(library_root: &Path, track: &TrackRow) -> ArchiveStatus {
                     message: "歌词不在库 lrc/ 目录".into(),
                     current: current.to_string_lossy().into(),
                     expected: expected_lrc.to_string_lossy().into(),
+                    optional: false,
                 });
             }
             let expected_name = expected_lrc.file_name().unwrap_or_default();
@@ -310,6 +357,7 @@ pub fn check_track(library_root: &Path, track: &TrackRow) -> ArchiveStatus {
                     message: "歌词命名不规范".into(),
                     current: current.to_string_lossy().into(),
                     expected: expected_lrc.to_string_lossy().into(),
+                    optional: false,
                 });
             }
         }
@@ -320,13 +368,14 @@ pub fn check_track(library_root: &Path, track: &TrackRow) -> ArchiveStatus {
                     message: "外挂歌词文件丢失".into(),
                     current: String::new(),
                     expected: expected_lrc.to_string_lossy().into(),
+                    optional: false,
                 });
             }
         }
     }
 
     ArchiveStatus {
-        ok: issues.is_empty(),
+        ok: issues.iter().all(|i| i.optional),
         issues,
     }
 }
@@ -429,14 +478,41 @@ pub fn normalize_track(library_root: &Path, track: &TrackRow) -> Result<Normaliz
     })
 }
 
-/// 只修一条归档意见（kind: song_location | song_name | lyrics_location | lyrics_name）。
-/// 位置类：挪到目标目录、**保留当前文件名**；命名类：就地改成期望名。
+/// 只修一条归档意见（kind: song_location | song_name | song_strip_version | lyrics_location | lyrics_name）。
+/// 位置类：挪到目标目录、**保留当前文件名**；命名类：就地改成期望名；
+/// song_strip_version：就地改成无版本括号的期望名。
 pub fn normalize_issue(
     library_root: &Path,
     track: &TrackRow,
     kind: &str,
 ) -> Result<IssueFixResult> {
     match kind {
+        "song_strip_version" => {
+            let src = PathBuf::from(&track.path);
+            if !src.is_file() {
+                return Err(anyhow!("歌曲文件不存在: {}", track.path));
+            }
+            let stem = src
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .ok_or_else(|| anyhow!("无法读取文件名"))?;
+            let version = extract_version_suffix(&stem)
+                .ok_or_else(|| anyhow!("文件名没有末尾版本括号，无需去除"))?;
+            let title = title_with_fallback(track, &stem, Some(&version));
+            let name = expected_song_filename(&track.artist, &title, None, &file_ext(&src));
+            let dest = src
+                .parent()
+                .ok_or_else(|| anyhow!("无法解析当前目录"))?
+                .join(name);
+            move_file(&src, &dest)?;
+            // sidecar 歌词跟走（歌名对齐新主名；lrc/ 里的不受影响）
+            move_sidecar_with_audio(&src, &dest);
+            Ok(IssueFixResult {
+                message: format!("已去除版本括号，重命名为 {}", dest.display()),
+                song_path: Some(dest.to_string_lossy().into()),
+                lrc_path: None,
+            })
+        }
         "song_location" | "song_name" => {
             let src = PathBuf::from(&track.path);
             if !src.is_file() {
@@ -617,6 +693,52 @@ pub fn organize_library_root(library_root: &Path) -> Result<OrganizeResult> {
 mod tests {
     use super::*;
 
+    fn track_at(path: &Path, title: &str, artist: &str) -> TrackRow {
+        TrackRow {
+            id: 1,
+            path: path.to_string_lossy().into(),
+            filename: path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            title: title.into(),
+            artist: artist.into(),
+            album: String::new(),
+            album_artist: artist.into(),
+            year: String::new(),
+            track_no: None,
+            disc_no: None,
+            duration_ms: 1000,
+            format: "flac".into(),
+            sample_rate: None,
+            bit_rate: None,
+            has_cover: false,
+            has_lyrics: false,
+            has_lrc: false,
+            has_year: false,
+            has_mb_id: false,
+            tag_status: "ok".into(),
+            missing: String::new(),
+            release_type: String::new(),
+            mb_recording_mbid: String::new(),
+            mb_release_mbid: String::new(),
+            catalog_id: Some(1),
+            mtime: 0,
+            file_size: 1,
+            catalog_title: None,
+            catalog_artist: None,
+            catalog_album: None,
+            catalog_year: None,
+            catalog_track_no: None,
+        }
+    }
+
+    fn fresh_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("axmusic-arch-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
     #[test]
     fn version_suffix_extract() {
         assert_eq!(extract_version_suffix("晴天(Live)"), Some("(Live)".into()));
@@ -724,6 +846,92 @@ mod tests {
             after.issues.iter().any(|i| i.kind == "lyrics_location"),
             "歌词位置不应被顺手修掉: {:?}",
             after.issues
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn title_version_overlap() {
+        assert!(title_ends_with_version("陪你度过漫长岁月(国语)", "(国语)"));
+        assert!(title_ends_with_version("Song (live)", "(Live)"));
+        assert!(!title_ends_with_version("陪你度过漫长岁月", "(国语)"));
+        // UTF-8 边界：末尾字节数落在多字节字符中间时不 panic、不匹配
+        assert!(!title_ends_with_version("歌", "(Live)"));
+        assert!(!title_ends_with_version("abc", "(国语)"));
+    }
+
+    #[test]
+    fn strip_version_suggested_when_tag_has_no_parens() {
+        let dir = fresh_dir("sv-suggest");
+        let artist_dir = dir.join("archived").join("陈奕迅");
+        std::fs::create_dir_all(&artist_dir).unwrap();
+        let audio = artist_dir.join("陈奕迅 - 陪你度过漫长岁月(国语).flac");
+        std::fs::write(&audio, b"a").unwrap();
+
+        let track = track_at(&audio, "陪你度过漫长岁月", "陈奕迅");
+        let status = check_track(&dir, &track);
+        assert!(status.ok, "可选建议不影响规范判定: {:?}", status.issues);
+        let opt: Vec<_> = status.issues.iter().filter(|i| i.optional).collect();
+        assert_eq!(opt.len(), 1, "应恰有一条可选建议: {:?}", status.issues);
+        assert_eq!(opt[0].kind, "song_strip_version");
+        assert!(
+            opt[0].expected.ends_with("陈奕迅 - 陪你度过漫长岁月.flac"),
+            "期望为无括号名: {}",
+            opt[0].expected
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_version_not_suggested_when_tag_has_parens() {
+        let dir = fresh_dir("sv-tagparens");
+        let artist_dir = dir.join("archived").join("陈奕迅");
+        std::fs::create_dir_all(&artist_dir).unwrap();
+        let audio = artist_dir.join("陈奕迅 - 陪你度过漫长岁月(国语).flac");
+        std::fs::write(&audio, b"a").unwrap();
+
+        // 标签歌名自带 (国语)：括号是标签的一部分，期望名不应双重括号，也不报去括号
+        let track = track_at(&audio, "陪你度过漫长岁月(国语)", "陈奕迅");
+        let status = check_track(&dir, &track);
+        assert!(
+            status.issues.is_empty(),
+            "标签自带括号应完全规范: {:?}",
+            status.issues
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_version_normalize_renames_and_moves_sidecar() {
+        let dir = fresh_dir("sv-normalize");
+        let artist_dir = dir.join("archived").join("陈奕迅");
+        std::fs::create_dir_all(&artist_dir).unwrap();
+        let audio = artist_dir.join("陈奕迅 - 陪你度过漫长岁月(国语).flac");
+        std::fs::write(&audio, b"a").unwrap();
+        let lrc = artist_dir.join("陈奕迅 - 陪你度过漫长岁月(国语).lrc");
+        std::fs::write(&lrc, b"[00:00.00]hi").unwrap();
+
+        let mut track = track_at(&audio, "陪你度过漫长岁月", "陈奕迅");
+        let fixed = normalize_issue(&dir, &track, "song_strip_version").unwrap();
+        let new_path = fixed.song_path.unwrap();
+        assert!(new_path.ends_with("陈奕迅 - 陪你度过漫长岁月.flac"));
+        assert!(Path::new(&new_path).is_file());
+        assert!(!audio.exists());
+        // sidecar 跟走并改主名
+        assert!(artist_dir.join("陈奕迅 - 陪你度过漫长岁月.lrc").is_file());
+        assert!(!lrc.exists());
+
+        // 改名后不再报可选建议
+        track.path = new_path;
+        track.filename = "陈奕迅 - 陪你度过漫长岁月.flac".into();
+        let status = check_track(&dir, &track);
+        assert!(
+            !status.issues.iter().any(|i| i.kind == "song_strip_version"),
+            "去括号后建议应消失: {:?}",
+            status.issues
         );
 
         let _ = std::fs::remove_dir_all(&dir);

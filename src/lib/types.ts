@@ -678,11 +678,13 @@ export type FolderMeta = FolderFile;
 
 /** 一项归档问题 */
 export interface ArchiveIssue {
-  /** "song_location" | "song_name" | "lyrics_location" | "lyrics_name" */
+  /** "song_location" | "song_name" | "song_strip_version" | "lyrics_location" | "lyrics_name" */
   kind: string;
   message: string;
   current: string;
   expected: string;
+  /** true = 可选建议（如去除末尾版本括号），不影响规范判定 */
+  optional: boolean;
 }
 
 /** 单曲归档状态 */

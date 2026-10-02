@@ -529,23 +529,28 @@ export function ComparePanel({
               <span className="cmp-archive-ok">✓ 规范</span>
             ) : (
               <span className="cmp-archive-bad">
-                ? {archive.issues.length} 项不规范
+                ? {archive.issues.filter((i) => !i.optional).length} 项不规范
               </span>
             )}
           </div>
-          {!archive.ok && (
+          {archive.issues.length > 0 && (
             <ul className="cmp-archive-issues">
               {archive.issues.map((issue, i) => (
-                <li key={`${issue.kind}-${i}`} className="cmp-archive-issue">
+                <li
+                  key={`${issue.kind}-${i}`}
+                  className={`cmp-archive-issue${issue.optional ? " optional" : ""}`}
+                >
                   <div className="cmp-archive-issue-row">
                     <span className="cmp-archive-msg">{issue.message}</span>
                     <button
                       className="btn btn-sm"
                       disabled={writing}
                       title={
-                        issue.kind.endsWith("location")
-                          ? "只挪位置，保留当前文件名"
-                          : "只改命名，留在当前目录"
+                        issue.kind === "song_strip_version"
+                          ? "就地重命名为 歌手 - 歌名.ext，目录不动"
+                          : issue.kind.endsWith("location")
+                            ? "只挪位置，保留当前文件名"
+                            : "只改命名，留在当前目录"
                       }
                       onClick={() => void normalizeIssue(issue.kind)}
                     >
@@ -554,7 +559,7 @@ export function ComparePanel({
                       ) : (
                         <FolderCheck size={12} />
                       )}
-                      整理
+                      {issue.kind === "song_strip_version" ? "去括号" : "整理"}
                     </button>
                   </div>
                   {issue.current && (
