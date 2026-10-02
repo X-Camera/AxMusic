@@ -140,13 +140,13 @@ pub struct GainTags {
     pub album_peak: Option<f32>,
 }
 
-fn get_string(tag: &lofty::tag::Tag, key: &ItemKey) -> Option<String> {
+fn get_string(tag: &lofty::tag::Tag, key: ItemKey) -> Option<String> {
     tag.get_string(key).map(|s| s.to_string())
 }
 
 /// 按命中键分流解析：经典 REPLAYGAIN_* 是 "x dB"，R128_* 是 Q7.8 整数。
 /// 不能按字符串猜——纯数字串会被 parse_gain_db 误当成 dB。
-fn parse_gain_by_keys(tag: &lofty::tag::Tag, classic: &ItemKey, r128: &ItemKey) -> Option<f32> {
+fn parse_gain_by_keys(tag: &lofty::tag::Tag, classic: ItemKey, r128: ItemKey) -> Option<f32> {
     if let Some(raw) = get_string(tag, classic) {
         return parse_gain_db(&raw).map(clamp_gain_db);
     }
@@ -168,18 +168,18 @@ pub fn read_gain_tags(path: &Path) -> GainTags {
     GainTags {
         track_gain_db: parse_gain_by_keys(
             tag,
-            &ItemKey::ReplayGainTrackGain,
-            &ItemKey::Unknown("R128_TRACK_GAIN".into()),
+            ItemKey::ReplayGainTrackGain,
+            ItemKey::R128TrackGain,
         ),
-        track_peak: get_string(tag, &ItemKey::ReplayGainTrackPeak)
+        track_peak: get_string(tag, ItemKey::ReplayGainTrackPeak)
             .as_deref()
             .and_then(parse_peak),
         album_gain_db: parse_gain_by_keys(
             tag,
-            &ItemKey::ReplayGainAlbumGain,
-            &ItemKey::Unknown("R128_ALBUM_GAIN".into()),
+            ItemKey::ReplayGainAlbumGain,
+            ItemKey::R128AlbumGain,
         ),
-        album_peak: get_string(tag, &ItemKey::ReplayGainAlbumPeak)
+        album_peak: get_string(tag, ItemKey::ReplayGainAlbumPeak)
             .as_deref()
             .and_then(parse_peak),
     }

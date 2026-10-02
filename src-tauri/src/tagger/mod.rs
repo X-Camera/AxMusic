@@ -28,14 +28,14 @@ fn remove_field(tag: &mut lofty::tag::Tag, field: &str) -> Result<()> {
         "album_artist" => ItemKey::AlbumArtist,
         "track_no" => ItemKey::TrackNumber,
         "lyrics" => ItemKey::Lyrics,
-        "release_type" => ItemKey::Unknown("RELEASETYPE".into()),
+        "release_type" => ItemKey::MusicBrainzReleaseType,
         "musicbrainz_recording" => ItemKey::MusicBrainzRecordingId,
         "musicbrainz_release" => ItemKey::MusicBrainzReleaseId,
         "musicbrainz_releasegroup" => ItemKey::MusicBrainzReleaseGroupId,
         "musicbrainz_artist" => ItemKey::MusicBrainzArtistId,
         other => bail!("不支持的标签字段: {other}"),
     };
-    tag.remove_key(&key);
+    tag.remove_key(key);
     Ok(())
 }
 
@@ -76,7 +76,7 @@ fn apply_change(tag: &mut lofty::tag::Tag, field: &str, new: &str) -> Result<()>
             tag.insert_text(ItemKey::Lyrics, new.to_string());
         }
         "release_type" => {
-            tag.insert_text(ItemKey::Unknown("RELEASETYPE".into()), new.to_string());
+            tag.insert_text(ItemKey::MusicBrainzReleaseType, new.to_string());
         }
         "musicbrainz_recording" => {
             tag.insert_text(ItemKey::MusicBrainzRecordingId, new.to_string());
@@ -167,12 +167,10 @@ fn write_track_inner(
         );
     }
     if let Some(bytes) = cover {
-        let pic = Picture::new_unchecked(
-            PictureType::CoverFront,
-            Some(cover_mime(bytes)?),
-            None,
-            bytes.to_vec(),
-        );
+        let pic = Picture::unchecked(bytes.to_vec())
+            .pic_type(PictureType::CoverFront)
+            .mime_type(cover_mime(bytes)?)
+            .build();
         tag.remove_picture_type(PictureType::CoverFront);
         tag.push_picture(pic);
     }
@@ -237,11 +235,11 @@ mod tests {
         let row = crate::scanner::read_track(&file).unwrap();
         assert_eq!(row.title, "晴天");
         assert_eq!(row.track_no, Some(3));
-        // 完整日期串在 RecordingDate 里（scanner 展示侧 year() 只取年份部分）
+        // 完整日期串在 RecordingDate 里（scanner 展示侧 date() 只取年份部分）
         let tagged = Probe::open(&file).unwrap().read().unwrap();
         let tag = tagged.primary_tag().unwrap();
         assert_eq!(
-            tag.get_string(&ItemKey::RecordingDate).unwrap(),
+            tag.get_string(ItemKey::RecordingDate).unwrap(),
             "2003-07-31"
         );
         // 临时文件无残留

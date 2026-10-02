@@ -241,10 +241,10 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         row.artist = tag.artist().map(|s| s.to_string()).unwrap_or_default();
         row.album = tag.album().map(|s| s.to_string()).unwrap_or_default();
         row.year = tag
-            .year()
-            .map(|y| y.to_string())
+            .date()
+            .map(|d| d.year.to_string())
             .or_else(|| {
-                tag.get_string(&ItemKey::RecordingDate)
+                tag.get_string(ItemKey::RecordingDate)
                     .map(|s| s.to_string())
             })
             .unwrap_or_default();
@@ -254,15 +254,15 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         row.disc_no = tag.disk().map(|d| d as i64);
 
         row.album_artist = tag
-            .get_string(&ItemKey::AlbumArtist)
+            .get_string(ItemKey::AlbumArtist)
             .map(|s| s.to_string())
             .unwrap_or_default();
 
         // Album type (Album / EP / Single …) when the file carries it.
-        // Picard writes RELEASETYPE (Vorbis) / TXXX:RELEASETYPE; fall back to MB album type.
+        // Picard 各格式写法（RELEASETYPE / MusicBrainz Album Type / MUSICBRAINZ_ALBUMTYPE）
+        // 在 lofty 解析时统一归一为 MusicBrainzReleaseType。
         row.release_type = tag
-            .get_string(&ItemKey::Unknown("RELEASETYPE".into()))
-            .or_else(|| tag.get_string(&ItemKey::Unknown("MusicBrainz Album Type".into())))
+            .get_string(ItemKey::MusicBrainzReleaseType)
             .map(|s| s.to_string())
             .unwrap_or_default();
 
@@ -270,18 +270,18 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
         row.has_cover = !tag.pictures().is_empty();
 
         row.has_lyrics = tag
-            .get_string(&ItemKey::Lyrics)
+            .get_string(ItemKey::Lyrics)
             .map(|s| !s.is_empty())
             .unwrap_or(false);
 
         // MBID values (used for catalog matching) — recording first, then track id.
         row.mb_recording_mbid = tag
-            .get_string(&ItemKey::MusicBrainzRecordingId)
-            .or_else(|| tag.get_string(&ItemKey::MusicBrainzTrackId))
+            .get_string(ItemKey::MusicBrainzRecordingId)
+            .or_else(|| tag.get_string(ItemKey::MusicBrainzTrackId))
             .map(|s| s.to_string())
             .unwrap_or_default();
         row.mb_release_mbid = tag
-            .get_string(&ItemKey::MusicBrainzReleaseId)
+            .get_string(ItemKey::MusicBrainzReleaseId)
             .map(|s| s.to_string())
             .unwrap_or_default();
 
@@ -296,7 +296,7 @@ pub fn read_track(path: &Path) -> Result<TrackRow> {
             || !row.mb_release_mbid.is_empty()
             || mb_keys
                 .iter()
-                .any(|k| tag.get_string(k).map(|s| !s.is_empty()).unwrap_or(false));
+                .any(|k| tag.get_string(*k).map(|s| !s.is_empty()).unwrap_or(false));
     }
 
     // Fallback title from filename when tag empty

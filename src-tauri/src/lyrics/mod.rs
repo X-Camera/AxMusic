@@ -210,7 +210,7 @@ pub fn read_embedded(audio_path: &Path) -> Result<Option<String>> {
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
     let Some(tag) = tag else { return Ok(None) };
     Ok(tag
-        .get_string(&ItemKey::Lyrics)
+        .get_string(ItemKey::Lyrics)
         .map(|s| s.to_string())
         .filter(|s| !s.trim().is_empty()))
 }

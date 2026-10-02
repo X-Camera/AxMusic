@@ -845,14 +845,14 @@ pub async fn track_media_info(path: String) -> Result<serde_json::Value, String>
             match tag {
                 Some(tag) => {
                     let get = |k: ItemKey| {
-                        tag.get_string(&k).map(|s| s.to_string()).unwrap_or_default()
+                        tag.get_string(k).map(|s| s.to_string()).unwrap_or_default()
                     };
                     (
                         tag.title().map(|s| s.to_string()).unwrap_or_default(),
                         tag.artist().map(|s| s.to_string()).unwrap_or_default(),
                         tag.album().map(|s| s.to_string()).unwrap_or_default(),
                         get(ItemKey::AlbumArtist),
-                        tag.year().map(|y| y.to_string()).unwrap_or_default(),
+                        tag.date().map(|d| d.year.to_string()).unwrap_or_default(),
                     )
                 }
                 None => (
