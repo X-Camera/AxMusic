@@ -733,7 +733,7 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>, viz_tap: VizTap) {
         set_error(&shared, Some("读取输出配置失败".into()));
         return;
     };
-    let out_rate = default_config.sample_rate().0;
+    let out_rate = default_config.sample_rate();
     let out_channels = usize::from(default_config.channels()).max(1);
     shared.sample_rate.store(out_rate as u64, Ordering::SeqCst);
 
@@ -753,7 +753,7 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>, viz_tap: VizTap) {
 
     let stream = match default_config.sample_format() {
         SampleFormat::F32 => device.build_output_stream(
-            &default_config.into(),
+            default_config.config(),
             move |data: &mut [f32], _| audio.fill(data),
             |e| eprintln!("audio stream error: {e}"),
             None,
@@ -761,7 +761,7 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>, viz_tap: VizTap) {
         SampleFormat::I16 => {
             let mut tmp = Vec::new();
             device.build_output_stream(
-                &default_config.into(),
+                default_config.config(),
                 move |data: &mut [i16], _| {
                     tmp.clear();
                     tmp.resize(data.len(), 0.0);
@@ -777,7 +777,7 @@ fn worker_main(cmd_rx: Receiver<Cmd>, shared: Arc<Shared>, viz_tap: VizTap) {
         SampleFormat::U16 => {
             let mut tmp = Vec::new();
             device.build_output_stream(
-                &default_config.into(),
+                default_config.config(),
                 move |data: &mut [u16], _| {
                     tmp.clear();
                     tmp.resize(data.len(), 0.0);

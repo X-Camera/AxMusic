@@ -45,7 +45,7 @@ symphonia = { version = "0.6.1", default-features = false, features = [
   "mkv",
   "adpcm",
 ] }
-cpal = "0.15"
+cpal = "0.18"
 ringbuf = "0.4"
 crossbeam-channel = "0.5"
 walkdir = "2"
